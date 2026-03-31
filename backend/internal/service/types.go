@@ -6,7 +6,6 @@ type RegisterCommand struct {
 	Name     string
 	Email    string
 	Password string
-	Role     string
 }
 
 type LoginCommand struct {
@@ -15,10 +14,12 @@ type LoginCommand struct {
 }
 
 type UserProfile struct {
-	ID    uint
-	Name  string
-	Email string
-	Role  string
+	ID          string
+	DisplayName string
+	Email       string
+	Role        string
+	Status      string
+	LastLoginAt *time.Time
 }
 
 type AuthResult struct {
@@ -29,12 +30,14 @@ type AuthResult struct {
 }
 
 type CreateAgentCommand struct {
+	UserID  string
 	AgentID string
 	Name    string
 	Status  string
 }
 
 type UpdateAgentStatusCommand struct {
+	UserID  string
 	AgentID string
 	Name    string
 	Status  string
@@ -43,7 +46,8 @@ type UpdateAgentStatusCommand struct {
 }
 
 type AgentRecord struct {
-	ID         uint
+	ID         string
+	UserID     string
 	AgentID    string
 	Name       string
 	Status     string

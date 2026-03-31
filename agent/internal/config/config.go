@@ -11,31 +11,37 @@ import (
 )
 
 type Config struct {
-	AppName           string
-	AppEnv            string
-	LogLevel          slog.Level
-	RuntimeMode       contracts.RuntimeMode
-	AgentKind         contracts.AgentKind
-	ControlPlaneURL   string
-	StateDir          string
-	ShutdownTimeout   time.Duration
-	HeartbeatInterval time.Duration
-	HandshakeVersion  string
-	UseMockControl    bool
+	AppName            string
+	AppEnv             string
+	LogLevel           slog.Level
+	RuntimeMode        contracts.RuntimeMode
+	AgentKind          contracts.AgentKind
+	BootstrapToken     string
+	TargetRef          string
+	ControlPlaneURL    string
+	StateDir           string
+	StateEncryptionKey string
+	ShutdownTimeout    time.Duration
+	HeartbeatInterval  time.Duration
+	HandshakeVersion   string
+	UseMockControl     bool
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		AppName:           envOrDefault("AGENT_APP_NAME", "lazyops-agent"),
-		AppEnv:            envOrDefault("AGENT_APP_ENV", "development"),
-		RuntimeMode:       contracts.RuntimeMode(envOrDefault("AGENT_RUNTIME_MODE", string(contracts.RuntimeModeStandalone))),
-		AgentKind:         contracts.AgentKind(envOrDefault("AGENT_KIND", string(contracts.AgentKindInstance))),
-		ControlPlaneURL:   envOrDefault("AGENT_CONTROL_PLANE_URL", "ws://127.0.0.1:8080"),
-		StateDir:          envOrDefault("AGENT_STATE_DIR", ".agent-state"),
-		ShutdownTimeout:   durationOrDefault("AGENT_SHUTDOWN_TIMEOUT", 10*time.Second),
-		HeartbeatInterval: durationOrDefault("AGENT_HEARTBEAT_INTERVAL", 30*time.Second),
-		HandshakeVersion:  envOrDefault("AGENT_HANDSHAKE_VERSION", "v0"),
-		UseMockControl:    boolOrDefault("AGENT_USE_MOCK_CONTROL", true),
+		AppName:            envOrDefault("AGENT_APP_NAME", "lazyops-agent"),
+		AppEnv:             envOrDefault("AGENT_APP_ENV", "development"),
+		RuntimeMode:        contracts.RuntimeMode(envOrDefault("AGENT_RUNTIME_MODE", string(contracts.RuntimeModeStandalone))),
+		AgentKind:          contracts.AgentKind(envOrDefault("AGENT_KIND", string(contracts.AgentKindInstance))),
+		BootstrapToken:     strings.TrimSpace(os.Getenv("AGENT_BOOTSTRAP_TOKEN")),
+		TargetRef:          envOrDefault("AGENT_TARGET_REF", "local-dev"),
+		ControlPlaneURL:    envOrDefault("AGENT_CONTROL_PLANE_URL", "ws://127.0.0.1:8080"),
+		StateDir:           envOrDefault("AGENT_STATE_DIR", ".agent-state"),
+		StateEncryptionKey: strings.TrimSpace(os.Getenv("AGENT_STATE_ENCRYPTION_KEY")),
+		ShutdownTimeout:    durationOrDefault("AGENT_SHUTDOWN_TIMEOUT", 10*time.Second),
+		HeartbeatInterval:  durationOrDefault("AGENT_HEARTBEAT_INTERVAL", 30*time.Second),
+		HandshakeVersion:   envOrDefault("AGENT_HANDSHAKE_VERSION", "v0"),
+		UseMockControl:     boolOrDefault("AGENT_USE_MOCK_CONTROL", true),
 	}
 
 	level, err := parseLogLevel(envOrDefault("AGENT_LOG_LEVEL", "info"))
@@ -77,8 +83,14 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.ControlPlaneURL) == "" {
 		return fmt.Errorf("control plane URL is required")
 	}
+	if strings.TrimSpace(c.TargetRef) == "" {
+		return fmt.Errorf("target ref is required")
+	}
 	if strings.TrimSpace(c.StateDir) == "" {
 		return fmt.Errorf("state dir is required")
+	}
+	if c.BootstrapToken != "" && strings.TrimSpace(c.StateEncryptionKey) == "" {
+		return fmt.Errorf("state encryption key is required when bootstrap token is provided")
 	}
 	if c.HeartbeatInterval <= 0 {
 		return fmt.Errorf("heartbeat interval must be positive")

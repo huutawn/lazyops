@@ -2,21 +2,19 @@ package service
 
 import (
 	"errors"
-
-	"lazyops-server/internal/repository"
 )
 
 var ErrUserNotFound = errors.New("user not found")
 
 type UserService struct {
-	users *repository.UserRepository
+	users UserStore
 }
 
-func NewUserService(users *repository.UserRepository) *UserService {
+func NewUserService(users UserStore) *UserService {
 	return &UserService{users: users}
 }
 
-func (s *UserService) GetProfile(userID uint) (*UserProfile, error) {
+func (s *UserService) GetProfile(userID string) (*UserProfile, error) {
 	user, err := s.users.GetByID(userID)
 	if err != nil {
 		return nil, err

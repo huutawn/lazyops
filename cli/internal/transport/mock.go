@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -13,9 +14,13 @@ type MockTransport struct {
 }
 
 func NewMockTransport(fixtures map[string]Response) *MockTransport {
+	return NewMockTransportWithLatency(fixtures, 50*time.Millisecond)
+}
+
+func NewMockTransportWithLatency(fixtures map[string]Response, latency time.Duration) *MockTransport {
 	return &MockTransport{
 		fixtures: fixtures,
-		latency:  50 * time.Millisecond,
+		latency:  latency,
 	}
 }
 
@@ -30,6 +35,13 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	case <-time.After(t.latency):
 	}
 
+	if strings.EqualFold(req.Method, "POST") && req.Path == "/api/v1/auth/cli-login" {
+		return mockCLILogin(req)
+	}
+	if strings.EqualFold(req.Method, "POST") && req.Path == "/api/v1/auth/pat/revoke" {
+		return mockPATRevoke(req)
+	}
+
 	response, ok := t.fixtures[req.Key()]
 	if !ok {
 		return Response{}, fmt.Errorf("mock fixture not found for %s", req.Key())
@@ -38,29 +50,135 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	return response, nil
 }
 
+func mockCLILogin(req Request) (Response, error) {
+	var payload struct {
+		Method   string `json:"method"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Provider string `json:"provider"`
+	}
+
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "cli-login-bad-json",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_request",
+				"message":   "CLI login payload is invalid.",
+				"next_step": "retry the login command with valid arguments",
+			}),
+		}, nil
+	}
+
+	switch strings.ToLower(strings.TrimSpace(payload.Method)) {
+	case "password":
+		if payload.Email == "demo@lazyops.local" && payload.Password == "demo-password" {
+			return Response{
+				StatusCode:  200,
+				FixtureName: "cli-login-password",
+				Body: mustJSON(map[string]any{
+					"token": "lazyops_pat_mock_secret_value",
+					"user": map[string]any{
+						"id":           "usr_demo",
+						"display_name": "CLI Demo User",
+					},
+					"meta": map[string]any{
+						"storage_hint": "keychain",
+						"auth_method":  "password",
+					},
+				}),
+			}, nil
+		}
+
+		return Response{
+			StatusCode:  401,
+			FixtureName: "cli-login-invalid-credentials",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_credentials",
+				"message":   "Email or password is incorrect.",
+				"next_step": "retry `lazyops login --email <email> --password <password>` or switch to `--provider github` or `--provider google`",
+			}),
+		}, nil
+	case "browser":
+		provider := strings.ToLower(strings.TrimSpace(payload.Provider))
+		if provider == "github" || provider == "google" {
+			return Response{
+				StatusCode:  200,
+				FixtureName: "cli-login-browser-" + provider,
+				Body: mustJSON(map[string]any{
+					"token": "lazyops_pat_mock_secret_value",
+					"user": map[string]any{
+						"id":           "usr_demo",
+						"display_name": "CLI Demo User",
+					},
+					"meta": map[string]any{
+						"storage_hint": "keychain",
+						"auth_method":  "browser",
+						"provider":     provider,
+					},
+				}),
+			}, nil
+		}
+
+		return Response{
+			StatusCode:  400,
+			FixtureName: "cli-login-invalid-provider",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_provider",
+				"message":   "Browser login provider is not supported.",
+				"next_step": "use `--provider github` or `--provider google`",
+			}),
+		}, nil
+	default:
+		return Response{
+			StatusCode:  400,
+			FixtureName: "cli-login-invalid-method",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_method",
+				"message":   "CLI login method is not supported.",
+				"next_step": "use email/password or `--provider github` or `--provider google`",
+			}),
+		}, nil
+	}
+}
+
+func mockPATRevoke(req Request) (Response, error) {
+	authHeader := strings.TrimSpace(req.Headers["Authorization"])
+	if authHeader == "" {
+		return Response{
+			StatusCode:  401,
+			FixtureName: "pat-revoke-missing-auth",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_auth",
+				"message":   "CLI session is missing a valid PAT.",
+				"next_step": "run `lazyops login` again and retry `lazyops logout`",
+			}),
+		}, nil
+	}
+
+	if authHeader != "Bearer lazyops_pat_mock_secret_value" {
+		return Response{
+			StatusCode:  401,
+			FixtureName: "pat-revoke-invalid-auth",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_auth",
+				"message":   "CLI PAT is invalid or already revoked.",
+				"next_step": "run `lazyops login` again before retrying `lazyops logout`",
+			}),
+		}, nil
+	}
+
+	return Response{
+		StatusCode:  200,
+		FixtureName: "pat-revoke",
+		Body: mustJSON(map[string]any{
+			"revoked": true,
+		}),
+	}, nil
+}
+
 func DefaultFixtures() map[string]Response {
 	return map[string]Response{
-		Request{Method: "POST", Path: "/api/v1/auth/cli-login"}.Key(): {
-			StatusCode:  200,
-			FixtureName: "cli-login",
-			Body: mustJSON(map[string]any{
-				"token": "lazyops_pat_mock_redacted",
-				"user": map[string]any{
-					"id":           "usr_demo",
-					"display_name": "CLI Demo User",
-				},
-				"meta": map[string]any{
-					"storage_hint": "keychain",
-				},
-			}),
-		},
-		Request{Method: "POST", Path: "/api/v1/auth/pat/revoke"}.Key(): {
-			StatusCode:  200,
-			FixtureName: "pat-revoke",
-			Body: mustJSON(map[string]any{
-				"revoked": true,
-			}),
-		},
 		Request{Method: "GET", Path: "/api/v1/projects"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "projects-list",

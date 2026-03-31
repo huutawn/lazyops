@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"lazyops-server/internal/api/middleware"
 	"lazyops-server/internal/api/response"
 	requestdto "lazyops-server/internal/api/v1/dto/request"
 	"lazyops-server/internal/api/v1/mapper"
@@ -26,9 +27,10 @@ func NewAgentController(agents *service.AgentService, wsHub *hub.Hub) *AgentCont
 }
 
 func (ctl *AgentController) List(c *gin.Context) {
-	agents, err := ctl.agents.List()
+	claims := middleware.MustClaims(c)
+	agents, err := ctl.agents.List(claims.UserID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "failed to list agents", err.Error())
+		response.Error(c, http.StatusInternalServerError, "failed to list agents", "internal_error", err.Error())
 		return
 	}
 
@@ -38,17 +40,21 @@ func (ctl *AgentController) List(c *gin.Context) {
 func (ctl *AgentController) Create(c *gin.Context) {
 	var req requestdto.CreateAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request payload", err.Error())
+		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
 		return
 	}
 
-	agent, err := ctl.agents.Create(mapper.ToCreateAgentCommand(req))
+	claims := middleware.MustClaims(c)
+	command := mapper.ToCreateAgentCommand(req)
+	command.UserID = claims.UserID
+
+	agent, err := ctl.agents.Create(command)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidInput) {
-			response.Error(c, http.StatusBadRequest, "failed to create agent", err.Error())
+			response.Error(c, http.StatusBadRequest, "failed to create agent", "invalid_input", err.Error())
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "failed to create agent", err.Error())
+		response.Error(c, http.StatusInternalServerError, "failed to create agent", "internal_error", err.Error())
 		return
 	}
 
@@ -58,7 +64,7 @@ func (ctl *AgentController) Create(c *gin.Context) {
 func (ctl *AgentController) UpdateStatus(c *gin.Context) {
 	var req requestdto.UpdateAgentStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request payload", err.Error())
+		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
 		return
 	}
 
@@ -68,19 +74,25 @@ func (ctl *AgentController) UpdateStatus(c *gin.Context) {
 	}
 
 	command := mapper.ToUpdateAgentStatusCommand(c.Param("agentID"), req)
+	claims := middleware.MustClaims(c)
+	command.UserID = claims.UserID
 	command.Source = source
 
 	agent, err := ctl.agents.UpdateStatus(command)
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidInput) {
-			response.Error(c, http.StatusBadRequest, "failed to update agent status", err.Error())
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to update agent status", "invalid_input", err.Error())
+			return
+		case errors.Is(err, service.ErrAgentNotFound):
+			response.Error(c, http.StatusNotFound, "failed to update agent status", "agent_not_found", err.Error())
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "failed to update agent status", err.Error())
+		response.Error(c, http.StatusInternalServerError, "failed to update agent status", "internal_error", err.Error())
 		return
 	}
 
-	if err := ctl.hub.Broadcast(mapper.ToAgentRealtimeEventResponse(ctl.agents.BuildRealtimeEvent(*agent, source))); err != nil {
+	if err := ctl.hub.BroadcastToUser(agent.UserID, mapper.ToAgentRealtimeEventResponse(ctl.agents.BuildRealtimeEvent(*agent, source))); err != nil {
 		hub.LogBroadcastFailure(err)
 	}
 

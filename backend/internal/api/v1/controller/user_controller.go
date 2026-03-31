@@ -25,10 +25,10 @@ func (ctl *UserController) Me(c *gin.Context) {
 	profile, err := ctl.users.GetProfile(claims.UserID)
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
-			response.Error(c, http.StatusNotFound, "user not found", err.Error())
+			response.Error(c, http.StatusNotFound, "user not found", "user_not_found", err.Error())
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "failed to load profile", err.Error())
+		response.Error(c, http.StatusInternalServerError, "failed to load profile", "internal_error", err.Error())
 		return
 	}
 

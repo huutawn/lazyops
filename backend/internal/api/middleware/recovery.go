@@ -12,6 +12,6 @@ import (
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		logger.Error("panic recovered", "panic", recovered)
-		response.Error(c, http.StatusInternalServerError, "internal server error", nil)
+		response.Error(c, http.StatusInternalServerError, "internal server error", "internal_error", nil)
 	})
 }

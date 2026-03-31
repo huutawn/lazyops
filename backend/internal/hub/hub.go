@@ -10,8 +10,13 @@ type Hub struct {
 	clients    map[*Client]struct{}
 	register   chan *Client
 	unregister chan *Client
-	broadcast  chan []byte
+	broadcast  chan broadcastMessage
 	once       sync.Once
+}
+
+type broadcastMessage struct {
+	userID  string
+	payload []byte
 }
 
 func New() *Hub {
@@ -19,7 +24,7 @@ func New() *Hub {
 		clients:    make(map[*Client]struct{}),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		broadcast:  make(chan []byte, 256),
+		broadcast:  make(chan broadcastMessage, 256),
 	}
 }
 
@@ -38,12 +43,23 @@ func (h *Hub) Unregister(client *Client) {
 }
 
 func (h *Hub) Broadcast(payload any) error {
+	return h.broadcastPayload("", payload)
+}
+
+func (h *Hub) BroadcastToUser(userID string, payload any) error {
+	return h.broadcastPayload(userID, payload)
+}
+
+func (h *Hub) broadcastPayload(userID string, payload any) error {
 	message, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	h.broadcast <- message
+	h.broadcast <- broadcastMessage{
+		userID:  userID,
+		payload: message,
+	}
 	return nil
 }
 
@@ -59,8 +75,11 @@ func (h *Hub) run() {
 			}
 		case message := <-h.broadcast:
 			for client := range h.clients {
+				if message.userID != "" && client.userID != message.userID {
+					continue
+				}
 				select {
-				case client.send <- message:
+				case client.send <- message.payload:
 				default:
 					delete(h.clients, client)
 					close(client.send)

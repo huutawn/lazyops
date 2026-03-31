@@ -11,7 +11,7 @@ type Client struct {
 	hub        *Hub
 	conn       *websocket.Conn
 	send       chan []byte
-	userID     uint
+	userID     string
 	email      string
 	role       string
 	pongWait   time.Duration
@@ -21,7 +21,7 @@ type Client struct {
 func NewClient(
 	hub *Hub,
 	conn *websocket.Conn,
-	userID uint,
+	userID string,
 	email, role string,
 	pongWait, pingPeriod time.Duration,
 ) *Client {
@@ -35,6 +35,10 @@ func NewClient(
 		pongWait:   pongWait,
 		pingPeriod: pingPeriod,
 	}
+}
+
+func (c *Client) UserID() string {
+	return c.userID
 }
 
 func (c *Client) ReadLoop(onMessage func([]byte), onClose func()) {

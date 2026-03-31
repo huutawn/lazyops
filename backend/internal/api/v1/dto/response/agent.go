@@ -3,7 +3,7 @@ package response
 import "time"
 
 type AgentResponse struct {
-	ID         uint       `json:"id"`
+	ID         string     `json:"id"`
 	AgentID    string     `json:"agent_id"`
 	Name       string     `json:"name"`
 	Status     string     `json:"status"`

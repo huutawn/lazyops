@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"lazyops-cli/internal/credentials"
 	"lazyops-cli/internal/transport"
 	"lazyops-cli/internal/ui"
 )
@@ -11,12 +12,15 @@ import (
 type RuntimeConfig struct {
 	TransportMode string
 	APIBaseURL    string
+	ServiceName   string
+	AccountName   string
 }
 
 type Runtime struct {
 	Output         ui.Output
 	SpinnerFactory ui.SpinnerFactory
 	Transport      transport.Transport
+	Credentials    *credentials.Store
 	Config         RuntimeConfig
 }
 

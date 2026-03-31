@@ -30,7 +30,7 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limiter := getVisitor(c.ClientIP(), rps, burst)
 		if !limiter.Allow() {
-			response.Error(c, http.StatusTooManyRequests, "rate limit exceeded", nil)
+			response.Error(c, http.StatusTooManyRequests, "rate limit exceeded", "rate_limited", nil)
 			c.Abort()
 			return
 		}

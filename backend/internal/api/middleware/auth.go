@@ -16,15 +16,21 @@ func Authenticate(auth *service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
-			response.Error(c, http.StatusUnauthorized, "missing bearer token", nil)
+			response.Error(c, http.StatusUnauthorized, "missing bearer token", "missing_bearer_token", nil)
 			c.Abort()
 			return
 		}
 
 		token := strings.TrimPrefix(header, "Bearer ")
+		if strings.TrimSpace(token) == "" {
+			response.Error(c, http.StatusUnauthorized, "invalid authorization header", "invalid_authorization_header", nil)
+			c.Abort()
+			return
+		}
+
 		claims, err := auth.ParseToken(token)
 		if err != nil {
-			response.Error(c, http.StatusUnauthorized, "invalid token", err.Error())
+			response.Error(c, http.StatusUnauthorized, "invalid token", "invalid_token", err.Error())
 			c.Abort()
 			return
 		}
@@ -44,7 +50,7 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 			}
 		}
 
-		response.Error(c, http.StatusForbidden, "insufficient permissions", nil)
+		response.Error(c, http.StatusForbidden, "insufficient permissions", "insufficient_permissions", nil)
 		c.Abort()
 	}
 }

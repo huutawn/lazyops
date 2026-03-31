@@ -1,23 +1,30 @@
 package service
 
 import (
+	"errors"
 	"strings"
 	"time"
 
 	"lazyops-server/internal/models"
-	"lazyops-server/internal/repository"
+	"lazyops-server/pkg/utils"
 )
 
 type AgentService struct {
-	agents *repository.AgentRepository
+	agents AgentStore
 }
 
-func NewAgentService(agents *repository.AgentRepository) *AgentService {
+var ErrAgentNotFound = errors.New("agent not found")
+
+func NewAgentService(agents AgentStore) *AgentService {
 	return &AgentService{agents: agents}
 }
 
-func (s *AgentService) List() ([]AgentRecord, error) {
-	agents, err := s.agents.List()
+func (s *AgentService) List(userID string) ([]AgentRecord, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, ErrInvalidInput
+	}
+
+	agents, err := s.agents.ListByUser(strings.TrimSpace(userID))
 	if err != nil {
 		return nil, err
 	}
@@ -30,11 +37,13 @@ func (s *AgentService) List() ([]AgentRecord, error) {
 }
 
 func (s *AgentService) Create(cmd CreateAgentCommand) (*AgentRecord, error) {
-	if strings.TrimSpace(cmd.AgentID) == "" || strings.TrimSpace(cmd.Name) == "" {
+	if strings.TrimSpace(cmd.UserID) == "" || strings.TrimSpace(cmd.AgentID) == "" || strings.TrimSpace(cmd.Name) == "" {
 		return nil, ErrInvalidInput
 	}
 
 	agent := &models.Agent{
+		ID:      utils.NewPrefixedID("agt"),
+		UserID:  strings.TrimSpace(cmd.UserID),
 		AgentID: strings.TrimSpace(cmd.AgentID),
 		Name:    strings.TrimSpace(cmd.Name),
 		Status:  normalizeAgentStatus(cmd.Status),
@@ -48,17 +57,27 @@ func (s *AgentService) Create(cmd CreateAgentCommand) (*AgentRecord, error) {
 }
 
 func (s *AgentService) UpdateStatus(cmd UpdateAgentStatusCommand) (*AgentRecord, error) {
-	if strings.TrimSpace(cmd.AgentID) == "" {
+	if strings.TrimSpace(cmd.UserID) == "" || strings.TrimSpace(cmd.AgentID) == "" {
 		return nil, ErrInvalidInput
 	}
 
-	agent, err := s.agents.UpsertStatus(
+	at := cmd.At
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	agent, err := s.agents.UpdateStatusForUser(
+		strings.TrimSpace(cmd.UserID),
 		strings.TrimSpace(cmd.AgentID),
 		strings.TrimSpace(cmd.Name),
 		normalizeAgentStatus(cmd.Status),
+		at,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if agent == nil {
+		return nil, ErrAgentNotFound
 	}
 
 	record := ToAgentRecord(*agent)
@@ -79,6 +98,7 @@ func (s *AgentService) BuildRealtimeEvent(agent AgentRecord, source string) Agen
 func ToAgentRecord(agent models.Agent) AgentRecord {
 	return AgentRecord{
 		ID:         agent.ID,
+		UserID:     agent.UserID,
 		AgentID:    agent.AgentID,
 		Name:       agent.Name,
 		Status:     agent.Status,

@@ -78,13 +78,16 @@ func (ctl *WebSocketController) handleAgentMessage(client *hub.Client, raw []byt
 		return
 	}
 
-	updated, err := ctl.agents.UpdateStatus(mapper.ToAgentStatusWSCommand(incoming, "websocket"))
+	command := mapper.ToAgentStatusWSCommand(incoming, "websocket")
+	command.UserID = client.UserID()
+
+	updated, err := ctl.agents.UpdateStatus(command)
 	if err != nil {
 		_ = client.SendJSON(gin.H{"type": "error", "message": err.Error()})
 		return
 	}
 
-	if err := ctl.hub.Broadcast(mapper.ToAgentRealtimeEventResponse(ctl.agents.BuildRealtimeEvent(*updated, "websocket"))); err != nil {
+	if err := ctl.hub.BroadcastToUser(updated.UserID, mapper.ToAgentRealtimeEventResponse(ctl.agents.BuildRealtimeEvent(*updated, "websocket"))); err != nil {
 		hub.LogBroadcastFailure(err)
 	}
 }

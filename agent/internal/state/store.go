@@ -97,11 +97,14 @@ type AgentMetadata struct {
 }
 
 type EnrollmentState struct {
-	Enrolled         bool      `json:"enrolled"`
-	SessionID        string    `json:"session_id,omitempty"`
-	LastEnrollmentAt time.Time `json:"last_enrollment_at,omitempty"`
-	LastBootstrapAt  time.Time `json:"last_bootstrap_at,omitempty"`
-	TokenReference   string    `json:"token_reference,omitempty"`
+	Enrolled                  bool      `json:"enrolled"`
+	SessionID                 string    `json:"session_id,omitempty"`
+	LastEnrollmentAt          time.Time `json:"last_enrollment_at,omitempty"`
+	LastBootstrapAt           time.Time `json:"last_bootstrap_at,omitempty"`
+	TokenReference            string    `json:"token_reference,omitempty"`
+	EncryptedAgentToken       string    `json:"encrypted_agent_token,omitempty"`
+	BootstrapTokenFingerprint string    `json:"bootstrap_token_fingerprint,omitempty"`
+	BootstrapTokenUsed        bool      `json:"bootstrap_token_used"`
 }
 
 type RevisionCache struct {

@@ -2,36 +2,52 @@ package repository
 
 import (
 	"errors"
+	"time"
+
 	"gorm.io/gorm"
+
 	"lazyops-server/internal/models"
 )
-type UserRepository struct{
+
+type UserRepository struct {
 	db *gorm.DB
 }
-func NewUserRepository(db *gorm.DB)*UserRepository{
-	return &UserRepository{db:db}
+
+func NewUserRepository(db *gorm.DB) *UserRepository {
+	return &UserRepository{db: db}
 }
-func (r *UserRepository) Create(user *models.User) error{
+
+func (r *UserRepository) Create(user *models.User) error {
 	return r.db.Create(user).Error
 }
-func (r *UserRepository) GetByEmail(email string)(*models.User,error){
+
+func (r *UserRepository) GetByEmail(email string) (*models.User, error) {
 	var user models.User
-	if err:= r.db.Where("email = ?",email).First(&user).Error; err != nil{
-		if errors.Is(err,gorm.ErrRecordNotFound){
+	if err := r.db.Where("email = ?", email).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	return &user, nil
 }
-func (r *UserRepository) GetByID(id uint)(*models.User,error){
+
+func (r *UserRepository) GetByID(id string) (*models.User, error) {
 	var user models.User
-	if err:= r.db.First(&user,id).Error;err!=nil{
-		if errors.Is(err,gorm.ErrRecordNotFound){
+	if err := r.db.First(&user, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
-
 	}
 	return &user, nil
+}
+
+func (r *UserRepository) TouchLastLogin(userID string, at time.Time) error {
+	return r.db.Model(&models.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]any{
+			"last_login_at": at,
+			"updated_at":    at,
+		}).Error
 }

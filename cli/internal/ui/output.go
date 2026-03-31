@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"lazyops-cli/internal/redact"
 )
 
 type Output interface {
@@ -61,10 +63,12 @@ func (o *ConsoleOutput) write(w io.Writer, prefix string, format string, args ..
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	line := format
 	if len(args) == 0 {
-		fmt.Fprintf(w, "%s%s\n", prefix, format)
+		fmt.Fprintf(w, "%s%s\n", prefix, redact.Text(line))
 		return
 	}
 
-	fmt.Fprintf(w, "%s%s\n", prefix, fmt.Sprintf(format, args...))
+	line = fmt.Sprintf(format, args...)
+	fmt.Fprintf(w, "%s%s\n", prefix, redact.Text(line))
 }

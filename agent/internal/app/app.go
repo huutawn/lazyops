@@ -15,6 +15,7 @@ import (
 	"lazyops-agent/internal/config"
 	"lazyops-agent/internal/contracts"
 	"lazyops-agent/internal/control"
+	"lazyops-agent/internal/enroll"
 	agentlogger "lazyops-agent/internal/logger"
 	"lazyops-agent/internal/state"
 )
@@ -24,6 +25,7 @@ type App struct {
 	logger  *slog.Logger
 	store   *state.Store
 	control control.Client
+	enroll  *enroll.Service
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -46,6 +48,7 @@ func New(cfg config.Config) (*App, error) {
 		logger:  logger,
 		store:   state.New(statePath),
 		control: client,
+		enroll:  enroll.New(state.New(statePath), client, logger, cfg.StateEncryptionKey),
 	}, nil
 }
 
@@ -68,6 +71,10 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("collect machine info: %w", err)
 	}
+	if machine.Labels == nil {
+		machine.Labels = make(map[string]string)
+	}
+	machine.Labels["target_ref"] = a.cfg.TargetRef
 
 	if err := a.bootstrapLocalState(ctx, current, machine); err != nil {
 		return err
@@ -78,7 +85,27 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("reload local state after bootstrap: %w", err)
 	}
 
-	sessionAuth := a.sessionAuthFromState(current)
+	if !current.Enrollment.Enrolled && strings.TrimSpace(a.cfg.BootstrapToken) != "" {
+		if _, err := a.enroll.Enroll(
+			ctx,
+			a.cfg.BootstrapToken,
+			machine,
+			current.CapabilitySnapshot.Payload,
+			a.cfg.RuntimeMode,
+			a.cfg.AgentKind,
+		); err != nil {
+			return fmt.Errorf("enroll agent: %w", err)
+		}
+		current, err = a.store.Load(ctx)
+		if err != nil {
+			return fmt.Errorf("reload local state after enrollment: %w", err)
+		}
+	}
+
+	sessionAuth, err := a.sessionAuthFromState(ctx, current)
+	if err != nil {
+		return err
+	}
 	if err := a.control.Connect(ctx, sessionAuth); err != nil {
 		return fmt.Errorf("connect control session: %w", err)
 	}
@@ -186,16 +213,25 @@ func (a *App) bootstrapLocalState(ctx context.Context, current *state.AgentLocal
 	return nil
 }
 
-func (a *App) sessionAuthFromState(local *state.AgentLocalState) contracts.SessionAuthPayload {
+func (a *App) sessionAuthFromState(ctx context.Context, local *state.AgentLocalState) (contracts.SessionAuthPayload, error) {
+	agentToken := "mock-agent-token"
+	if local.Enrollment.Enrolled {
+		decrypted, err := a.enroll.LoadAgentToken(ctx)
+		if err != nil {
+			return contracts.SessionAuthPayload{}, fmt.Errorf("load enrolled agent token: %w", err)
+		}
+		agentToken = decrypted
+	}
+
 	return contracts.SessionAuthPayload{
 		AgentID:      local.Metadata.AgentID,
-		AgentToken:   "mock-agent-token",
+		AgentToken:   agentToken,
 		SessionID:    randomID("sess"),
 		RuntimeMode:  a.cfg.RuntimeMode,
 		AgentKind:    a.cfg.AgentKind,
 		HandshakeVer: a.cfg.HandshakeVersion,
 		SentAt:       time.Now().UTC(),
-	}
+	}, nil
 }
 
 func defaultCapabilities(cfg config.Config) contracts.CapabilityReportPayload {

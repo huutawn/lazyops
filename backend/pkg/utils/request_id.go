@@ -6,10 +6,18 @@ import (
 )
 
 func NewRequestID() string {
+	return NewPrefixedID("req")
+}
+
+func NewCorrelationID() string {
+	return NewPrefixedID("corr")
+}
+
+func NewPrefixedID(prefix string) string {
 	buf := make([]byte, 12)
 	if _, err := rand.Read(buf); err != nil {
-		return "req-fallback"
+		return prefix + "_fallback"
 	}
 
-	return hex.EncodeToString(buf)
+	return prefix + "_" + hex.EncodeToString(buf)
 }

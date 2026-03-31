@@ -11,7 +11,6 @@ func ToRegisterCommand(req requestdto.RegisterRequest) service.RegisterCommand {
 		Name:     req.Name,
 		Email:    req.Email,
 		Password: req.Password,
-		Role:     req.Role,
 	}
 }
 
@@ -33,9 +32,10 @@ func ToAuthResponse(result service.AuthResult) responsedto.AuthResponse {
 
 func ToUserResponse(profile service.UserProfile) responsedto.UserResponse {
 	return responsedto.UserResponse{
-		ID:    profile.ID,
-		Name:  profile.Name,
-		Email: profile.Email,
-		Role:  profile.Role,
+		ID:          profile.ID,
+		DisplayName: profile.DisplayName,
+		Email:       profile.Email,
+		Role:        profile.Role,
+		Status:      profile.Status,
 	}
 }

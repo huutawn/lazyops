@@ -1,52 +1,40 @@
 package command
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"lazyops-cli/internal/credentials"
+	"lazyops-cli/internal/redact"
 	"lazyops-cli/internal/transport"
 )
 
 func NewRootCommand() *Command {
 	return &Command{
 		Name:    "lazyops",
-		Summary: "LazyOps local operator CLI scaffold for Day 2.",
+		Summary: "LazyOps local operator CLI.",
 		Usage:   "lazyops <command>",
 		Subcommands: []*Command{
-			fixtureCommand(
-				"login",
-				"Authenticate and store CLI identity.",
-				"lazyops login",
-				"Day 2 scaffold: login is wired to the transport abstraction.",
-				transport.Request{Method: "POST", Path: "/api/v1/auth/cli-login"},
-			),
-			fixtureCommand(
-				"logout",
-				"Revoke or clear the local CLI session.",
-				"lazyops logout",
-				"Day 2 scaffold: logout is wired to the transport abstraction.",
-				transport.Request{Method: "POST", Path: "/api/v1/auth/pat/revoke"},
-			),
+			loginCommand(),
+			logoutCommand(),
 			initCommand(),
 			linkCommand(),
-			fixtureCommand(
+			authFixtureCommand(
 				"doctor",
 				"Validate local onboarding and deploy contract health.",
 				"lazyops doctor",
 				"Day 2 scaffold: doctor uses a mock-only preview contract until the backend API is locked.",
 				transport.Request{Method: "GET", Path: "/mock/v1/doctor", Query: map[string]string{"project": "prj_demo"}},
 			),
-			fixtureCommand(
+			authFixtureCommand(
 				"status",
 				"Show a thin runtime summary.",
 				"lazyops status",
 				"Day 2 scaffold: status uses a mock-only preview contract until the backend contract is locked.",
 				transport.Request{Method: "GET", Path: "/mock/v1/status", Query: map[string]string{"project": "prj_demo"}},
 			),
-			fixtureCommand(
+			authFixtureCommand(
 				"bindings",
 				"List deployment bindings.",
 				"lazyops bindings",
@@ -60,14 +48,14 @@ func NewRootCommand() *Command {
 				Summary: "Open an optional debug tunnel.",
 				Usage:   "lazyops tunnel <db|tcp>",
 				Subcommands: []*Command{
-					fixtureCommand(
+					authFixtureCommand(
 						"db",
 						"Open a debug database tunnel.",
 						"lazyops tunnel db",
 						"Day 2 scaffold: tunnel db is wired to the mock transport.",
 						transport.Request{Method: "POST", Path: "/api/v1/tunnels/db/sessions"},
 					),
-					fixtureCommand(
+					authFixtureCommand(
 						"tcp",
 						"Open a debug TCP tunnel.",
 						"lazyops tunnel tcp",
@@ -85,7 +73,7 @@ func initCommand() *Command {
 		Name:    "init",
 		Summary: "Initialize the repository into a valid LazyOps deploy contract.",
 		Usage:   "lazyops init",
-		Run: func(ctx context.Context, runtime *Runtime, args []string) error {
+		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
 			requests := []transport.Request{
 				{Method: "GET", Path: "/api/v1/projects"},
 				{Method: "GET", Path: "/api/v1/instances"},
@@ -93,8 +81,8 @@ func initCommand() *Command {
 				{Method: "GET", Path: "/api/v1/clusters"},
 			}
 
-			return runSequence(ctx, runtime, "Day 2 scaffold: init dependencies are wired to the transport abstraction.", requests...)
-		},
+			return runAuthorizedSequence(ctx, runtime, "Day 2 scaffold: init dependencies are wired to the transport abstraction.", credential, requests...)
+		}),
 	}
 }
 
@@ -103,12 +91,12 @@ func linkCommand() *Command {
 		Name:    "link",
 		Summary: "Connect the local repo to a project and GitHub App installation.",
 		Usage:   "lazyops link",
-		Run: func(ctx context.Context, runtime *Runtime, args []string) error {
-			return renderRequest(ctx, runtime, "Day 2 scaffold: link is wired to the transport abstraction.", transport.Request{
+		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
+			return renderAuthorizedRequest(ctx, runtime, "Day 2 scaffold: link is wired to the transport abstraction.", credential, transport.Request{
 				Method: "POST",
 				Path:   "/api/v1/projects/prj_demo/repo-link",
 			})
-		},
+		}),
 	}
 }
 
@@ -117,7 +105,7 @@ func logsCommand() *Command {
 		Name:    "logs",
 		Summary: "Inspect service logs.",
 		Usage:   "lazyops logs <service>",
-		Run: func(ctx context.Context, runtime *Runtime, args []string) error {
+		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
 			if len(args) < 1 {
 				return fmt.Errorf("usage: lazyops logs <service>")
 			}
@@ -127,14 +115,14 @@ func logsCommand() *Command {
 				return fmt.Errorf("service name is required")
 			}
 
-			return renderRequest(ctx, runtime, "Day 2 scaffold: logs is wired to the transport abstraction.", transport.Request{
+			return renderAuthorizedRequest(ctx, runtime, "Day 2 scaffold: logs is wired to the transport abstraction.", credential, transport.Request{
 				Method: "GET",
 				Path:   "/ws/logs/stream",
 				Query: map[string]string{
 					"service": service,
 				},
 			})
-		},
+		}),
 	}
 }
 
@@ -143,7 +131,7 @@ func tracesCommand() *Command {
 		Name:    "traces",
 		Summary: "Inspect distributed request flow.",
 		Usage:   "lazyops traces <correlation-id>",
-		Run: func(ctx context.Context, runtime *Runtime, args []string) error {
+		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
 			if len(args) < 1 {
 				return fmt.Errorf("usage: lazyops traces <correlation-id>")
 			}
@@ -153,11 +141,11 @@ func tracesCommand() *Command {
 				return fmt.Errorf("correlation id is required")
 			}
 
-			return renderRequest(ctx, runtime, "Day 2 scaffold: traces is wired to the transport abstraction.", transport.Request{
+			return renderAuthorizedRequest(ctx, runtime, "Day 2 scaffold: traces is wired to the transport abstraction.", credential, transport.Request{
 				Method: "GET",
 				Path:   "/api/v1/traces/" + correlationID,
 			})
-		},
+		}),
 	}
 }
 
@@ -169,6 +157,17 @@ func fixtureCommand(name string, summary string, usage string, title string, req
 		Run: func(ctx context.Context, runtime *Runtime, args []string) error {
 			return renderRequest(ctx, runtime, title, request)
 		},
+	}
+}
+
+func authFixtureCommand(name string, summary string, usage string, title string, request transport.Request) *Command {
+	return &Command{
+		Name:    name,
+		Summary: summary,
+		Usage:   usage,
+		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
+			return renderAuthorizedRequest(ctx, runtime, title, credential, request)
+		}),
 	}
 }
 
@@ -217,11 +216,5 @@ func printResponse(runtime *Runtime, request transport.Request, response transpo
 		return
 	}
 
-	var indented bytes.Buffer
-	if err := json.Indent(&indented, response.Body, "", "  "); err != nil {
-		runtime.Output.Print("%s", string(response.Body))
-		return
-	}
-
-	runtime.Output.Print("%s", indented.String())
+	runtime.Output.Print("%s", string(redact.PrettyJSON(response.Body)))
 }

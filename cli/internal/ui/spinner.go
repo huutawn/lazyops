@@ -6,6 +6,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"lazyops-cli/internal/redact"
 )
 
 type Spinner interface {
@@ -99,7 +101,7 @@ func (s *terminalSpinner) Stop(message string) {
 	<-doneCh
 
 	if message != "" {
-		fmt.Fprintf(s.writer, "%s\n", message)
+		fmt.Fprintf(s.writer, "%s\n", redact.Text(message))
 	}
 }
 
@@ -114,7 +116,7 @@ func (s *terminalSpinner) loop() {
 		message := s.message
 		s.mu.Unlock()
 
-		fmt.Fprintf(s.writer, "\r%s %s", s.frames[frameIndex%len(s.frames)], message)
+		fmt.Fprintf(s.writer, "\r%s %s", s.frames[frameIndex%len(s.frames)], redact.Text(message))
 		frameIndex++
 
 		select {

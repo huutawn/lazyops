@@ -10,6 +10,7 @@ import (
 	"lazyops-server/internal/config"
 	"lazyops-server/internal/models"
 	"lazyops-server/internal/service"
+	"lazyops-server/pkg/utils"
 )
 
 func SeedAdmin(db *gorm.DB, cfg config.Config) error {
@@ -33,10 +34,12 @@ func SeedAdmin(db *gorm.DB, cfg config.Config) error {
 	}
 
 	admin := models.User{
-		Name:         cfg.Seed.AdminName,
+		ID:           utils.NewPrefixedID("usr"),
+		DisplayName:  cfg.Seed.AdminName,
 		Email:        email,
 		PasswordHash: string(passwordHash),
 		Role:         service.RoleAdmin,
+		Status:       "active",
 	}
 
 	return db.Create(&admin).Error
