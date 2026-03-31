@@ -238,6 +238,66 @@ func TestInitPrintsRepoScanPreviewUsingServiceAbstraction(t *testing.T) {
 	}
 }
 
+func TestInitPrintsServiceHintsAndAmbiguityWarnings(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(cwd); chdirErr != nil {
+			t.Fatalf("Chdir() restore error = %v", chdirErr)
+		}
+	}()
+
+	repoRoot := t.TempDir()
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "keep"), "")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "go.mod"), "module api\n\ngo 1.22.2\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "cmd", "server", "main.go"), "package main\nfunc main(){}\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "internal", "api", "routes.go"), `package api; func routes(){ GET("/healthz", nil) }`)
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "internal", "config", "config.go"), "package config\nconst _ = `SERVER_PORT\", \"8080\"`\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "workers", "jobs", "requirements.txt"), "fastapi==0.110.0\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "workers", "jobs", "app.py"), "print('hi')\n")
+
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "start hint for api: go run ./cmd/server") {
+		t.Fatalf("expected Go start hint in init output, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "health hint for api: /healthz on 8080") {
+		t.Fatalf("expected Go health hint in init output, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "start hint for jobs: python app.py") {
+		t.Fatalf("expected Python start hint in init output, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "service jobs: no health hint inferred yet") {
+		t.Fatalf("expected ambiguity warning in stderr, got %q", stderr.String())
+	}
+}
+
 func TestLogoutRevokesRemoteSessionAndClearsCredentials(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

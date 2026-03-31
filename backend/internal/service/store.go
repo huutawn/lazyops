@@ -28,6 +28,13 @@ type OAuthIdentityStore interface {
 	UpdateProfile(identityID, email, avatarURL string, at time.Time) error
 }
 
+type GitHubInstallationStore interface {
+	Upsert(installation *models.GitHubInstallation) error
+	ListByUser(userID string) ([]models.GitHubInstallation, error)
+	GetByInstallationIDForUser(userID string, installationID int64) (*models.GitHubInstallation, error)
+	RevokeMissing(userID string, activeInstallationIDs []int64, at time.Time) error
+}
+
 type AgentStore interface {
 	Create(agent *models.Agent) error
 	ListByUser(userID string) ([]models.Agent, error)

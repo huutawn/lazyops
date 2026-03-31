@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"lazyops-server/internal/ai"
 	"lazyops-server/internal/config"
+	gh "lazyops-server/internal/github"
 	"lazyops-server/internal/hub"
 	"lazyops-server/internal/oauth"
 	"lazyops-server/internal/repository"
@@ -18,11 +19,13 @@ type Application struct {
 	AI                 *ai.GeminiClient
 	UserRepo           *repository.UserRepository
 	OAuthIdentityRepo  *repository.OAuthIdentityRepository
+	GitHubInstallRepo  *repository.GitHubInstallationRepository
 	PATRepo            *repository.PersonalAccessTokenRepository
 	AgentRepo          *repository.AgentRepository
 	AuthService        *service.AuthService
 	GoogleOAuthService *service.GoogleOAuthService
 	GitHubOAuthService *service.GitHubOAuthService
+	GitHubInstallSvc   *service.GitHubInstallationService
 	UserService        *service.UserService
 	AgentService       *service.AgentService
 }
@@ -42,6 +45,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 
 	userRepo := repository.NewUserRepository(db)
 	oauthIdentityRepo := repository.NewOAuthIdentityRepository(db)
+	githubInstallRepo := repository.NewGitHubInstallationRepository(db)
 	patRepo := repository.NewPersonalAccessTokenRepository(db)
 	agentRepo := repository.NewAgentRepository(db)
 	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT)
@@ -63,6 +67,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		cfg.JWT.Secret,
 		cfg.GitHubOAuth,
 	)
+	githubInstallProvider := gh.NewAppInstallationsProvider(nil)
+	githubInstallSvc := service.NewGitHubInstallationService(
+		oauthIdentityRepo,
+		githubInstallRepo,
+		githubInstallProvider,
+	)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
@@ -75,11 +85,13 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		AI:                 ai.NewGeminiClient(""),
 		UserRepo:           userRepo,
 		OAuthIdentityRepo:  oauthIdentityRepo,
+		GitHubInstallRepo:  githubInstallRepo,
 		PATRepo:            patRepo,
 		AgentRepo:          agentRepo,
 		AuthService:        authService,
 		GoogleOAuthService: googleOAuthService,
 		GitHubOAuthService: githubOAuthService,
+		GitHubInstallSvc:   githubInstallSvc,
 		UserService:        userService,
 		AgentService:       agentService,
 	}, nil

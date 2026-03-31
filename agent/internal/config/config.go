@@ -20,6 +20,7 @@ type Config struct {
 	TargetRef           string
 	ControlPlaneURL     string
 	StateDir            string
+	RuntimeRootDir      string
 	StateEncryptionKey  string
 	ShutdownTimeout     time.Duration
 	HeartbeatInterval   time.Duration
@@ -44,6 +45,7 @@ func Load() (Config, error) {
 		TargetRef:           envOrDefault("AGENT_TARGET_REF", "local-dev"),
 		ControlPlaneURL:     envOrDefault("AGENT_CONTROL_PLANE_URL", "ws://127.0.0.1:8080"),
 		StateDir:            envOrDefault("AGENT_STATE_DIR", ".agent-state"),
+		RuntimeRootDir:      strings.TrimSpace(os.Getenv("AGENT_RUNTIME_ROOT_DIR")),
 		StateEncryptionKey:  strings.TrimSpace(os.Getenv("AGENT_STATE_ENCRYPTION_KEY")),
 		ShutdownTimeout:     durationOrDefault("AGENT_SHUTDOWN_TIMEOUT", 10*time.Second),
 		HeartbeatInterval:   durationOrDefault("AGENT_HEARTBEAT_INTERVAL", 30*time.Second),

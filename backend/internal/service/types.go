@@ -54,6 +54,40 @@ type PATRevokeResult struct {
 	Revoked bool
 }
 
+type SyncGitHubInstallationsCommand struct {
+	UserID            string
+	GitHubAccessToken string
+}
+
+type GitHubInstallationRepositoryScope struct {
+	ID         int64
+	Name       string
+	FullName   string
+	OwnerLogin string
+	Private    bool
+}
+
+type GitHubInstallationScope struct {
+	RepositorySelection string
+	Permissions         map[string]string
+	Repositories        []GitHubInstallationRepositoryScope
+}
+
+type GitHubInstallationRecord struct {
+	ID                   string
+	GitHubInstallationID int64
+	AccountLogin         string
+	AccountType          string
+	InstalledAt          time.Time
+	RevokedAt            *time.Time
+	Status               string
+	Scope                GitHubInstallationScope
+}
+
+type GitHubInstallationSyncResult struct {
+	Items []GitHubInstallationRecord
+}
+
 type CreateAgentCommand struct {
 	UserID  string
 	AgentID string

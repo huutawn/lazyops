@@ -1,5 +1,6 @@
 .gocache/
 .env
 ./backend/config/.env
+.codex
 *.md
 **/*.md

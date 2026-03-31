@@ -12,6 +12,7 @@ import (
 func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	healthController := controller.NewHealthController(app.Config)
 	authController := controller.NewAuthController(app.AuthService, app.GoogleOAuthService, app.GitHubOAuthService, app.Config)
+	githubController := controller.NewGitHubController(app.GitHubInstallSvc)
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
@@ -43,6 +44,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		protected.Use(middleware.Authenticate(app.AuthService))
 		{
 			protected.POST("/auth/pat/revoke", authController.RevokePAT)
+			protected.POST("/github/app/installations/sync", githubController.SyncInstallations)
 			protected.GET("/users/me", userController.Me)
 			protected.GET("/agents", agentController.List)
 			protected.POST("/agents",

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"lazyops-agent/internal/enroll"
 	agentlogger "lazyops-agent/internal/logger"
 	"lazyops-agent/internal/reporting"
+	agentruntime "lazyops-agent/internal/runtime"
 	"lazyops-agent/internal/state"
 )
 
@@ -55,17 +57,27 @@ func New(cfg config.Config) (*App, error) {
 	if !strings.HasSuffix(statePath, ".json") {
 		statePath = strings.TrimRight(statePath, "/") + "/agent-state.json"
 	}
+	runtimeRoot := strings.TrimSpace(cfg.RuntimeRootDir)
+	if runtimeRoot == "" {
+		runtimeRoot = filepath.Join(filepath.Dir(statePath), "runtime")
+	}
 
-	commandDispatcher := dispatcher.New(logger, dispatcher.NewDefaultRegistry(), client)
+	store := state.New(statePath)
+	runtimeDriver := agentruntime.NewFilesystemDriver(logger, runtimeRoot)
+	runtimeService := agentruntime.NewService(logger, store, runtimeDriver)
+
+	registry := dispatcher.NewDefaultRegistry()
+	runtimeService.Register(registry)
+	commandDispatcher := dispatcher.New(logger, registry, client)
 	client.RegisterCommandHandler(commandDispatcher.Handler())
 
 	return &App{
 		cfg:        cfg,
 		logger:     logger,
-		store:      state.New(statePath),
+		store:      store,
 		control:    client,
 		dispatcher: commandDispatcher,
-		enroll:     enroll.New(state.New(statePath), client, logger, cfg.StateEncryptionKey),
+		enroll:     enroll.New(store, client, logger, cfg.StateEncryptionKey),
 		reporter:   reporting.New(logger, cfg.HeartbeatInterval),
 	}, nil
 }

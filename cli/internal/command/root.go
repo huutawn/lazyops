@@ -84,7 +84,12 @@ func initCommand() *Command {
 				return fmt.Errorf("could not scan the local repository. next: verify the working tree is readable and retry `lazyops init`: %w", err)
 			}
 
-			printRepoScanPreview(runtime, scanResult)
+			detectionResult, err := repo.DetectServices(scanResult)
+			if err != nil {
+				return fmt.Errorf("could not turn scan results into service candidates. next: fix the detected service layout and retry `lazyops init`: %w", err)
+			}
+
+			printRepoScanPreview(runtime, scanResult, detectionResult)
 
 			requests := []transport.Request{
 				{Method: "GET", Path: "/api/v1/projects"},
@@ -98,19 +103,40 @@ func initCommand() *Command {
 	}
 }
 
-func printRepoScanPreview(runtime *Runtime, result repo.RepoScanResult) {
+func printRepoScanPreview(runtime *Runtime, scanResult repo.RepoScanResult, detectionResult repo.DetectionResult) {
 	runtime.Output.Success("repo scan complete")
-	runtime.Output.Info("repo root: %s", result.RepoRoot)
-	runtime.Output.Info("repo layout: %s", result.LayoutLabel())
+	runtime.Output.Info("repo root: %s", scanResult.RepoRoot)
+	runtime.Output.Info("repo layout: %s", scanResult.LayoutLabel())
 
-	if len(result.Services) == 0 {
+	if len(detectionResult.Candidates) == 0 {
 		runtime.Output.Warn("no service markers found yet; expected one of package.json, go.mod, requirements.txt, or Dockerfile")
 		return
 	}
 
-	for _, service := range result.Services {
-		runtime.Output.Info("service %s -> %s (%s)", service.Name, service.Path, strings.Join(service.SignalNames(), ", "))
+	for _, service := range detectionResult.Candidates {
+		runtime.Output.Info("service %s -> %s (%s)", service.Name, service.Path, strings.Join(signalNames(service.Signals), ", "))
+		if strings.TrimSpace(service.StartHint) != "" {
+			runtime.Output.Info("start hint for %s: %s", service.Name, service.StartHint)
+		}
+		if strings.TrimSpace(service.Healthcheck.Path) != "" {
+			if service.Healthcheck.Port > 0 {
+				runtime.Output.Info("health hint for %s: %s on %d", service.Name, service.Healthcheck.Path, service.Healthcheck.Port)
+			} else {
+				runtime.Output.Info("health hint for %s: %s", service.Name, service.Healthcheck.Path)
+			}
+		}
+		for _, warning := range service.Warnings {
+			runtime.Output.Warn("service %s: %s", service.Name, warning)
+		}
 	}
+}
+
+func signalNames(signals []repo.ServiceSignal) []string {
+	names := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		names = append(names, string(signal))
+	}
+	return names
 }
 
 func linkCommand() *Command {

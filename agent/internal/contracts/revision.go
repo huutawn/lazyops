@@ -16,6 +16,19 @@ type DesiredRevisionPayload struct {
 	PlacementAssignments []PlacementAssignment      `json:"placement_assignments,omitempty"`
 }
 
+type ProjectMetadataPayload struct {
+	ProjectID string            `json:"project_id"`
+	Name      string            `json:"name,omitempty"`
+	Slug      string            `json:"slug,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
+type PrepareReleaseWorkspacePayload struct {
+	Project  ProjectMetadataPayload   `json:"project"`
+	Binding  DeploymentBindingPayload `json:"binding"`
+	Revision DesiredRevisionPayload   `json:"revision"`
+}
+
 type DeploymentBindingPayload struct {
 	BindingID           string              `json:"binding_id"`
 	ProjectID           string              `json:"project_id"`

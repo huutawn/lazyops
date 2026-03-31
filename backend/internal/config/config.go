@@ -16,6 +16,7 @@ type Config struct {
 	PAT         PATConfig
 	GoogleOAuth GoogleOAuthConfig
 	GitHubOAuth GitHubOAuthConfig
+	GitHubApp   GitHubAppConfig
 	Security    SecurityConfig
 	Seed        SeedConfig
 	WebSocket   WebSocketConfig
@@ -73,6 +74,18 @@ type GitHubOAuthConfig struct {
 	SuccessRedirectURL string
 	FailureRedirectURL string
 	StateTTL           time.Duration
+}
+
+type GitHubAppConfig struct {
+	AppID         string
+	ClientID      string
+	ClientSecret  string
+	PrivateKey    string
+	WebhookSecret string
+	Name          string
+	CallbackURL   string
+	WebhookURL    string
+	InstallURL    string
 }
 
 type SecurityConfig struct {
@@ -146,6 +159,17 @@ func Load() Config {
 			SuccessRedirectURL: getEnv("GITHUB_OAUTH_SUCCESS_REDIRECT_URL", ""),
 			FailureRedirectURL: getEnv("GITHUB_OAUTH_FAILURE_REDIRECT_URL", ""),
 			StateTTL:           getEnvAsDuration("GITHUB_OAUTH_STATE_TTL", 10*time.Minute),
+		},
+		GitHubApp: GitHubAppConfig{
+			AppID:         getEnv("GITHUB_APP_ID", ""),
+			ClientID:      getEnv("GITHUB_APP_CLIENT_ID", ""),
+			ClientSecret:  getEnv("GITHUB_APP_CLIENT_SECRET", ""),
+			PrivateKey:    getEnv("GITHUB_APP_PRIVATE_KEY", ""),
+			WebhookSecret: getEnv("GITHUB_APP_WEBHOOK_SECRET", ""),
+			Name:          getEnv("GITHUB_APP_NAME", ""),
+			CallbackURL:   getEnv("GITHUB_APP_CALLBACK_URL", ""),
+			WebhookURL:    getEnv("GITHUB_APP_WEBHOOK_URL", ""),
+			InstallURL:    getEnv("GITHUB_APP_INSTALL_URL", ""),
 		},
 		Security: SecurityConfig{
 			AllowedOrigins:         getEnvAsSlice("ALLOWED_ORIGINS", []string{"*"}),
