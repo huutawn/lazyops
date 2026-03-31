@@ -4,6 +4,7 @@ import (
 	"lazyops-server/internal/ai"
 	"lazyops-server/internal/config"
 	"lazyops-server/internal/hub"
+	"lazyops-server/internal/oauth"
 	"lazyops-server/internal/repository"
 	"lazyops-server/internal/service"
 
@@ -11,16 +12,18 @@ import (
 )
 
 type Application struct {
-	Config       config.Config
-	DB           *gorm.DB
-	Hub          *hub.Hub
-	AI           *ai.GeminiClient
-	UserRepo     *repository.UserRepository
-	PATRepo      *repository.PersonalAccessTokenRepository
-	AgentRepo    *repository.AgentRepository
-	AuthService  *service.AuthService
-	UserService  *service.UserService
-	AgentService *service.AgentService
+	Config             config.Config
+	DB                 *gorm.DB
+	Hub                *hub.Hub
+	AI                 *ai.GeminiClient
+	UserRepo           *repository.UserRepository
+	OAuthIdentityRepo  *repository.OAuthIdentityRepository
+	PATRepo            *repository.PersonalAccessTokenRepository
+	AgentRepo          *repository.AgentRepository
+	AuthService        *service.AuthService
+	GoogleOAuthService *service.GoogleOAuthService
+	UserService        *service.UserService
+	AgentService       *service.AgentService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -37,24 +40,36 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	}
 
 	userRepo := repository.NewUserRepository(db)
+	oauthIdentityRepo := repository.NewOAuthIdentityRepository(db)
 	patRepo := repository.NewPersonalAccessTokenRepository(db)
 	agentRepo := repository.NewAgentRepository(db)
 	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT)
+	googleProvider := oauth.NewGoogleProvider(cfg.GoogleOAuth, nil)
+	googleOAuthService := service.NewGoogleOAuthService(
+		userRepo,
+		oauthIdentityRepo,
+		authService,
+		googleProvider,
+		cfg.JWT.Secret,
+		cfg.GoogleOAuth,
+	)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
 	wsHub.Start()
 
 	return &Application{
-		Config:       cfg,
-		DB:           db,
-		Hub:          wsHub,
-		AI:           ai.NewGeminiClient(""),
-		UserRepo:     userRepo,
-		PATRepo:      patRepo,
-		AgentRepo:    agentRepo,
-		AuthService:  authService,
-		UserService:  userService,
-		AgentService: agentService,
+		Config:             cfg,
+		DB:                 db,
+		Hub:                wsHub,
+		AI:                 ai.NewGeminiClient(""),
+		UserRepo:           userRepo,
+		OAuthIdentityRepo:  oauthIdentityRepo,
+		PATRepo:            patRepo,
+		AgentRepo:          agentRepo,
+		AuthService:        authService,
+		GoogleOAuthService: googleOAuthService,
+		UserService:        userService,
+		AgentService:       agentService,
 	}, nil
 }

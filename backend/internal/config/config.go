@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	App       AppConfig
-	Server    ServerConfig
-	Database  DatabaseConfig
-	JWT       JWTConfig
-	PAT       PATConfig
-	Security  SecurityConfig
-	Seed      SeedConfig
-	WebSocket WebSocketConfig
+	App         AppConfig
+	Server      ServerConfig
+	Database    DatabaseConfig
+	JWT         JWTConfig
+	PAT         PATConfig
+	GoogleOAuth GoogleOAuthConfig
+	Security    SecurityConfig
+	Seed        SeedConfig
+	WebSocket   WebSocketConfig
 }
 
 type AppConfig struct {
@@ -53,6 +54,16 @@ type PATConfig struct {
 	ExpiresIn time.Duration
 }
 
+type GoogleOAuthConfig struct {
+	Enabled            bool
+	ClientID           string
+	ClientSecret       string
+	CallbackURL        string
+	SuccessRedirectURL string
+	FailureRedirectURL string
+	StateTTL           time.Duration
+}
+
 type SecurityConfig struct {
 	AllowedOrigins         []string
 	RateLimitRPS           float64
@@ -75,6 +86,8 @@ type WebSocketConfig struct {
 }
 
 func Load() Config {
+	jwtSecret := getEnv("JWT_SECRET", "change-me-in-production")
+
 	return Config{
 		App: AppConfig{
 			Name:        getEnv("APP_NAME", "lazyops-server"),
@@ -98,12 +111,21 @@ func Load() Config {
 			MaxOpenConns: getEnvAsInt("DB_MAX_OPEN_CONNS", 50),
 		},
 		JWT: JWTConfig{
-			Secret:    getEnv("JWT_SECRET", "change-me-in-production"),
+			Secret:    jwtSecret,
 			Issuer:    getEnv("JWT_ISSUER", "lazyops-server"),
 			ExpiresIn: getEnvAsDuration("JWT_EXPIRES_IN", 24*time.Hour),
 		},
 		PAT: PATConfig{
 			ExpiresIn: getEnvAsDuration("PAT_EXPIRES_IN", 30*24*time.Hour),
+		},
+		GoogleOAuth: GoogleOAuthConfig{
+			Enabled:            getEnvAsBool("GOOGLE_OAUTH_ENABLED", true),
+			ClientID:           getEnv("GOOGLE_CLIENT_ID", ""),
+			ClientSecret:       getEnv("GOOGLE_CLIENT_SECRET", ""),
+			CallbackURL:        getEnv("GOOGLE_CALLBACK_URL", ""),
+			SuccessRedirectURL: getEnv("GOOGLE_OAUTH_SUCCESS_REDIRECT_URL", ""),
+			FailureRedirectURL: getEnv("GOOGLE_OAUTH_FAILURE_REDIRECT_URL", ""),
+			StateTTL:           getEnvAsDuration("GOOGLE_OAUTH_STATE_TTL", 10*time.Minute),
 		},
 		Security: SecurityConfig{
 			AllowedOrigins:         getEnvAsSlice("ALLOWED_ORIGINS", []string{"*"}),
@@ -204,4 +226,20 @@ func getEnvAsSlice(key string, fallback []string) []string {
 		return fallback
 	}
 	return items
+}
+
+func getEnvAsBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(getEnv(key, "")))
+	if value == "" {
+		return fallback
+	}
+
+	switch value {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
 }

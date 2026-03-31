@@ -85,6 +85,23 @@ func TestDefaultCapabilitiesKeepSidecarPrecedence(t *testing.T) {
 	}
 }
 
+func TestDefaultCapabilitiesAdvertiseNetworkSupport(t *testing.T) {
+	capabilities := defaultCapabilities(config.Config{
+		RuntimeMode: contracts.RuntimeModeDistributedMesh,
+		AgentKind:   contracts.AgentKindInstance,
+	})
+
+	if !capabilities.Network.OutboundOnly {
+		t.Fatal("expected network capability to remain outbound-only")
+	}
+	if !capabilities.Network.PrivateOverlay {
+		t.Fatal("expected distributed-mesh capability to advertise private overlay support")
+	}
+	if len(capabilities.Network.SupportedMeshProviders) != 2 {
+		t.Fatalf("expected 2 supported mesh providers, got %d", len(capabilities.Network.SupportedMeshProviders))
+	}
+}
+
 func TestBootstrapLocalStatePersistsSnapshot(t *testing.T) {
 	cfg := config.Config{
 		AppName:           "lazyops-agent",
@@ -129,6 +146,12 @@ func TestBootstrapLocalStatePersistsSnapshot(t *testing.T) {
 	}
 	if updated.CapabilitySnapshot.LastComputedAt.IsZero() {
 		t.Fatal("expected bootstrap to persist capability snapshot")
+	}
+	if updated.CapabilitySnapshot.Fingerprint == "" {
+		t.Fatal("expected bootstrap to persist capability fingerprint")
+	}
+	if updated.CapabilitySnapshot.Version == 0 {
+		t.Fatal("expected bootstrap to persist capability version")
 	}
 }
 

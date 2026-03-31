@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	RoleAdmin    = "admin"
-	RoleOperator = "operator"
-	RoleViewer   = "viewer"
+	RoleAdmin            = "admin"
+	RoleOperator         = "operator"
+	RoleViewer           = "viewer"
+	WebSessionCookieName = "lazyops_session"
 )
 
 var (
@@ -251,6 +252,10 @@ func (s *AuthService) parsePATToken(token string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+func (s *AuthService) IssueWebSessionForUser(user *models.User) (*AuthResult, error) {
+	return s.issueWebSession(user)
 }
 
 func (s *AuthService) issueWebSession(user *models.User) (*AuthResult, error) {

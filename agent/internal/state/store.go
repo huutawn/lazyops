@@ -83,6 +83,7 @@ type AgentLocalState struct {
 	Metadata           AgentMetadata           `json:"metadata"`
 	Enrollment         EnrollmentState         `json:"enrollment"`
 	RevisionCache      RevisionCache           `json:"revision_cache"`
+	Health             HealthSnapshotState     `json:"health"`
 	CapabilitySnapshot CapabilitySnapshotState `json:"capability_snapshot"`
 }
 
@@ -114,15 +115,30 @@ type RevisionCache struct {
 	UpdatedAt         time.Time `json:"updated_at,omitempty"`
 }
 
+type HealthSnapshotState struct {
+	Status    contracts.AgentHealthStatus `json:"status,omitempty"`
+	Summary   string                      `json:"summary,omitempty"`
+	UpdatedAt time.Time                   `json:"updated_at,omitempty"`
+}
+
 type CapabilitySnapshotState struct {
-	LastComputedAt time.Time                         `json:"last_computed_at,omitempty"`
-	Payload        contracts.CapabilityReportPayload `json:"payload"`
+	LastComputedAt          time.Time                         `json:"last_computed_at,omitempty"`
+	Fingerprint             string                            `json:"fingerprint,omitempty"`
+	Version                 int64                             `json:"version,omitempty"`
+	LastReportedAt          time.Time                         `json:"last_reported_at,omitempty"`
+	LastReportedFingerprint string                            `json:"last_reported_fingerprint,omitempty"`
+	LastReportedVersion     int64                             `json:"last_reported_version,omitempty"`
+	Payload                 contracts.CapabilityReportPayload `json:"payload"`
+	LastReportedPayload     contracts.CapabilityReportPayload `json:"last_reported_payload"`
 }
 
 func DefaultState() AgentLocalState {
 	return AgentLocalState{
 		Metadata: AgentMetadata{
 			CurrentState: contracts.AgentStateBootstrap,
+		},
+		Health: HealthSnapshotState{
+			Status: contracts.AgentHealthOffline,
 		},
 	}
 }

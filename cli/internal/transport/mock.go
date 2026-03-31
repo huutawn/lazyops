@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"lazyops-cli/internal/contracts"
 )
 
 type MockTransport struct {
@@ -178,60 +180,183 @@ func mockPATRevoke(req Request) (Response, error) {
 }
 
 func DefaultFixtures() map[string]Response {
+	projectCreatedAt := time.Date(2026, time.March, 31, 12, 0, 0, 0, time.UTC)
+	installationInstalledAt := projectCreatedAt.Add(-24 * time.Hour)
+	instanceCreatedAt := projectCreatedAt.Add(-72 * time.Hour)
+	bindingCreatedAt := projectCreatedAt.Add(-6 * time.Hour)
+	traceTimestamp := projectCreatedAt
+
+	projectList := contracts.ProjectsResponse{
+		Projects: []contracts.Project{
+			{
+				ID:            "prj_demo",
+				UserID:        "usr_demo",
+				Name:          "Acme Shop",
+				Slug:          "acme-shop",
+				DefaultBranch: "main",
+				CreatedAt:     projectCreatedAt,
+			},
+		},
+	}
+
+	installations := contracts.GitHubInstallationsResponse{
+		Installations: []contracts.GitHubInstallation{
+			{
+				ID:                   "ghi_demo",
+				UserID:               "usr_demo",
+				GitHubInstallationID: 48151623,
+				AccountLogin:         "lazyops",
+				AccountType:          "Organization",
+				ScopeJSON: map[string]any{
+					"repositories": []map[string]any{
+						{
+							"id":             1001,
+							"name":           "acme-shop",
+							"owner":          "lazyops",
+							"default_branch": "main",
+						},
+					},
+					"permissions": map[string]any{
+						"contents": "read",
+						"metadata": "read",
+					},
+				},
+				InstalledAt: installationInstalledAt,
+			},
+		},
+	}
+
+	instances := contracts.InstancesResponse{
+		Instances: []contracts.Instance{
+			{
+				ID:        "inst_demo",
+				UserID:    "usr_demo",
+				Name:      "prod-solo-1",
+				PublicIP:  "203.0.113.10",
+				PrivateIP: "10.10.0.10",
+				AgentID:   "agt_inst_demo",
+				Status:    "online",
+				LabelsJSON: map[string]any{
+					"region": "ap-southeast-1",
+					"tier":   "prod",
+				},
+				RuntimeCapabilitiesJSON: map[string]any{
+					"docker":     true,
+					"scale_zero": true,
+				},
+				CreatedAt: instanceCreatedAt,
+			},
+		},
+	}
+
+	meshNetworks := contracts.MeshNetworksResponse{
+		MeshNetworks: []contracts.MeshNetwork{
+			{
+				ID:        "mesh_demo",
+				UserID:    "usr_demo",
+				Name:      "prod-ap",
+				Provider:  "wireguard",
+				CIDR:      "10.42.0.0/16",
+				Status:    "online",
+				CreatedAt: instanceCreatedAt,
+			},
+		},
+	}
+
+	clusters := contracts.ClustersResponse{
+		Clusters: []contracts.Cluster{
+			{
+				ID:                  "cls_demo",
+				UserID:              "usr_demo",
+				Name:                "prod-k3s-ap",
+				Provider:            "k3s",
+				KubeconfigSecretRef: "secret://clusters/cls_demo/kubeconfig",
+				Status:              "registered",
+				CreatedAt:           instanceCreatedAt,
+			},
+		},
+	}
+
+	binding := contracts.DeploymentBinding{
+		ID:          "bind_demo",
+		ProjectID:   "prj_demo",
+		Name:        "prod-ap-mesh",
+		TargetRef:   "prod-ap",
+		RuntimeMode: "distributed-mesh",
+		TargetKind:  "mesh",
+		TargetID:    "mesh_demo",
+		PlacementPolicyJSON: map[string]any{
+			"strategy": "balanced",
+		},
+		DomainPolicyJSON: map[string]any{
+			"provider": "sslip.io",
+		},
+		CompatibilityPolicyJSON: map[string]any{
+			"env_injection":    true,
+			"localhost_rescue": true,
+		},
+		ScaleToZeroPolicyJSON: map[string]any{
+			"enabled": false,
+		},
+		CreatedAt: bindingCreatedAt,
+	}
+
+	bindingList := contracts.DeploymentBindingsResponse{
+		Bindings: []contracts.DeploymentBinding{binding},
+	}
+
+	traceSummary := contracts.TraceSummary{
+		CorrelationID:  "corr-demo",
+		ServicePath:    []string{"gateway", "web", "api", "postgres"},
+		NodeHops:       []string{"edge-ap-1", "mesh-ap-2", "db-ap-1"},
+		LatencyHotspot: "api -> postgres",
+		TotalLatencyMS: 182,
+	}
+
+	logsPreview := contracts.LogsStreamPreview{
+		Service: "api",
+		Cursor:  "cursor_demo_001",
+		Lines: []contracts.LogLine{
+			{
+				Timestamp: traceTimestamp,
+				Level:     "info",
+				Message:   "api listening on :8080",
+				Node:      "edge-ap-1",
+			},
+			{
+				Timestamp: traceTimestamp.Add(2 * time.Second),
+				Level:     "info",
+				Message:   "GET /health 200 1.2ms",
+				Node:      "edge-ap-1",
+			},
+		},
+	}
+
 	return map[string]Response{
 		Request{Method: "GET", Path: "/api/v1/projects"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "projects-list",
-			Body: mustJSON(map[string]any{
-				"projects": []map[string]any{
-					{
-						"id":   "prj_demo",
-						"slug": "acme-shop",
-						"name": "Acme Shop",
-					},
-				},
-			}),
+			Body:        mustJSON(projectList),
+		},
+		Request{Method: "POST", Path: "/api/v1/github/app/installations/sync"}.Key(): {
+			StatusCode:  200,
+			FixtureName: "github-installations",
+			Body:        mustJSON(installations),
 		},
 		Request{Method: "GET", Path: "/api/v1/instances"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "instances-list",
-			Body: mustJSON(map[string]any{
-				"instances": []map[string]any{
-					{
-						"id":     "inst_demo",
-						"name":   "prod-solo-1",
-						"status": "online",
-					},
-				},
-			}),
+			Body:        mustJSON(instances),
 		},
 		Request{Method: "GET", Path: "/api/v1/mesh-networks"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "mesh-list",
-			Body: mustJSON(map[string]any{
-				"mesh_networks": []map[string]any{
-					{
-						"id":       "mesh_demo",
-						"name":     "prod-ap",
-						"provider": "wireguard",
-						"status":   "online",
-					},
-				},
-			}),
+			Body:        mustJSON(meshNetworks),
 		},
 		Request{Method: "GET", Path: "/api/v1/clusters"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "clusters-list",
-			Body: mustJSON(map[string]any{
-				"clusters": []map[string]any{
-					{
-						"id":       "cls_demo",
-						"name":     "prod-k3s-ap",
-						"provider": "k3s",
-						"status":   "registered",
-					},
-				},
-			}),
+			Body:        mustJSON(clusters),
 		},
 		Request{Method: "POST", Path: "/api/v1/projects/prj_demo/repo-link"}.Key(): {
 			StatusCode:  200,
@@ -246,17 +371,12 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "GET", Path: "/api/v1/projects/prj_demo/deployment-bindings"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "deployment-bindings",
-			Body: mustJSON(map[string]any{
-				"bindings": []map[string]any{
-					{
-						"id":           "bind_demo",
-						"target_ref":   "prod-ap",
-						"runtime_mode": "distributed-mesh",
-						"target_kind":  "mesh",
-						"status":       "selectable",
-					},
-				},
-			}),
+			Body:        mustJSON(bindingList),
+		},
+		Request{Method: "POST", Path: "/api/v1/projects/prj_demo/deployment-bindings"}.Key(): {
+			StatusCode:  201,
+			FixtureName: "deployment-binding-created",
+			Body:        mustJSON(binding),
 		},
 		Request{Method: "GET", Path: "/mock/v1/doctor", Query: map[string]string{"project": "prj_demo"}}.Key(): {
 			StatusCode:  200,
@@ -281,24 +401,12 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "GET", Path: "/ws/logs/stream", Query: map[string]string{"service": "api"}}.Key(): {
 			StatusCode:  200,
 			FixtureName: "logs-stream",
-			Body: mustJSON(map[string]any{
-				"service": "api",
-				"lines": []string{
-					"2026-03-31T12:00:00Z api listening on :8080",
-					"2026-03-31T12:00:02Z GET /health 200 1.2ms",
-				},
-			}),
+			Body:        mustJSON(logsPreview),
 		},
-		Request{Method: "GET", Path: "/api/v1/traces/corr_demo"}.Key(): {
+		Request{Method: "GET", Path: "/api/v1/traces/corr-demo"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "trace-summary",
-			Body: mustJSON(map[string]any{
-				"correlation_id": "corr_demo",
-				"path": []string{
-					"gateway -> web -> api -> postgres",
-				},
-				"latency_hotspot": "api -> postgres",
-			}),
+			Body:        mustJSON(traceSummary),
 		},
 		Request{Method: "POST", Path: "/api/v1/tunnels/db/sessions"}.Key(): {
 			StatusCode:  201,

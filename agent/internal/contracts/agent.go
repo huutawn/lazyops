@@ -1,6 +1,9 @@
 package contracts
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type EnrollAgentRequest struct {
 	BootstrapToken string                  `json:"bootstrap_token"`
@@ -18,20 +21,25 @@ type EnrollAgentResponse struct {
 }
 
 type HeartbeatPayload struct {
-	AgentID       string                  `json:"agent_id"`
-	SessionID     string                  `json:"session_id"`
-	State         AgentState              `json:"state"`
-	RuntimeMode   RuntimeMode             `json:"runtime_mode"`
-	AgentKind     AgentKind               `json:"agent_kind"`
-	SentAt        time.Time               `json:"sent_at"`
-	UptimeSeconds int64                   `json:"uptime_seconds"`
-	Capabilities  CapabilityReportPayload `json:"capabilities,omitempty"`
+	AgentID          string                       `json:"agent_id"`
+	SessionID        string                       `json:"session_id"`
+	State            AgentState                   `json:"state"`
+	HealthStatus     AgentHealthStatus            `json:"health_status"`
+	HealthSummary    string                       `json:"health_summary,omitempty"`
+	RuntimeMode      RuntimeMode                  `json:"runtime_mode"`
+	AgentKind        AgentKind                    `json:"agent_kind"`
+	SentAt           time.Time                    `json:"sent_at"`
+	UptimeSeconds    int64                        `json:"uptime_seconds"`
+	CapabilityHash   string                       `json:"capability_hash,omitempty"`
+	CapabilityUpdate *CapabilityDiffUpdatePayload `json:"capability_update,omitempty"`
+	Capabilities     CapabilityReportPayload      `json:"capabilities,omitempty"`
 }
 
 type CapabilityReportPayload struct {
 	AgentKind              AgentKind                `json:"agent_kind"`
 	RuntimeMode            RuntimeMode              `json:"runtime_mode"`
 	ControlChannel         ControlChannelCapability `json:"control_channel"`
+	Network                NetworkCapability        `json:"network"`
 	Gateway                GatewayCapability        `json:"gateway"`
 	Sidecar                SidecarCapability        `json:"sidecar"`
 	Mesh                   MeshCapability           `json:"mesh"`
@@ -45,6 +53,14 @@ type ControlChannelCapability struct {
 	WebSocketPath string `json:"websocket_path"`
 	OutboundOnly  bool   `json:"outbound_only"`
 	Reconnectable bool   `json:"reconnectable"`
+}
+
+type NetworkCapability struct {
+	OutboundOnly            bool           `json:"outbound_only"`
+	PrivateOverlay          bool           `json:"private_overlay"`
+	CrossNodePrivateOnly    bool           `json:"cross_node_private_only"`
+	SupportedMeshProviders  []MeshProvider `json:"supported_mesh_providers,omitempty"`
+	SupportsLocalhostRescue bool           `json:"supports_localhost_rescue"`
 }
 
 type GatewayCapability struct {
@@ -92,4 +108,25 @@ type PerformanceTargets struct {
 	IdleCPUPercent  float64 `json:"idle_cpu_percent"`
 	BufferPooling   bool    `json:"buffer_pooling"`
 	LowAllocHotPath bool    `json:"low_alloc_hot_path"`
+}
+
+type CapabilityUpdateMode string
+
+const (
+	CapabilityUpdateFull      CapabilityUpdateMode = "full"
+	CapabilityUpdateDiff      CapabilityUpdateMode = "diff"
+	CapabilityUpdateUnchanged CapabilityUpdateMode = "unchanged"
+)
+
+type CapabilityDiffUpdatePayload struct {
+	Mode          CapabilityUpdateMode       `json:"mode"`
+	Version       int64                      `json:"version"`
+	BaseVersion   int64                      `json:"base_version,omitempty"`
+	CurrentHash   string                     `json:"current_hash"`
+	BaseHash      string                     `json:"base_hash,omitempty"`
+	ChangedFields []string                   `json:"changed_fields,omitempty"`
+	Changed       map[string]json.RawMessage `json:"changed,omitempty"`
+	RemovedFields []string                   `json:"removed_fields,omitempty"`
+	Full          *CapabilityReportPayload   `json:"full,omitempty"`
+	SentAt        time.Time                  `json:"sent_at"`
 }

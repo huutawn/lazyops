@@ -21,6 +21,12 @@ type PATStore interface {
 	TouchLastUsed(tokenID string, at time.Time) error
 }
 
+type OAuthIdentityStore interface {
+	Create(identity *models.OAuthIdentity) error
+	GetByProviderSubject(provider, subject string) (*models.OAuthIdentity, error)
+	UpdateProfile(identityID, email, avatarURL string, at time.Time) error
+}
+
 type AgentStore interface {
 	Create(agent *models.Agent) error
 	ListByUser(userID string) ([]models.Agent, error)

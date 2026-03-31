@@ -32,3 +32,38 @@ func TestControlWebSocketPathIsLocked(t *testing.T) {
 		t.Fatalf("unexpected control websocket path: %s", ControlWebSocketPath)
 	}
 }
+
+func TestAgentHealthStatusesAreLocked(t *testing.T) {
+	want := []struct {
+		value AgentHealthStatus
+		name  string
+	}{
+		{value: AgentHealthOnline, name: "online"},
+		{value: AgentHealthDegraded, name: "degraded"},
+		{value: AgentHealthOffline, name: "offline"},
+		{value: AgentHealthBusy, name: "busy"},
+	}
+
+	for _, item := range want {
+		if string(item.value) != item.name {
+			t.Fatalf("expected health status %q, got %q", item.name, item.value)
+		}
+	}
+}
+
+func TestCapabilityUpdateModesAreLocked(t *testing.T) {
+	want := []struct {
+		value CapabilityUpdateMode
+		name  string
+	}{
+		{value: CapabilityUpdateFull, name: "full"},
+		{value: CapabilityUpdateDiff, name: "diff"},
+		{value: CapabilityUpdateUnchanged, name: "unchanged"},
+	}
+
+	for _, item := range want {
+		if string(item.value) != item.name {
+			t.Fatalf("expected capability update mode %q, got %q", item.name, item.value)
+		}
+	}
+}

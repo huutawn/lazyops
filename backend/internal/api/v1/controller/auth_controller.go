@@ -3,6 +3,8 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -10,15 +12,22 @@ import (
 	"lazyops-server/internal/api/response"
 	requestdto "lazyops-server/internal/api/v1/dto/request"
 	"lazyops-server/internal/api/v1/mapper"
+	"lazyops-server/internal/config"
 	"lazyops-server/internal/service"
 )
 
 type AuthController struct {
-	auth *service.AuthService
+	auth        *service.AuthService
+	googleOAuth *service.GoogleOAuthService
+	cfg         config.Config
 }
 
-func NewAuthController(auth *service.AuthService) *AuthController {
-	return &AuthController{auth: auth}
+func NewAuthController(auth *service.AuthService, googleOAuth *service.GoogleOAuthService, cfg config.Config) *AuthController {
+	return &AuthController{
+		auth:        auth,
+		googleOAuth: googleOAuth,
+		cfg:         cfg,
+	}
 }
 
 func (ctl *AuthController) Register(c *gin.Context) {
@@ -96,6 +105,66 @@ func (ctl *AuthController) CLILogin(c *gin.Context) {
 	response.JSON(c, http.StatusOK, "cli login successful", mapper.ToCLILoginResponse(*result))
 }
 
+func (ctl *AuthController) GoogleOAuthStart(c *gin.Context) {
+	result, err := ctl.googleOAuth.Start()
+	if err != nil {
+		if errors.Is(err, service.ErrOAuthNotConfigured) {
+			response.Error(c, http.StatusServiceUnavailable, "google oauth not configured", "oauth_not_configured", nil)
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "failed to start google oauth", "internal_error", err.Error())
+		return
+	}
+
+	ctl.setGoogleStateCookie(c, result.StateNonce, int(ctl.googleOAuth.StateTTL().Seconds()))
+	if strings.EqualFold(c.Query("mode"), "json") {
+		response.JSON(c, http.StatusOK, "redirect ready", gin.H{
+			"provider":          service.GoogleOAuthProviderName,
+			"authorization_url": result.AuthorizationURL,
+		})
+		return
+	}
+
+	c.Redirect(http.StatusFound, result.AuthorizationURL)
+}
+
+func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
+	stateNonce, _ := c.Cookie(service.GoogleOAuthStateCookie)
+	result, err := ctl.googleOAuth.HandleCallback(c.Request.Context(), service.GoogleOAuthCallbackInput{
+		State:         c.Query("state"),
+		StateNonce:    stateNonce,
+		Code:          c.Query("code"),
+		ProviderError: c.Query("error"),
+	})
+	ctl.clearGoogleStateCookie(c)
+
+	if err != nil {
+		status, code := mapGoogleOAuthError(err)
+		if failureURL := ctl.googleOAuth.FailureRedirectURL(); failureURL != "" {
+			c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
+			return
+		}
+
+		message := "google oauth failed"
+		if code == "invalid_oauth_state" {
+			message = "invalid oauth state"
+		}
+		if code == "account_disabled" {
+			message = "account disabled"
+		}
+		response.Error(c, status, message, code, nil)
+		return
+	}
+
+	ctl.setWebSessionCookie(c, result.AuthResult.AccessToken, int(result.AuthResult.ExpiresIn.Seconds()))
+	if successURL := ctl.googleOAuth.SuccessRedirectURL(); successURL != "" {
+		c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "google oauth successful", mapper.ToAuthResponse(*result.AuthResult))
+}
+
 func (ctl *AuthController) RevokePAT(c *gin.Context) {
 	var req requestdto.PATRevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -120,4 +189,51 @@ func (ctl *AuthController) RevokePAT(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, "pat revoked", mapper.ToPATRevokeResponse(*result))
+}
+
+func (ctl *AuthController) setGoogleStateCookie(c *gin.Context, nonce string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(service.GoogleOAuthStateCookie, nonce, maxAge, "/", "", ctl.shouldUseSecureCookies(), true)
+}
+
+func (ctl *AuthController) clearGoogleStateCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(service.GoogleOAuthStateCookie, "", -1, "/", "", ctl.shouldUseSecureCookies(), true)
+}
+
+func (ctl *AuthController) setWebSessionCookie(c *gin.Context, token string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(service.WebSessionCookieName, token, maxAge, "/", "", ctl.shouldUseSecureCookies(), true)
+}
+
+func (ctl *AuthController) shouldUseSecureCookies() bool {
+	return strings.EqualFold(ctl.cfg.App.Environment, "production") ||
+		strings.HasPrefix(strings.ToLower(ctl.cfg.GoogleOAuth.CallbackURL), "https://")
+}
+
+func mapGoogleOAuthError(err error) (int, string) {
+	switch {
+	case errors.Is(err, service.ErrInvalidOAuthState):
+		return http.StatusBadRequest, "invalid_oauth_state"
+	case errors.Is(err, service.ErrOAuthNotConfigured):
+		return http.StatusServiceUnavailable, "oauth_not_configured"
+	case errors.Is(err, service.ErrAccountDisabled), errors.Is(err, service.ErrRevokedOAuthIdentity):
+		return http.StatusUnauthorized, "account_disabled"
+	default:
+		return http.StatusBadGateway, "oauth_provider_error"
+	}
+}
+
+func appendQuery(base string, params map[string]string) string {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+
+	query := parsed.Query()
+	for key, value := range params {
+		query.Set(key, value)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }

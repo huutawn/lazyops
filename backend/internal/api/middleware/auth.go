@@ -15,15 +15,13 @@ const claimsContextKey = "auth.claims"
 
 func Authenticate(auth *service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		header := c.GetHeader("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") {
+		token, errCode := extractAuthToken(c)
+		if errCode == "missing_bearer_token" {
 			response.Error(c, http.StatusUnauthorized, "missing bearer token", "missing_bearer_token", nil)
 			c.Abort()
 			return
 		}
-
-		token := strings.TrimPrefix(header, "Bearer ")
-		if strings.TrimSpace(token) == "" {
+		if errCode == "invalid_authorization_header" {
 			response.Error(c, http.StatusUnauthorized, "invalid authorization header", "invalid_authorization_header", nil)
 			c.Abort()
 			return
@@ -48,6 +46,26 @@ func Authenticate(auth *service.AuthService) gin.HandlerFunc {
 		c.Set(claimsContextKey, claims)
 		c.Next()
 	}
+}
+
+func extractAuthToken(c *gin.Context) (string, string) {
+	header := strings.TrimSpace(c.GetHeader("Authorization"))
+	if header == "" {
+		if cookieToken, err := c.Cookie(service.WebSessionCookieName); err == nil && strings.TrimSpace(cookieToken) != "" {
+			return strings.TrimSpace(cookieToken), ""
+		}
+		return "", "missing_bearer_token"
+	}
+	if !strings.HasPrefix(header, "Bearer ") {
+		return "", "invalid_authorization_header"
+	}
+
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if token == "" {
+		return "", "invalid_authorization_header"
+	}
+
+	return token, ""
 }
 
 func RequireRoles(roles ...string) gin.HandlerFunc {

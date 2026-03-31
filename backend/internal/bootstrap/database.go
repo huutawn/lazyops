@@ -33,6 +33,7 @@ func configureSQLDB(sqlDB *sql.DB, cfg config.Config) {
 func Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&models.User{},
+		&models.OAuthIdentity{},
 		&models.PersonalAccessToken{},
 		&models.Agent{},
 	)

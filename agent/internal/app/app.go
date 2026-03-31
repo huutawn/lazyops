@@ -17,15 +17,17 @@ import (
 	"lazyops-agent/internal/control"
 	"lazyops-agent/internal/enroll"
 	agentlogger "lazyops-agent/internal/logger"
+	"lazyops-agent/internal/reporting"
 	"lazyops-agent/internal/state"
 )
 
 type App struct {
-	cfg     config.Config
-	logger  *slog.Logger
-	store   *state.Store
-	control control.Client
-	enroll  *enroll.Service
+	cfg      config.Config
+	logger   *slog.Logger
+	store    *state.Store
+	control  control.Client
+	enroll   *enroll.Service
+	reporter *reporting.Reporter
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -53,11 +55,12 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		cfg:     cfg,
-		logger:  logger,
-		store:   state.New(statePath),
-		control: client,
-		enroll:  enroll.New(state.New(statePath), client, logger, cfg.StateEncryptionKey),
+		cfg:      cfg,
+		logger:   logger,
+		store:    state.New(statePath),
+		control:  client,
+		enroll:   enroll.New(state.New(statePath), client, logger, cfg.StateEncryptionKey),
+		reporter: reporting.New(logger, cfg.HeartbeatInterval),
 	}, nil
 }
 
@@ -133,6 +136,8 @@ func (a *App) Run(ctx context.Context) error {
 		local.Metadata.CurrentState = contracts.AgentStateConnected
 		local.Enrollment.SessionID = sessionAuth.SessionID
 		local.Enrollment.LastBootstrapAt = time.Now().UTC()
+		local.Health = a.reporter.EvaluateHealth(local)
+		a.reporter.MarkCapabilitiesReported(&local.CapabilitySnapshot)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("persist connected state: %w", err)
@@ -146,26 +151,40 @@ func (a *App) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return a.shutdown()
 		case <-heartbeatTicker.C:
-			current, err := a.store.Load(ctx)
+			current, err := a.store.Update(ctx, func(local *state.AgentLocalState) error {
+				if err := a.reporter.ReconcileCapabilitySnapshot(&local.CapabilitySnapshot, defaultCapabilities(a.cfg)); err != nil {
+					return err
+				}
+				local.Health = a.reporter.EvaluateHealth(local)
+				return nil
+			})
 			if err != nil {
-				return fmt.Errorf("load state before heartbeat: %w", err)
+				return fmt.Errorf("refresh state before heartbeat: %w", err)
 			}
-			if err := a.control.SendHeartbeat(ctx, contracts.HeartbeatPayload{
-				AgentID:       current.Metadata.AgentID,
-				SessionID:     current.Enrollment.SessionID,
-				State:         current.Metadata.CurrentState,
-				RuntimeMode:   current.Metadata.RuntimeMode,
-				AgentKind:     current.Metadata.AgentKind,
-				SentAt:        time.Now().UTC(),
-				UptimeSeconds: int64(time.Since(current.Metadata.LastStartedAt).Seconds()),
-				Capabilities:  current.CapabilitySnapshot.Payload,
-			}); err != nil {
+
+			heartbeat, health, err := a.reporter.BuildHeartbeat(current)
+			if err != nil {
+				return fmt.Errorf("build heartbeat: %w", err)
+			}
+
+			if err := a.control.SendHeartbeat(ctx, heartbeat); err != nil {
 				return fmt.Errorf("send heartbeat: %w", err)
 			}
+
+			if _, err := a.store.Update(ctx, func(local *state.AgentLocalState) error {
+				local.Health = health
+				a.reporter.MarkCapabilitiesReported(&local.CapabilitySnapshot)
+				return nil
+			}); err != nil {
+				return fmt.Errorf("persist heartbeat reporting state: %w", err)
+			}
+
 			a.logger.Debug("heartbeat sent",
 				"agent_id", current.Metadata.AgentID,
 				"session_id", current.Enrollment.SessionID,
 				"state", current.Metadata.CurrentState,
+				"health_status", health.Status,
+				"capability_hash", current.CapabilitySnapshot.Fingerprint,
 			)
 		}
 	}
@@ -178,6 +197,7 @@ func (a *App) shutdown() error {
 	if _, err := a.store.Update(shutdownCtx, func(local *state.AgentLocalState) error {
 		local.Metadata.CurrentState = contracts.AgentStateDisconnected
 		local.Metadata.LastStoppedAt = time.Now().UTC()
+		local.Health = a.reporter.EvaluateHealth(local)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("persist shutdown state: %w", err)
@@ -205,8 +225,10 @@ func (a *App) bootstrapLocalState(ctx context.Context, current *state.AgentLocal
 		local.Metadata.RuntimeMode = a.cfg.RuntimeMode
 		local.Metadata.CurrentState = contracts.AgentStateBootstrap
 		local.Metadata.LastStartedAt = time.Now().UTC()
-		local.CapabilitySnapshot.LastComputedAt = time.Now().UTC()
-		local.CapabilitySnapshot.Payload = capabilities
+		if err := a.reporter.ReconcileCapabilitySnapshot(&local.CapabilitySnapshot, capabilities); err != nil {
+			return err
+		}
+		local.Health = a.reporter.EvaluateHealth(local)
 		return nil
 	})
 	if err != nil {
@@ -259,6 +281,13 @@ func defaultCapabilities(cfg config.Config) contracts.CapabilityReportPayload {
 			WebSocketPath: contracts.ControlWebSocketPath,
 			OutboundOnly:  true,
 			Reconnectable: true,
+		},
+		Network: contracts.NetworkCapability{
+			OutboundOnly:            true,
+			PrivateOverlay:          meshEnabled,
+			CrossNodePrivateOnly:    meshEnabled,
+			SupportedMeshProviders:  []contracts.MeshProvider{contracts.MeshProviderWireGuard, contracts.MeshProviderTailscale},
+			SupportsLocalhostRescue: cfg.AgentKind == contracts.AgentKindInstance,
 		},
 		Gateway: contracts.GatewayCapability{
 			Enabled:      cfg.AgentKind == contracts.AgentKindInstance,

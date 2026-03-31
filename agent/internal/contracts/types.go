@@ -29,6 +29,15 @@ const (
 	AgentStateDisconnected AgentState = "disconnected"
 )
 
+type AgentHealthStatus string
+
+const (
+	AgentHealthOnline   AgentHealthStatus = "online"
+	AgentHealthDegraded AgentHealthStatus = "degraded"
+	AgentHealthOffline  AgentHealthStatus = "offline"
+	AgentHealthBusy     AgentHealthStatus = "busy"
+)
+
 type EnvelopeSource string
 
 const (
