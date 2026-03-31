@@ -2,24 +2,11 @@ package control
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"log/slog"
 	"sync"
-	"time"
 
 	"lazyops-agent/internal/contracts"
 )
-
-type BootstrapTokenRecord struct {
-	AgentID             string
-	AgentToken          string
-	ExpectedRuntimeMode contracts.RuntimeMode
-	ExpectedAgentKind   contracts.AgentKind
-	ExpectedTargetRef   string
-	ExpiresAt           time.Time
-	Used                bool
-}
 
 type MockClient struct {
 	logger      *slog.Logger
@@ -27,53 +14,30 @@ type MockClient struct {
 	connected   bool
 	sessionAuth contracts.SessionAuthPayload
 	transcript  []contracts.CommandEnvelope
-	bootstrap   map[string]BootstrapTokenRecord
+	bootstrap   *bootstrapRegistry
 }
 
 func NewMockClient(logger *slog.Logger) *MockClient {
 	return &MockClient{
 		logger:    logger,
-		bootstrap: defaultBootstrapRegistry(),
+		bootstrap: newDefaultBootstrapRegistry(),
 	}
 }
 
-func (c *MockClient) Enroll(_ context.Context, req contracts.EnrollAgentRequest) (contracts.EnrollAgentResponse, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	record, ok := c.bootstrap[req.BootstrapToken]
-	if !ok {
-		return contracts.EnrollAgentResponse{}, ErrBootstrapTokenUnknown
-	}
-	if time.Now().UTC().After(record.ExpiresAt) {
-		return contracts.EnrollAgentResponse{}, ErrBootstrapTokenExpired
-	}
-	if record.Used {
-		return contracts.EnrollAgentResponse{}, ErrBootstrapTokenReused
-	}
-	if record.ExpectedRuntimeMode != req.RuntimeMode || record.ExpectedAgentKind != req.AgentKind {
-		return contracts.EnrollAgentResponse{}, ErrBootstrapTargetMismatch
+func (c *MockClient) Enroll(ctx context.Context, req contracts.EnrollAgentRequest) (contracts.EnrollAgentResponse, error) {
+	response, err := c.bootstrap.Enroll(ctx, req)
+	if err != nil {
+		return contracts.EnrollAgentResponse{}, err
 	}
 
-	targetRef := req.Machine.Labels["target_ref"]
-	if record.ExpectedTargetRef != "" && targetRef != record.ExpectedTargetRef {
-		return contracts.EnrollAgentResponse{}, ErrBootstrapTargetMismatch
-	}
-
-	record.Used = true
-	c.bootstrap[req.BootstrapToken] = record
 	c.logger.Info("mock enroll agent",
 		"bootstrap_token", req.BootstrapToken,
-		"target_ref", targetRef,
+		"target_ref", req.Machine.Labels["target_ref"],
 		"runtime_mode", req.RuntimeMode,
 		"agent_kind", req.AgentKind,
 	)
 
-	return contracts.EnrollAgentResponse{
-		AgentID:    record.AgentID,
-		AgentToken: record.AgentToken,
-		IssuedAt:   time.Now().UTC(),
-	}, nil
+	return response, nil
 }
 
 func (c *MockClient) Connect(_ context.Context, auth contracts.SessionAuthPayload) error {
@@ -93,11 +57,11 @@ func (c *MockClient) Connect(_ context.Context, auth contracts.SessionAuthPayloa
 }
 
 func (c *MockClient) SendHandshake(_ context.Context, payload contracts.AgentHandshakePayload) error {
-	return c.recordEnvelope(contracts.CommandType("agent.handshake"), payload.Auth.AgentID, "", payload)
+	return c.recordEnvelope(handshakeEnvelopeType, payload.Auth.AgentID, payload)
 }
 
 func (c *MockClient) SendHeartbeat(_ context.Context, payload contracts.HeartbeatPayload) error {
-	return c.recordEnvelope(contracts.CommandType("agent.heartbeat"), payload.AgentID, "", payload)
+	return c.recordEnvelope(heartbeatEnvelopeType, payload.AgentID, payload)
 }
 
 func (c *MockClient) Close(_ context.Context) error {
@@ -117,67 +81,19 @@ func (c *MockClient) Transcript() []contracts.CommandEnvelope {
 	return out
 }
 
-func (c *MockClient) recordEnvelope(messageType contracts.CommandType, agentID, projectID string, payload any) error {
+func (c *MockClient) recordEnvelope(messageType contracts.CommandType, agentID string, payload any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if !c.connected {
-		return errors.New("mock control client is not connected")
+		return ErrControlClientNotConnected
 	}
 
-	raw, err := json.Marshal(payload)
+	envelope, _, err := buildEnvelope(messageType, agentID, payload)
 	if err != nil {
 		return err
 	}
 
-	c.transcript = append(c.transcript, contracts.CommandEnvelope{
-		Type:          messageType,
-		RequestID:     "",
-		CorrelationID: "",
-		AgentID:       agentID,
-		ProjectID:     projectID,
-		Source:        contracts.EnvelopeSourceAgent,
-		OccurredAt:    time.Now().UTC(),
-		Payload:       raw,
-	})
+	c.transcript = append(c.transcript, envelope)
 	return nil
-}
-
-func defaultBootstrapRegistry() map[string]BootstrapTokenRecord {
-	now := time.Now().UTC()
-	return map[string]BootstrapTokenRecord{
-		"bootstrap-valid-standalone": {
-			AgentID:             "agt_enrolled_standalone",
-			AgentToken:          "agt-secret-standalone",
-			ExpectedRuntimeMode: contracts.RuntimeModeStandalone,
-			ExpectedAgentKind:   contracts.AgentKindInstance,
-			ExpectedTargetRef:   "local-dev",
-			ExpiresAt:           now.Add(1 * time.Hour),
-		},
-		"bootstrap-valid-k3s": {
-			AgentID:             "agt_enrolled_node",
-			AgentToken:          "agt-secret-node",
-			ExpectedRuntimeMode: contracts.RuntimeModeDistributedK3s,
-			ExpectedAgentKind:   contracts.AgentKindNode,
-			ExpectedTargetRef:   "k3s-dev",
-			ExpiresAt:           now.Add(1 * time.Hour),
-		},
-		"bootstrap-expired-standalone": {
-			AgentID:             "agt_expired",
-			AgentToken:          "agt-expired-token",
-			ExpectedRuntimeMode: contracts.RuntimeModeStandalone,
-			ExpectedAgentKind:   contracts.AgentKindInstance,
-			ExpectedTargetRef:   "local-dev",
-			ExpiresAt:           now.Add(-1 * time.Hour),
-		},
-		"bootstrap-reused-standalone": {
-			AgentID:             "agt_reused",
-			AgentToken:          "agt-reused-token",
-			ExpectedRuntimeMode: contracts.RuntimeModeStandalone,
-			ExpectedAgentKind:   contracts.AgentKindInstance,
-			ExpectedTargetRef:   "local-dev",
-			ExpiresAt:           now.Add(1 * time.Hour),
-			Used:                true,
-		},
-	}
 }

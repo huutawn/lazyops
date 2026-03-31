@@ -21,12 +21,45 @@ func ToLoginCommand(req requestdto.LoginRequest) service.LoginCommand {
 	}
 }
 
+func ToCLILoginCommand(req requestdto.CLILoginRequest) service.CLILoginCommand {
+	return service.CLILoginCommand{
+		AuthFlow:   req.AuthFlow,
+		Email:      req.Email,
+		Password:   req.Password,
+		DeviceName: req.DeviceName,
+	}
+}
+
 func ToAuthResponse(result service.AuthResult) responsedto.AuthResponse {
 	return responsedto.AuthResponse{
 		AccessToken: result.AccessToken,
 		TokenType:   result.TokenType,
 		ExpiresIn:   int64(result.ExpiresIn.Seconds()),
 		User:        ToUserResponse(result.User),
+	}
+}
+
+func ToCLILoginResponse(result service.CLIAuthResult) responsedto.CLILoginResponse {
+	return responsedto.CLILoginResponse{
+		Token:     result.Token,
+		TokenType: result.TokenType,
+		TokenID:   result.TokenID,
+		ExpiresAt: result.ExpiresAt,
+		User:      ToUserResponse(result.User),
+	}
+}
+
+func ToPATRevokeCommand(userID string, req requestdto.PATRevokeRequest) service.RevokePATCommand {
+	return service.RevokePATCommand{
+		UserID:  userID,
+		TokenID: req.TokenID,
+	}
+}
+
+func ToPATRevokeResponse(result service.PATRevokeResult) responsedto.PATRevokeResponse {
+	return responsedto.PATRevokeResponse{
+		TokenID: result.TokenID,
+		Revoked: result.Revoked,
 	}
 }
 

@@ -24,11 +24,21 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		{
 			authGroup.POST("/login", authController.Login)
 			authGroup.POST("/register", authController.Register)
+			authGroup.POST(
+				"/cli-login",
+				middleware.ScopedRateLimit(
+					"auth:cli-login",
+					app.Config.Security.CLILoginRateLimitRPS,
+					app.Config.Security.CLILoginRateLimitBurst,
+				),
+				authController.CLILogin,
+			)
 		}
 
 		protected := v1.Group("/")
 		protected.Use(middleware.Authenticate(app.AuthService))
 		{
+			protected.POST("/auth/pat/revoke", authController.RevokePAT)
 			protected.GET("/users/me", userController.Me)
 			protected.GET("/agents", agentController.List)
 			protected.POST("/agents",

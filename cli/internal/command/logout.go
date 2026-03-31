@@ -39,31 +39,25 @@ func logoutCommand() *Command {
 				return fmt.Errorf("could not load local CLI session. next: verify local credential storage and retry `lazyops logout`: %w", err)
 			}
 
-			response, err := doWithDelayedSpinner(ctx, runtime, logoutSpinnerThreshold, "revoking CLI PAT", func(ctx context.Context) (transport.Response, error) {
-				body, marshalErr := json.Marshal(map[string]string{"token": record.Token})
-				if marshalErr != nil {
-					return transport.Response{}, marshalErr
-				}
-
-				return runtime.Transport.Do(ctx, authorizeRequest(transport.Request{
-					Method: "POST",
-					Path:   "/api/v1/auth/pat/revoke",
-					Body:   body,
-				}, record))
-			})
+			revoked, warning, err := revokePATIfAvailable(ctx, runtime, record)
 			if err != nil {
 				return err
 			}
 
-			if err := parsePATRevokeResponse(response); err != nil {
-				return err
-			}
-
 			if err := runtime.Credentials.Clear(ctx); err != nil {
-				return fmt.Errorf("remote session was revoked but local credentials cleanup failed. next: remove the local credential entry and retry: %w", err)
+				return fmt.Errorf("CLI logout could not clear local credentials. next: remove the local credential entry and retry `lazyops logout`: %w", err)
 			}
 
-			runtime.Output.Success("logged out and revoked the remote CLI session")
+			if warning != "" {
+				runtime.Output.Warn("%s", warning)
+			}
+
+			if revoked {
+				runtime.Output.Success("logged out and revoked the remote CLI session")
+				return nil
+			}
+
+			runtime.Output.Success("logged out and cleared the local CLI session")
 			return nil
 		},
 	}
@@ -84,10 +78,49 @@ func parseLogoutArgs(args []string) error {
 	return nil
 }
 
-func parsePATRevokeResponse(response transport.Response) error {
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		return nil
+func revokePATIfAvailable(ctx context.Context, runtime *Runtime, record credentials.Record) (bool, string, error) {
+	if strings.TrimSpace(record.Token) == "" {
+		return false, "stored CLI session had no PAT; cleared local session only", nil
 	}
 
-	return parseAPIError(response)
+	if runtime.Transport == nil {
+		return false, "remote PAT revoke transport is unavailable; cleared local session only", nil
+	}
+
+	response, err := doWithDelayedSpinner(ctx, runtime, logoutSpinnerThreshold, "revoking CLI PAT", func(ctx context.Context) (transport.Response, error) {
+		body, marshalErr := json.Marshal(map[string]string{"token": record.Token})
+		if marshalErr != nil {
+			return transport.Response{}, marshalErr
+		}
+
+		return runtime.Transport.Do(ctx, authorizeRequest(transport.Request{
+			Method: "POST",
+			Path:   "/api/v1/auth/pat/revoke",
+			Body:   body,
+		}, record))
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, "", err
+		}
+
+		return false, "remote PAT revoke could not be reached; cleared local session only", nil
+	}
+
+	return parsePATRevokeResponse(response)
+}
+
+func parsePATRevokeResponse(response transport.Response) (bool, string, error) {
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return true, "", nil
+	}
+
+	switch response.StatusCode {
+	case 401:
+		return false, "remote CLI PAT was already invalid or revoked; cleared local session only", nil
+	case 404, 405, 501:
+		return false, "remote PAT revoke endpoint is unavailable; cleared local session only", nil
+	default:
+		return false, fmt.Sprintf("remote PAT revoke did not complete (status %d); local CLI session was cleared but the remote PAT may still be active", response.StatusCode), nil
+	}
 }

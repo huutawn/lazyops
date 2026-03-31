@@ -70,3 +70,29 @@ func TestValidateRequiresEncryptionKeyWhenBootstrapProvided(t *testing.T) {
 		t.Fatal("expected missing encryption key to fail validation")
 	}
 }
+
+func TestValidateRejectsInvalidReconnectTimingForRealControl(t *testing.T) {
+	cfg := Config{
+		AppName:             "lazyops-agent",
+		AppEnv:              "test",
+		LogLevel:            slog.LevelInfo,
+		RuntimeMode:         contracts.RuntimeModeStandalone,
+		AgentKind:           contracts.AgentKindInstance,
+		TargetRef:           "local-dev",
+		ControlPlaneURL:     "ws://127.0.0.1:8080",
+		StateDir:            t.TempDir(),
+		ShutdownTimeout:     time.Second,
+		HeartbeatInterval:   time.Second,
+		HandshakeVersion:    "v0",
+		ControlDialTimeout:  time.Second,
+		ControlWriteTimeout: time.Second,
+		ControlPongWait:     2 * time.Second,
+		ControlPingPeriod:   2 * time.Second,
+		ReconnectMinBackoff: time.Second,
+		ReconnectMaxBackoff: 500 * time.Millisecond,
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid real-control timing to fail validation")
+	}
+}

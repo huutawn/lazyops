@@ -23,12 +23,16 @@ var (
 )
 
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
+	return ScopedRateLimit("global", rps, burst)
+}
+
+func ScopedRateLimit(scope string, rps float64, burst int) gin.HandlerFunc {
 	cleanupOnce.Do(func() {
 		go cleanupVisitors()
 	})
 
 	return func(c *gin.Context) {
-		limiter := getVisitor(c.ClientIP(), rps, burst)
+		limiter := getVisitor(scope+":"+c.ClientIP(), rps, burst)
 		if !limiter.Allow() {
 			response.Error(c, http.StatusTooManyRequests, "rate limit exceeded", "rate_limited", nil)
 			c.Abort()
@@ -39,14 +43,14 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	}
 }
 
-func getVisitor(ip string, rps float64, burst int) *rate.Limiter {
+func getVisitor(key string, rps float64, burst int) *rate.Limiter {
 	visitorsMu.Lock()
 	defer visitorsMu.Unlock()
 
-	entry, exists := visitors[ip]
+	entry, exists := visitors[key]
 	if !exists {
 		limiter := rate.NewLimiter(rate.Limit(rps), burst)
-		visitors[ip] = &visitor{limiter: limiter, lastSeen: time.Now()}
+		visitors[key] = &visitor{limiter: limiter, lastSeen: time.Now()}
 		return limiter
 	}
 

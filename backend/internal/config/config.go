@@ -13,6 +13,7 @@ type Config struct {
 	Server    ServerConfig
 	Database  DatabaseConfig
 	JWT       JWTConfig
+	PAT       PATConfig
 	Security  SecurityConfig
 	Seed      SeedConfig
 	WebSocket WebSocketConfig
@@ -48,10 +49,16 @@ type JWTConfig struct {
 	ExpiresIn time.Duration
 }
 
+type PATConfig struct {
+	ExpiresIn time.Duration
+}
+
 type SecurityConfig struct {
-	AllowedOrigins []string
-	RateLimitRPS   float64
-	RateLimitBurst int
+	AllowedOrigins         []string
+	RateLimitRPS           float64
+	RateLimitBurst         int
+	CLILoginRateLimitRPS   float64
+	CLILoginRateLimitBurst int
 }
 
 type SeedConfig struct {
@@ -95,10 +102,15 @@ func Load() Config {
 			Issuer:    getEnv("JWT_ISSUER", "lazyops-server"),
 			ExpiresIn: getEnvAsDuration("JWT_EXPIRES_IN", 24*time.Hour),
 		},
+		PAT: PATConfig{
+			ExpiresIn: getEnvAsDuration("PAT_EXPIRES_IN", 30*24*time.Hour),
+		},
 		Security: SecurityConfig{
-			AllowedOrigins: getEnvAsSlice("ALLOWED_ORIGINS", []string{"*"}),
-			RateLimitRPS:   getEnvAsFloat("RATE_LIMIT_RPS", 10),
-			RateLimitBurst: getEnvAsInt("RATE_LIMIT_BURST", 20),
+			AllowedOrigins:         getEnvAsSlice("ALLOWED_ORIGINS", []string{"*"}),
+			RateLimitRPS:           getEnvAsFloat("RATE_LIMIT_RPS", 10),
+			RateLimitBurst:         getEnvAsInt("RATE_LIMIT_BURST", 20),
+			CLILoginRateLimitRPS:   getEnvAsFloat("CLI_LOGIN_RATE_LIMIT_RPS", 0.5),
+			CLILoginRateLimitBurst: getEnvAsInt("CLI_LOGIN_RATE_LIMIT_BURST", 3),
 		},
 		Seed: SeedConfig{
 			AdminEmail:    getEnv("SEED_ADMIN_EMAIL", "admin@lazyops.local"),

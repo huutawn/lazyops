@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -30,7 +31,16 @@ func Authenticate(auth *service.AuthService) gin.HandlerFunc {
 
 		claims, err := auth.ParseToken(token)
 		if err != nil {
-			response.Error(c, http.StatusUnauthorized, "invalid token", "invalid_token", err.Error())
+			switch {
+			case errors.Is(err, service.ErrTokenExpired):
+				response.Error(c, http.StatusUnauthorized, "expired token", "expired_token", nil)
+			case errors.Is(err, service.ErrTokenRevoked):
+				response.Error(c, http.StatusUnauthorized, "revoked token", "revoked_token", nil)
+			case errors.Is(err, service.ErrAccountDisabled):
+				response.Error(c, http.StatusUnauthorized, "account disabled", "account_disabled", nil)
+			default:
+				response.Error(c, http.StatusUnauthorized, "invalid token", "invalid_token", nil)
+			}
 			c.Abort()
 			return
 		}

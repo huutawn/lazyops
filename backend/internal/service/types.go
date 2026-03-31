@@ -13,6 +13,18 @@ type LoginCommand struct {
 	Password string
 }
 
+type CLILoginCommand struct {
+	AuthFlow   string
+	Email      string
+	Password   string
+	DeviceName string
+}
+
+type RevokePATCommand struct {
+	UserID  string
+	TokenID string
+}
+
 type UserProfile struct {
 	ID          string
 	DisplayName string
@@ -27,6 +39,19 @@ type AuthResult struct {
 	TokenType   string
 	ExpiresIn   time.Duration
 	User        UserProfile
+}
+
+type CLIAuthResult struct {
+	Token     string
+	TokenType string
+	TokenID   string
+	ExpiresAt *time.Time
+	User      UserProfile
+}
+
+type PATRevokeResult struct {
+	TokenID string
+	Revoked bool
 }
 
 type CreateAgentCommand struct {

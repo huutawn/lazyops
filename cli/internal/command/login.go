@@ -170,12 +170,12 @@ func parseLoginResponse(response transport.Response) (cliLoginResponse, error) {
 func parseAPIError(response transport.Response) error {
 	var payload apiErrorResponse
 	if err := json.Unmarshal(response.Body, &payload); err != nil {
-		return fmt.Errorf("login failed with status %d. next: verify the CLI login contract and try again", response.StatusCode)
+		return fmt.Errorf("request failed with status %d. next: verify the backend contract and try again", response.StatusCode)
 	}
 
 	message := strings.TrimSpace(payload.Message)
 	if message == "" {
-		message = fmt.Sprintf("login failed with status %d", response.StatusCode)
+		message = fmt.Sprintf("request failed with status %d", response.StatusCode)
 	}
 
 	nextStep := strings.TrimSpace(payload.NextStep)

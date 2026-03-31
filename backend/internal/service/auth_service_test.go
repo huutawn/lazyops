@@ -20,6 +20,15 @@ type fakeUserStore struct {
 	lastLogin map[string]time.Time
 }
 
+type fakePATStore struct {
+	byID      map[string]*models.PersonalAccessToken
+	byHash    map[string]*models.PersonalAccessToken
+	createErr error
+	revokeErr error
+	touchErr  error
+	lastUsed  map[string]time.Time
+}
+
 func newFakeUserStore(users ...*models.User) *fakeUserStore {
 	store := &fakeUserStore{
 		byID:      make(map[string]*models.User),
@@ -30,6 +39,21 @@ func newFakeUserStore(users ...*models.User) *fakeUserStore {
 	for _, user := range users {
 		store.byID[user.ID] = user
 		store.byEmail[strings.ToLower(user.Email)] = user
+	}
+
+	return store
+}
+
+func newFakePATStore(tokens ...*models.PersonalAccessToken) *fakePATStore {
+	store := &fakePATStore{
+		byID:     make(map[string]*models.PersonalAccessToken),
+		byHash:   make(map[string]*models.PersonalAccessToken),
+		lastUsed: make(map[string]time.Time),
+	}
+
+	for _, token := range tokens {
+		store.byID[token.ID] = token
+		store.byHash[token.TokenHash] = token
 	}
 
 	return store
@@ -71,11 +95,65 @@ func (f *fakeUserStore) TouchLastLogin(userID string, at time.Time) error {
 	return nil
 }
 
+func (f *fakePATStore) Create(token *models.PersonalAccessToken) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.byID[token.ID] = token
+	f.byHash[token.TokenHash] = token
+	return nil
+}
+
+func (f *fakePATStore) GetByHash(tokenHash string) (*models.PersonalAccessToken, error) {
+	if token, ok := f.byHash[tokenHash]; ok {
+		return token, nil
+	}
+	return nil, nil
+}
+
+func (f *fakePATStore) GetByID(tokenID string) (*models.PersonalAccessToken, error) {
+	if token, ok := f.byID[tokenID]; ok {
+		return token, nil
+	}
+	return nil, nil
+}
+
+func (f *fakePATStore) RevokeByIDForUser(userID, tokenID string, at time.Time) error {
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
+	token, ok := f.byID[tokenID]
+	if !ok || token.UserID != userID {
+		return nil
+	}
+	token.RevokedAt = &at
+	return nil
+}
+
+func (f *fakePATStore) TouchLastUsed(tokenID string, at time.Time) error {
+	if f.touchErr != nil {
+		return f.touchErr
+	}
+	token, ok := f.byID[tokenID]
+	if !ok {
+		return nil
+	}
+	f.lastUsed[tokenID] = at
+	token.LastUsedAt = &at
+	return nil
+}
+
 func testJWTConfig() config.JWTConfig {
 	return config.JWTConfig{
 		Secret:    "unit-test-secret",
 		Issuer:    "lazyops-backend-test",
 		ExpiresIn: time.Hour,
+	}
+}
+
+func testPATConfig() config.PATConfig {
+	return config.PATConfig{
+		ExpiresIn: 30 * 24 * time.Hour,
 	}
 }
 
@@ -90,7 +168,8 @@ func hashedPassword(t *testing.T, password string) string {
 
 func TestAuthServiceRegisterNormalizesAndDefaults(t *testing.T) {
 	store := newFakeUserStore()
-	service := NewAuthService(store, testJWTConfig())
+	patStore := newFakePATStore()
+	service := NewAuthService(store, patStore, testJWTConfig(), testPATConfig())
 
 	result, err := service.Register(RegisterCommand{
 		Name:     "  Jane   Doe  ",
@@ -130,7 +209,8 @@ func TestAuthServiceRegisterNormalizesAndDefaults(t *testing.T) {
 
 func TestAuthServiceRegisterRejectsInvalidInput(t *testing.T) {
 	store := newFakeUserStore()
-	service := NewAuthService(store, testJWTConfig())
+	patStore := newFakePATStore()
+	service := NewAuthService(store, patStore, testJWTConfig(), testPATConfig())
 
 	_, err := service.Register(RegisterCommand{
 		Name:     "",
@@ -144,7 +224,8 @@ func TestAuthServiceRegisterRejectsInvalidInput(t *testing.T) {
 
 func TestAuthServiceRegisterRejectsWeakPassword(t *testing.T) {
 	store := newFakeUserStore()
-	service := NewAuthService(store, testJWTConfig())
+	patStore := newFakePATStore()
+	service := NewAuthService(store, patStore, testJWTConfig(), testPATConfig())
 
 	_, err := service.Register(RegisterCommand{
 		Name:     "Jane Doe",
@@ -165,7 +246,8 @@ func TestAuthServiceLoginRejectsWrongPassword(t *testing.T) {
 		Role:         RoleViewer,
 		Status:       "active",
 	})
-	service := NewAuthService(store, testJWTConfig())
+	patStore := newFakePATStore()
+	service := NewAuthService(store, patStore, testJWTConfig(), testPATConfig())
 
 	_, err := service.Login(LoginCommand{
 		Email:    "jane@example.com",
@@ -185,7 +267,8 @@ func TestAuthServiceLoginRejectsDisabledAccount(t *testing.T) {
 		Role:         RoleViewer,
 		Status:       "disabled",
 	})
-	service := NewAuthService(store, testJWTConfig())
+	patStore := newFakePATStore()
+	service := NewAuthService(store, patStore, testJWTConfig(), testPATConfig())
 
 	_, err := service.Login(LoginCommand{
 		Email:    "jane@example.com",
@@ -206,7 +289,8 @@ func TestAuthServiceLoginUpdatesLastLoginAndIssuesWebSessionClaims(t *testing.T)
 		Status:       "active",
 	})
 	cfg := testJWTConfig()
-	service := NewAuthService(store, cfg)
+	patStore := newFakePATStore()
+	service := NewAuthService(store, patStore, cfg, testPATConfig())
 
 	result, err := service.Login(LoginCommand{
 		Email:    "jane@example.com",
@@ -238,5 +322,158 @@ func TestAuthServiceLoginUpdatesLastLoginAndIssuesWebSessionClaims(t *testing.T)
 	}
 	if claims.ID == "" {
 		t.Fatal("expected session id to be populated")
+	}
+}
+
+func TestAuthServiceCLILoginIssuesPATAndStoresHash(t *testing.T) {
+	userStore := newFakeUserStore(&models.User{
+		ID:           "usr_test",
+		DisplayName:  "Jane Doe",
+		Email:        "jane@example.com",
+		PasswordHash: hashedPassword(t, "StrongPass1"),
+		Role:         RoleOperator,
+		Status:       "active",
+	})
+	patStore := newFakePATStore()
+	service := NewAuthService(userStore, patStore, testJWTConfig(), testPATConfig())
+
+	result, err := service.CLILogin(CLILoginCommand{
+		AuthFlow:   "password",
+		Email:      "jane@example.com",
+		Password:   "StrongPass1",
+		DeviceName: "  MacBook Pro  ",
+	})
+	if err != nil {
+		t.Fatalf("cli login returned error: %v", err)
+	}
+	if result.Token == "" {
+		t.Fatal("expected PAT token to be returned")
+	}
+	if result.TokenID == "" || !strings.HasPrefix(result.TokenID, "pat_") {
+		t.Fatalf("expected PAT token id, got %q", result.TokenID)
+	}
+	if result.ExpiresAt == nil {
+		t.Fatal("expected PAT expiry to be returned")
+	}
+
+	record, err := patStore.GetByID(result.TokenID)
+	if err != nil {
+		t.Fatalf("get PAT by id: %v", err)
+	}
+	if record == nil {
+		t.Fatal("expected PAT record to be created")
+	}
+	if record.TokenHash != hashOpaqueToken(result.Token) {
+		t.Fatal("expected PAT hash to match opaque token")
+	}
+	if record.TokenHash == result.Token {
+		t.Fatal("expected PAT to be stored as hash, not plaintext")
+	}
+	if record.Name != "MacBook Pro" {
+		t.Fatalf("expected normalized device name, got %q", record.Name)
+	}
+	if record.UserID != "usr_test" {
+		t.Fatalf("expected PAT user id usr_test, got %q", record.UserID)
+	}
+	if record.TokenPrefix == "" || !strings.HasPrefix(result.Token, record.TokenPrefix) {
+		t.Fatalf("expected PAT prefix to come from token, got %q", record.TokenPrefix)
+	}
+}
+
+func TestAuthServiceParsePATUpdatesLastUsedAndReturnsCLIClaims(t *testing.T) {
+	rawToken := "lop_pat_unit_test_token"
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	userStore := newFakeUserStore(&models.User{
+		ID:           "usr_test",
+		DisplayName:  "Jane Doe",
+		Email:        "jane@example.com",
+		PasswordHash: hashedPassword(t, "StrongPass1"),
+		Role:         RoleOperator,
+		Status:       "active",
+	})
+	patStore := newFakePATStore(&models.PersonalAccessToken{
+		ID:          "pat_test",
+		UserID:      "usr_test",
+		Name:        "MacBook Pro",
+		TokenHash:   hashOpaqueToken(rawToken),
+		TokenPrefix: "lop_pat_unit_tes",
+		ExpiresAt:   &expiresAt,
+		CreatedAt:   time.Now().UTC().Add(-time.Minute),
+	})
+	service := NewAuthService(userStore, patStore, testJWTConfig(), testPATConfig())
+
+	claims, err := service.ParseToken(rawToken)
+	if err != nil {
+		t.Fatalf("parse PAT: %v", err)
+	}
+	if claims.AuthKind != "cli_pat" {
+		t.Fatalf("expected cli_pat auth kind, got %q", claims.AuthKind)
+	}
+	if claims.TokenID != "pat_test" {
+		t.Fatalf("expected PAT token id pat_test, got %q", claims.TokenID)
+	}
+	if claims.UserID != "usr_test" {
+		t.Fatalf("expected user id usr_test, got %q", claims.UserID)
+	}
+	if _, ok := patStore.lastUsed["pat_test"]; !ok {
+		t.Fatal("expected last_used_at to be updated")
+	}
+}
+
+func TestAuthServiceRevokePATRejectsOwnershipMismatch(t *testing.T) {
+	userStore := newFakeUserStore()
+	patStore := newFakePATStore(&models.PersonalAccessToken{
+		ID:          "pat_other",
+		UserID:      "usr_other",
+		Name:        "Other Device",
+		TokenHash:   hashOpaqueToken("lop_pat_other"),
+		TokenPrefix: "lop_pat_other",
+	})
+	service := NewAuthService(userStore, patStore, testJWTConfig(), testPATConfig())
+
+	_, err := service.RevokePAT(RevokePATCommand{
+		UserID:  "usr_test",
+		TokenID: "pat_other",
+	})
+	if !errors.Is(err, ErrTokenAccessDenied) {
+		t.Fatalf("expected ErrTokenAccessDenied, got %v", err)
+	}
+}
+
+func TestAuthServiceRevokedPATNoLongerWorks(t *testing.T) {
+	rawToken := "lop_pat_revocable"
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	userStore := newFakeUserStore(&models.User{
+		ID:           "usr_test",
+		DisplayName:  "Jane Doe",
+		Email:        "jane@example.com",
+		PasswordHash: hashedPassword(t, "StrongPass1"),
+		Role:         RoleOperator,
+		Status:       "active",
+	})
+	patStore := newFakePATStore(&models.PersonalAccessToken{
+		ID:          "pat_test",
+		UserID:      "usr_test",
+		Name:        "MacBook Pro",
+		TokenHash:   hashOpaqueToken(rawToken),
+		TokenPrefix: "lop_pat_revocab",
+		ExpiresAt:   &expiresAt,
+	})
+	service := NewAuthService(userStore, patStore, testJWTConfig(), testPATConfig())
+
+	result, err := service.RevokePAT(RevokePATCommand{
+		UserID:  "usr_test",
+		TokenID: "pat_test",
+	})
+	if err != nil {
+		t.Fatalf("revoke PAT: %v", err)
+	}
+	if !result.Revoked {
+		t.Fatal("expected revoke result to confirm token was revoked")
+	}
+
+	_, err = service.ParseToken(rawToken)
+	if !errors.Is(err, ErrTokenRevoked) {
+		t.Fatalf("expected ErrTokenRevoked after revoke, got %v", err)
 	}
 }

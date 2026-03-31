@@ -35,7 +35,16 @@ func New(cfg config.Config) (*App, error) {
 	if cfg.UseMockControl {
 		client = control.NewMockClient(logger)
 	} else {
-		return nil, fmt.Errorf("real control-plane client is not implemented yet")
+		client = control.NewWebSocketClient(logger, control.WebSocketClientConfig{
+			ControlPlaneURL:     cfg.ControlPlaneURL,
+			DialTimeout:         cfg.ControlDialTimeout,
+			WriteTimeout:        cfg.ControlWriteTimeout,
+			PongWait:            cfg.ControlPongWait,
+			PingPeriod:          cfg.ControlPingPeriod,
+			ReconnectMinBackoff: cfg.ReconnectMinBackoff,
+			ReconnectMaxBackoff: cfg.ReconnectMaxBackoff,
+			ReconnectJitter:     cfg.ReconnectJitter,
+		})
 	}
 
 	statePath := cfg.StateDir
@@ -223,10 +232,15 @@ func (a *App) sessionAuthFromState(ctx context.Context, local *state.AgentLocalS
 		agentToken = decrypted
 	}
 
+	sessionID := strings.TrimSpace(local.Enrollment.SessionID)
+	if sessionID == "" {
+		sessionID = randomID("sess")
+	}
+
 	return contracts.SessionAuthPayload{
 		AgentID:      local.Metadata.AgentID,
 		AgentToken:   agentToken,
-		SessionID:    randomID("sess"),
+		SessionID:    sessionID,
 		RuntimeMode:  a.cfg.RuntimeMode,
 		AgentKind:    a.cfg.AgentKind,
 		HandshakeVer: a.cfg.HandshakeVersion,

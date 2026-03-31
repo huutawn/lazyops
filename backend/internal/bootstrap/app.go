@@ -16,6 +16,7 @@ type Application struct {
 	Hub          *hub.Hub
 	AI           *ai.GeminiClient
 	UserRepo     *repository.UserRepository
+	PATRepo      *repository.PersonalAccessTokenRepository
 	AgentRepo    *repository.AgentRepository
 	AuthService  *service.AuthService
 	UserService  *service.UserService
@@ -36,8 +37,9 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	}
 
 	userRepo := repository.NewUserRepository(db)
+	patRepo := repository.NewPersonalAccessTokenRepository(db)
 	agentRepo := repository.NewAgentRepository(db)
-	authService := service.NewAuthService(userRepo, cfg.JWT)
+	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
@@ -49,6 +51,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		Hub:          wsHub,
 		AI:           ai.NewGeminiClient(""),
 		UserRepo:     userRepo,
+		PATRepo:      patRepo,
 		AgentRepo:    agentRepo,
 		AuthService:  authService,
 		UserService:  userService,

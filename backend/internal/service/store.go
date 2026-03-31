@@ -13,6 +13,14 @@ type UserStore interface {
 	TouchLastLogin(userID string, at time.Time) error
 }
 
+type PATStore interface {
+	Create(token *models.PersonalAccessToken) error
+	GetByHash(tokenHash string) (*models.PersonalAccessToken, error)
+	GetByID(tokenID string) (*models.PersonalAccessToken, error)
+	RevokeByIDForUser(userID, tokenID string, at time.Time) error
+	TouchLastUsed(tokenID string, at time.Time) error
+}
+
 type AgentStore interface {
 	Create(agent *models.Agent) error
 	ListByUser(userID string) ([]models.Agent, error)

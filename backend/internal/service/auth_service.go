@@ -1,6 +1,10 @@
 package service
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/mail"
 	"strings"
@@ -29,11 +33,17 @@ var (
 	ErrWeakPassword       = errors.New("weak password")
 	ErrAccountDisabled    = errors.New("account disabled")
 	ErrAccessDenied       = errors.New("access denied")
+	ErrTokenNotFound      = errors.New("token not found")
+	ErrTokenAccessDenied  = errors.New("token access denied")
+	ErrTokenRevoked       = errors.New("token revoked")
+	ErrTokenExpired       = errors.New("token expired")
 )
 
 type AuthService struct {
-	users UserStore
-	cfg   config.JWTConfig
+	users  UserStore
+	pats   PATStore
+	jwtCfg config.JWTConfig
+	patCfg config.PATConfig
 }
 
 type Claims struct {
@@ -41,11 +51,17 @@ type Claims struct {
 	UserID   string `json:"user_id"`
 	Email    string `json:"email"`
 	Role     string `json:"role"`
+	TokenID  string `json:"token_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
-func NewAuthService(users UserStore, cfg config.JWTConfig) *AuthService {
-	return &AuthService{users: users, cfg: cfg}
+func NewAuthService(users UserStore, pats PATStore, jwtCfg config.JWTConfig, patCfg config.PATConfig) *AuthService {
+	return &AuthService{
+		users:  users,
+		pats:   pats,
+		jwtCfg: jwtCfg,
+		patCfg: patCfg,
+	}
 }
 
 func (s *AuthService) Register(cmd RegisterCommand) (*AuthResult, error) {
@@ -83,39 +99,75 @@ func (s *AuthService) Register(cmd RegisterCommand) (*AuthResult, error) {
 		return nil, err
 	}
 
-	return s.issueToken(user)
+	return s.issueWebSession(user)
 }
 
 func (s *AuthService) Login(cmd LoginCommand) (*AuthResult, error) {
-	email := strings.ToLower(strings.TrimSpace(cmd.Email))
-	if !isValidEmail(email) || strings.TrimSpace(cmd.Password) == "" {
-		return nil, ErrInvalidInput
-	}
-
-	user, err := s.users.GetByEmail(email)
+	user, err := s.authenticatePasswordUser(cmd.Email, cmd.Password)
 	if err != nil {
 		return nil, err
 	}
-	if user == nil {
-		return nil, ErrInvalidCredentials
-	}
-	if user.Status != "active" {
-		return nil, ErrAccountDisabled
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(cmd.Password)); err != nil {
-		return nil, ErrInvalidCredentials
+
+	return s.issueWebSession(user)
+}
+
+func (s *AuthService) CLILogin(cmd CLILoginCommand) (*CLIAuthResult, error) {
+	if strings.ToLower(strings.TrimSpace(cmd.AuthFlow)) != "password" {
+		return nil, ErrInvalidInput
 	}
 
-	now := time.Now().UTC()
-	if err := s.users.TouchLastLogin(user.ID, now); err != nil {
+	deviceName := utils.NormalizeSpace(cmd.DeviceName)
+	if deviceName == "" {
+		return nil, ErrInvalidInput
+	}
+
+	user, err := s.authenticatePasswordUser(cmd.Email, cmd.Password)
+	if err != nil {
 		return nil, err
 	}
-	user.LastLoginAt = &now
 
-	return s.issueToken(user)
+	return s.issuePAT(user, deviceName)
+}
+
+func (s *AuthService) RevokePAT(cmd RevokePATCommand) (*PATRevokeResult, error) {
+	tokenID := strings.TrimSpace(cmd.TokenID)
+	if strings.TrimSpace(cmd.UserID) == "" || tokenID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	token, err := s.pats.GetByID(tokenID)
+	if err != nil {
+		return nil, err
+	}
+	if token == nil {
+		return nil, ErrTokenNotFound
+	}
+	if token.UserID != cmd.UserID {
+		return nil, ErrTokenAccessDenied
+	}
+
+	if token.RevokedAt == nil {
+		now := time.Now().UTC()
+		if err := s.pats.RevokeByIDForUser(cmd.UserID, token.ID, now); err != nil {
+			return nil, err
+		}
+	}
+
+	return &PATRevokeResult{
+		TokenID: token.ID,
+		Revoked: true,
+	}, nil
 }
 
 func (s *AuthService) ParseToken(token string) (*Claims, error) {
+	if looksLikeJWT(token) {
+		return s.parseWebSessionToken(token)
+	}
+
+	return s.parsePATToken(token)
+}
+
+func (s *AuthService) parseWebSessionToken(token string) (*Claims, error) {
 	claims := &Claims{}
 	parsed, err := jwt.ParseWithClaims(
 		token,
@@ -124,31 +176,93 @@ func (s *AuthService) ParseToken(token string) (*Claims, error) {
 			if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
 				return nil, ErrUnauthorized
 			}
-			return []byte(s.cfg.Secret), nil
+			return []byte(s.jwtCfg.Secret), nil
 		},
-		jwt.WithIssuer(s.cfg.Issuer),
+		jwt.WithIssuer(s.jwtCfg.Issuer),
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 	)
-	if err != nil || !parsed.Valid {
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) || errors.Is(err, jwt.ErrTokenNotValidYet) {
+			return nil, ErrTokenExpired
+		}
+		return nil, ErrUnauthorized
+	}
+	if !parsed.Valid {
 		return nil, ErrUnauthorized
 	}
 	if claims.AuthKind != "web_session" || claims.UserID == "" {
 		return nil, ErrUnauthorized
 	}
 
+	user, err := s.validateActiveUser(claims.UserID)
+	if err != nil {
+		return nil, err
+	}
+	claims.Email = user.Email
+	claims.Role = user.Role
+	claims.Subject = user.ID
+
 	return claims, nil
 }
 
-func (s *AuthService) issueToken(user *models.User) (*AuthResult, error) {
+func (s *AuthService) parsePATToken(token string) (*Claims, error) {
+	tokenHash := hashOpaqueToken(token)
+	record, err := s.pats.GetByHash(tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, ErrUnauthorized
+	}
+	if record.RevokedAt != nil {
+		return nil, ErrTokenRevoked
+	}
+	if record.ExpiresAt != nil && time.Now().UTC().After(*record.ExpiresAt) {
+		return nil, ErrTokenExpired
+	}
+
+	user, err := s.validateActiveUser(record.UserID)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
-	expiresAt := now.Add(s.cfg.ExpiresIn)
+	if err := s.pats.TouchLastUsed(record.ID, now); err != nil {
+		return nil, err
+	}
+
+	claims := &Claims{
+		AuthKind: "cli_pat",
+		UserID:   user.ID,
+		Email:    user.Email,
+		Role:     user.Role,
+		TokenID:  record.ID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:  s.jwtCfg.Issuer,
+			Subject: user.ID,
+			ID:      record.ID,
+		},
+	}
+	if !record.CreatedAt.IsZero() {
+		claims.IssuedAt = jwt.NewNumericDate(record.CreatedAt)
+	}
+	if record.ExpiresAt != nil {
+		claims.ExpiresAt = jwt.NewNumericDate(*record.ExpiresAt)
+	}
+
+	return claims, nil
+}
+
+func (s *AuthService) issueWebSession(user *models.User) (*AuthResult, error) {
+	now := time.Now().UTC()
+	expiresAt := now.Add(s.jwtCfg.ExpiresIn)
 	claims := Claims{
 		AuthKind: "web_session",
 		UserID:   user.ID,
 		Email:    user.Email,
 		Role:     user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    s.cfg.Issuer,
+			Issuer:    s.jwtCfg.Issuer,
 			Subject:   user.ID,
 			ID:        utils.NewPrefixedID("sess"),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
@@ -158,7 +272,7 @@ func (s *AuthService) issueToken(user *models.User) (*AuthResult, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString([]byte(s.cfg.Secret))
+	signed, err := token.SignedString([]byte(s.jwtCfg.Secret))
 	if err != nil {
 		return nil, err
 	}
@@ -166,9 +280,81 @@ func (s *AuthService) issueToken(user *models.User) (*AuthResult, error) {
 	return &AuthResult{
 		AccessToken: signed,
 		TokenType:   "Bearer",
-		ExpiresIn:   s.cfg.ExpiresIn,
+		ExpiresIn:   s.jwtCfg.ExpiresIn,
 		User:        ToUserProfile(user),
 	}, nil
+}
+
+func (s *AuthService) issuePAT(user *models.User, deviceName string) (*CLIAuthResult, error) {
+	rawToken, tokenPrefix, err := newOpaquePAT()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	expiresAt := now.Add(s.patCfg.ExpiresIn)
+	record := &models.PersonalAccessToken{
+		ID:          utils.NewPrefixedID("pat"),
+		UserID:      user.ID,
+		Name:        deviceName,
+		TokenHash:   hashOpaqueToken(rawToken),
+		TokenPrefix: tokenPrefix,
+		ExpiresAt:   &expiresAt,
+	}
+	if err := s.pats.Create(record); err != nil {
+		return nil, err
+	}
+
+	return &CLIAuthResult{
+		Token:     rawToken,
+		TokenType: "Bearer",
+		TokenID:   record.ID,
+		ExpiresAt: &expiresAt,
+		User:      ToUserProfile(user),
+	}, nil
+}
+
+func (s *AuthService) authenticatePasswordUser(email, password string) (*models.User, error) {
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	if !isValidEmail(normalizedEmail) || strings.TrimSpace(password) == "" {
+		return nil, ErrInvalidInput
+	}
+
+	user, err := s.users.GetByEmail(normalizedEmail)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrInvalidCredentials
+	}
+	if user.Status != "active" {
+		return nil, ErrAccountDisabled
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	now := time.Now().UTC()
+	if err := s.users.TouchLastLogin(user.ID, now); err != nil {
+		return nil, err
+	}
+	user.LastLoginAt = &now
+
+	return user, nil
+}
+
+func (s *AuthService) validateActiveUser(userID string) (*models.User, error) {
+	user, err := s.users.GetByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUnauthorized
+	}
+	if user.Status != "active" {
+		return nil, ErrAccountDisabled
+	}
+	return user, nil
 }
 
 func ToUserProfile(user *models.User) UserProfile {
@@ -212,4 +398,28 @@ func validatePassword(password string) error {
 	}
 
 	return nil
+}
+
+func looksLikeJWT(token string) bool {
+	return strings.Count(token, ".") == 2
+}
+
+func newOpaquePAT() (string, string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+
+	token := "lop_pat_" + base64.RawURLEncoding.EncodeToString(raw)
+	prefix := token
+	if len(prefix) > 16 {
+		prefix = prefix[:16]
+	}
+
+	return token, prefix, nil
+}
+
+func hashOpaqueToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

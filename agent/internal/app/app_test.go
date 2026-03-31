@@ -36,6 +36,38 @@ func TestNewCreatesApplicationWithMockClient(t *testing.T) {
 	}
 }
 
+func TestNewCreatesApplicationWithWebSocketClient(t *testing.T) {
+	cfg := config.Config{
+		AppName:             "lazyops-agent",
+		AppEnv:              "test",
+		LogLevel:            0,
+		RuntimeMode:         contracts.RuntimeModeStandalone,
+		AgentKind:           contracts.AgentKindInstance,
+		TargetRef:           "local-dev",
+		ControlPlaneURL:     "ws://127.0.0.1:8080",
+		StateDir:            filepath.Join(t.TempDir(), "state"),
+		ShutdownTimeout:     testDuration,
+		HeartbeatInterval:   testDuration,
+		HandshakeVersion:    "v0",
+		ControlDialTimeout:  time.Second,
+		ControlWriteTimeout: time.Second,
+		ControlPongWait:     2 * time.Second,
+		ControlPingPeriod:   time.Second,
+		ReconnectMinBackoff: time.Second,
+		ReconnectMaxBackoff: 2 * time.Second,
+		ReconnectJitter:     0,
+		UseMockControl:      false,
+	}
+
+	app, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	if app.store == nil || app.control == nil || app.logger == nil {
+		t.Fatal("expected app dependencies to be initialized")
+	}
+}
+
 func TestDefaultCapabilitiesKeepSidecarPrecedence(t *testing.T) {
 	capabilities := defaultCapabilities(config.Config{
 		RuntimeMode: contracts.RuntimeModeStandalone,
@@ -149,6 +181,49 @@ func TestSessionAuthFromStateUsesDecryptedEnrollmentToken(t *testing.T) {
 	}
 	if auth.AgentToken != "agt-secret-standalone" {
 		t.Fatalf("expected decrypted agent token, got %q", auth.AgentToken)
+	}
+}
+
+func TestSessionAuthFromStateReusesStoredSessionID(t *testing.T) {
+	cfg := config.Config{
+		AppName:           "lazyops-agent",
+		AppEnv:            "test",
+		LogLevel:          0,
+		RuntimeMode:       contracts.RuntimeModeStandalone,
+		AgentKind:         contracts.AgentKindInstance,
+		TargetRef:         "local-dev",
+		ControlPlaneURL:   "ws://127.0.0.1:8080",
+		StateDir:          filepath.Join(t.TempDir(), "state"),
+		ShutdownTimeout:   testDuration,
+		HeartbeatInterval: testDuration,
+		HandshakeVersion:  "v0",
+		UseMockControl:    true,
+	}
+
+	app, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+
+	if _, err := app.store.Update(context.Background(), func(local *state.AgentLocalState) error {
+		local.Metadata.AgentID = "agt_local"
+		local.Enrollment.SessionID = "sess_existing"
+		return nil
+	}); err != nil {
+		t.Fatalf("persist session state: %v", err)
+	}
+
+	local, err := app.store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	auth, err := app.sessionAuthFromState(context.Background(), local)
+	if err != nil {
+		t.Fatalf("session auth from state: %v", err)
+	}
+	if auth.SessionID != "sess_existing" {
+		t.Fatalf("expected stored session ID to be reused, got %q", auth.SessionID)
 	}
 }
 

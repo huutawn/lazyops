@@ -11,3 +11,14 @@ type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
+
+type CLILoginRequest struct {
+	AuthFlow   string `json:"auth_flow"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	DeviceName string `json:"device_name"`
+}
+
+type PATRevokeRequest struct {
+	TokenID string `json:"token_id"`
+}
