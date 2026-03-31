@@ -31,6 +31,15 @@ func TestControlWebSocketPathIsLocked(t *testing.T) {
 	if ControlWebSocketPath != "/ws/agents/control" {
 		t.Fatalf("unexpected control websocket path: %s", ControlWebSocketPath)
 	}
+	if AckEnvelopeType != "command.ack" {
+		t.Fatalf("unexpected ack envelope type: %s", AckEnvelopeType)
+	}
+	if NackEnvelopeType != "command.nack" {
+		t.Fatalf("unexpected nack envelope type: %s", NackEnvelopeType)
+	}
+	if ErrorEnvelopeType != "command.error" {
+		t.Fatalf("unexpected error envelope type: %s", ErrorEnvelopeType)
+	}
 }
 
 func TestAgentHealthStatusesAreLocked(t *testing.T) {

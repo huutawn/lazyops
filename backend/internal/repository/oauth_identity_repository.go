@@ -33,6 +33,18 @@ func (r *OAuthIdentityRepository) GetByProviderSubject(provider, subject string)
 	return &identity, nil
 }
 
+func (r *OAuthIdentityRepository) GetByUserProvider(userID, provider string) (*models.OAuthIdentity, error) {
+	var identity models.OAuthIdentity
+	if err := r.db.Where("user_id = ? AND provider = ?", userID, provider).First(&identity).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &identity, nil
+}
+
 func (r *OAuthIdentityRepository) UpdateProfile(identityID, email, avatarURL string, at time.Time) error {
 	return r.db.Model(&models.OAuthIdentity{}).
 		Where("id = ?", identityID).

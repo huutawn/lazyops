@@ -8,6 +8,7 @@ import (
 const (
 	ControlWebSocketPath = "/ws/agents/control"
 	AckEnvelopeType      = "command.ack"
+	NackEnvelopeType     = "command.nack"
 	ErrorEnvelopeType    = "command.error"
 )
 
@@ -62,6 +63,19 @@ type CommandAckEnvelope struct {
 	Source        EnvelopeSource   `json:"source"`
 	OccurredAt    time.Time        `json:"occurred_at"`
 	Summary       string           `json:"summary,omitempty"`
+}
+
+type CommandNackEnvelope struct {
+	Type          string         `json:"type"`
+	RequestID     string         `json:"request_id"`
+	CorrelationID string         `json:"correlation_id"`
+	AgentID       string         `json:"agent_id"`
+	CommandType   CommandType    `json:"command_type"`
+	Code          string         `json:"code"`
+	Message       string         `json:"message"`
+	Source        EnvelopeSource `json:"source"`
+	OccurredAt    time.Time      `json:"occurred_at"`
+	Details       map[string]any `json:"details,omitempty"`
 }
 
 type CommandErrorEnvelope struct {

@@ -15,6 +15,7 @@ import (
 	"lazyops-agent/internal/config"
 	"lazyops-agent/internal/contracts"
 	"lazyops-agent/internal/control"
+	"lazyops-agent/internal/dispatcher"
 	"lazyops-agent/internal/enroll"
 	agentlogger "lazyops-agent/internal/logger"
 	"lazyops-agent/internal/reporting"
@@ -22,12 +23,13 @@ import (
 )
 
 type App struct {
-	cfg      config.Config
-	logger   *slog.Logger
-	store    *state.Store
-	control  control.Client
-	enroll   *enroll.Service
-	reporter *reporting.Reporter
+	cfg        config.Config
+	logger     *slog.Logger
+	store      *state.Store
+	control    control.Client
+	dispatcher *dispatcher.CommandDispatcher
+	enroll     *enroll.Service
+	reporter   *reporting.Reporter
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -54,13 +56,17 @@ func New(cfg config.Config) (*App, error) {
 		statePath = strings.TrimRight(statePath, "/") + "/agent-state.json"
 	}
 
+	commandDispatcher := dispatcher.New(logger, dispatcher.NewDefaultRegistry(), client)
+	client.RegisterCommandHandler(commandDispatcher.Handler())
+
 	return &App{
-		cfg:      cfg,
-		logger:   logger,
-		store:    state.New(statePath),
-		control:  client,
-		enroll:   enroll.New(state.New(statePath), client, logger, cfg.StateEncryptionKey),
-		reporter: reporting.New(logger, cfg.HeartbeatInterval),
+		cfg:        cfg,
+		logger:     logger,
+		store:      state.New(statePath),
+		control:    client,
+		dispatcher: commandDispatcher,
+		enroll:     enroll.New(state.New(statePath), client, logger, cfg.StateEncryptionKey),
+		reporter:   reporting.New(logger, cfg.HeartbeatInterval),
 	}, nil
 }
 

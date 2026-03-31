@@ -19,13 +19,20 @@ import (
 type AuthController struct {
 	auth        *service.AuthService
 	googleOAuth *service.GoogleOAuthService
+	githubOAuth *service.GitHubOAuthService
 	cfg         config.Config
 }
 
-func NewAuthController(auth *service.AuthService, googleOAuth *service.GoogleOAuthService, cfg config.Config) *AuthController {
+func NewAuthController(
+	auth *service.AuthService,
+	googleOAuth *service.GoogleOAuthService,
+	githubOAuth *service.GitHubOAuthService,
+	cfg config.Config,
+) *AuthController {
 	return &AuthController{
 		auth:        auth,
 		googleOAuth: googleOAuth,
+		githubOAuth: githubOAuth,
 		cfg:         cfg,
 	}
 }
@@ -165,6 +172,66 @@ func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
 	response.JSON(c, http.StatusOK, "google oauth successful", mapper.ToAuthResponse(*result.AuthResult))
 }
 
+func (ctl *AuthController) GitHubOAuthStart(c *gin.Context) {
+	result, err := ctl.githubOAuth.Start()
+	if err != nil {
+		if errors.Is(err, service.ErrOAuthNotConfigured) {
+			response.Error(c, http.StatusServiceUnavailable, "github oauth not configured", "oauth_not_configured", nil)
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "failed to start github oauth", "internal_error", err.Error())
+		return
+	}
+
+	ctl.setStateCookie(c, service.GitHubOAuthStateCookie, result.StateNonce, int(ctl.githubOAuth.StateTTL().Seconds()))
+	if strings.EqualFold(c.Query("mode"), "json") {
+		response.JSON(c, http.StatusOK, "redirect ready", gin.H{
+			"provider":          service.GitHubOAuthProviderName,
+			"authorization_url": result.AuthorizationURL,
+		})
+		return
+	}
+
+	c.Redirect(http.StatusFound, result.AuthorizationURL)
+}
+
+func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
+	stateNonce, _ := c.Cookie(service.GitHubOAuthStateCookie)
+	result, err := ctl.githubOAuth.HandleCallback(c.Request.Context(), service.GitHubOAuthCallbackInput{
+		State:         c.Query("state"),
+		StateNonce:    stateNonce,
+		Code:          c.Query("code"),
+		ProviderError: c.Query("error"),
+	})
+	ctl.clearStateCookie(c, service.GitHubOAuthStateCookie)
+
+	if err != nil {
+		status, code := mapGitHubOAuthError(err)
+		if failureURL := ctl.githubOAuth.FailureRedirectURL(); failureURL != "" {
+			c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
+			return
+		}
+
+		message := "github oauth failed"
+		if code == "invalid_oauth_state" {
+			message = "invalid oauth state"
+		}
+		if code == "account_disabled" {
+			message = "account disabled"
+		}
+		response.Error(c, status, message, code, nil)
+		return
+	}
+
+	ctl.setWebSessionCookie(c, result.AuthResult.AccessToken, int(result.AuthResult.ExpiresIn.Seconds()))
+	if successURL := ctl.githubOAuth.SuccessRedirectURL(); successURL != "" {
+		c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "github oauth successful", mapper.ToAuthResponse(*result.AuthResult))
+}
+
 func (ctl *AuthController) RevokePAT(c *gin.Context) {
 	var req requestdto.PATRevokeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -192,13 +259,11 @@ func (ctl *AuthController) RevokePAT(c *gin.Context) {
 }
 
 func (ctl *AuthController) setGoogleStateCookie(c *gin.Context, nonce string, maxAge int) {
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(service.GoogleOAuthStateCookie, nonce, maxAge, "/", "", ctl.shouldUseSecureCookies(), true)
+	ctl.setStateCookie(c, service.GoogleOAuthStateCookie, nonce, maxAge)
 }
 
 func (ctl *AuthController) clearGoogleStateCookie(c *gin.Context) {
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(service.GoogleOAuthStateCookie, "", -1, "/", "", ctl.shouldUseSecureCookies(), true)
+	ctl.clearStateCookie(c, service.GoogleOAuthStateCookie)
 }
 
 func (ctl *AuthController) setWebSessionCookie(c *gin.Context, token string, maxAge int) {
@@ -206,12 +271,36 @@ func (ctl *AuthController) setWebSessionCookie(c *gin.Context, token string, max
 	c.SetCookie(service.WebSessionCookieName, token, maxAge, "/", "", ctl.shouldUseSecureCookies(), true)
 }
 
+func (ctl *AuthController) setStateCookie(c *gin.Context, name, value string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(name, value, maxAge, "/", "", ctl.shouldUseSecureCookies(), true)
+}
+
+func (ctl *AuthController) clearStateCookie(c *gin.Context, name string) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(name, "", -1, "/", "", ctl.shouldUseSecureCookies(), true)
+}
+
 func (ctl *AuthController) shouldUseSecureCookies() bool {
 	return strings.EqualFold(ctl.cfg.App.Environment, "production") ||
-		strings.HasPrefix(strings.ToLower(ctl.cfg.GoogleOAuth.CallbackURL), "https://")
+		strings.HasPrefix(strings.ToLower(ctl.cfg.GoogleOAuth.CallbackURL), "https://") ||
+		strings.HasPrefix(strings.ToLower(ctl.cfg.GitHubOAuth.CallbackURL), "https://")
 }
 
 func mapGoogleOAuthError(err error) (int, string) {
+	switch {
+	case errors.Is(err, service.ErrInvalidOAuthState):
+		return http.StatusBadRequest, "invalid_oauth_state"
+	case errors.Is(err, service.ErrOAuthNotConfigured):
+		return http.StatusServiceUnavailable, "oauth_not_configured"
+	case errors.Is(err, service.ErrAccountDisabled), errors.Is(err, service.ErrRevokedOAuthIdentity):
+		return http.StatusUnauthorized, "account_disabled"
+	default:
+		return http.StatusBadGateway, "oauth_provider_error"
+	}
+}
+
+func mapGitHubOAuthError(err error) (int, string) {
 	switch {
 	case errors.Is(err, service.ErrInvalidOAuthState):
 		return http.StatusBadRequest, "invalid_oauth_state"

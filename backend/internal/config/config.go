@@ -15,6 +15,7 @@ type Config struct {
 	JWT         JWTConfig
 	PAT         PATConfig
 	GoogleOAuth GoogleOAuthConfig
+	GitHubOAuth GitHubOAuthConfig
 	Security    SecurityConfig
 	Seed        SeedConfig
 	WebSocket   WebSocketConfig
@@ -55,6 +56,16 @@ type PATConfig struct {
 }
 
 type GoogleOAuthConfig struct {
+	Enabled            bool
+	ClientID           string
+	ClientSecret       string
+	CallbackURL        string
+	SuccessRedirectURL string
+	FailureRedirectURL string
+	StateTTL           time.Duration
+}
+
+type GitHubOAuthConfig struct {
 	Enabled            bool
 	ClientID           string
 	ClientSecret       string
@@ -126,6 +137,15 @@ func Load() Config {
 			SuccessRedirectURL: getEnv("GOOGLE_OAUTH_SUCCESS_REDIRECT_URL", ""),
 			FailureRedirectURL: getEnv("GOOGLE_OAUTH_FAILURE_REDIRECT_URL", ""),
 			StateTTL:           getEnvAsDuration("GOOGLE_OAUTH_STATE_TTL", 10*time.Minute),
+		},
+		GitHubOAuth: GitHubOAuthConfig{
+			Enabled:            getEnvAsBool("GITHUB_OAUTH_ENABLED", true),
+			ClientID:           getEnv("GITHUB_CLIENT_ID", ""),
+			ClientSecret:       getEnv("GITHUB_CLIENT_SECRET", ""),
+			CallbackURL:        getEnv("GITHUB_CALLBACK_URL", ""),
+			SuccessRedirectURL: getEnv("GITHUB_OAUTH_SUCCESS_REDIRECT_URL", ""),
+			FailureRedirectURL: getEnv("GITHUB_OAUTH_FAILURE_REDIRECT_URL", ""),
+			StateTTL:           getEnvAsDuration("GITHUB_OAUTH_STATE_TTL", 10*time.Minute),
 		},
 		Security: SecurityConfig{
 			AllowedOrigins:         getEnvAsSlice("ALLOWED_ORIGINS", []string{"*"}),

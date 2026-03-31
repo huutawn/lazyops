@@ -22,6 +22,7 @@ type Application struct {
 	AgentRepo          *repository.AgentRepository
 	AuthService        *service.AuthService
 	GoogleOAuthService *service.GoogleOAuthService
+	GitHubOAuthService *service.GitHubOAuthService
 	UserService        *service.UserService
 	AgentService       *service.AgentService
 }
@@ -53,6 +54,15 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		cfg.JWT.Secret,
 		cfg.GoogleOAuth,
 	)
+	githubProvider := oauth.NewGitHubProvider(cfg.GitHubOAuth, nil)
+	githubOAuthService := service.NewGitHubOAuthService(
+		userRepo,
+		oauthIdentityRepo,
+		authService,
+		githubProvider,
+		cfg.JWT.Secret,
+		cfg.GitHubOAuth,
+	)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
@@ -69,6 +79,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		AgentRepo:          agentRepo,
 		AuthService:        authService,
 		GoogleOAuthService: googleOAuthService,
+		GitHubOAuthService: githubOAuthService,
 		UserService:        userService,
 		AgentService:       agentService,
 	}, nil

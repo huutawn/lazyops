@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,74 +14,66 @@ import (
 )
 
 const (
-	GoogleOAuthProviderName = "google"
-	GoogleOAuthStateCookie  = "lazyops_oauth_google_state"
+	GitHubOAuthProviderName = "github"
+	GitHubOAuthStateCookie  = "lazyops_oauth_github_state"
 )
 
-var (
-	ErrOAuthNotConfigured             = errors.New("oauth not configured")
-	ErrInvalidOAuthState              = errors.New("invalid oauth state")
-	ErrOAuthProviderFailure           = errors.New("oauth provider error")
-	ErrRevokedOAuthIdentity           = errors.New("revoked oauth identity")
-	ErrOAuthIdentityOwnershipMismatch = errors.New("oauth identity ownership mismatch")
-)
-
-type GoogleIdentity struct {
-	Subject       string
-	Email         string
-	EmailVerified bool
-	Name          string
-	AvatarURL     string
+type GitHubIdentity struct {
+	Subject   string
+	Login     string
+	Email     string
+	Name      string
+	AvatarURL string
 }
 
-type GoogleOAuthProvider interface {
+type GitHubOAuthProvider interface {
 	AuthorizationURL(state string) string
 	ExchangeCode(ctx context.Context, code string) (string, error)
-	FetchIdentity(ctx context.Context, accessToken string) (*GoogleIdentity, error)
+	FetchIdentity(ctx context.Context, accessToken string) (*GitHubIdentity, error)
 }
 
-type GoogleOAuthStartResult struct {
+type GitHubOAuthStartResult struct {
 	AuthorizationURL string
 	StateNonce       string
 }
 
-type GoogleOAuthCallbackInput struct {
+type GitHubOAuthCallbackInput struct {
 	State         string
 	StateNonce    string
 	Code          string
 	ProviderError string
 }
 
-type GoogleOAuthCallbackResult struct {
+type GitHubOAuthCallbackResult struct {
 	AuthResult *AuthResult
 	User       UserProfile
 	Linked     bool
 }
 
-type googleOAuthStateClaims struct {
+type githubOAuthStateClaims struct {
 	Provider string `json:"provider"`
 	Nonce    string `json:"nonce"`
 	jwt.RegisteredClaims
 }
 
-type GoogleOAuthService struct {
+type GitHubOAuthService struct {
 	users       UserStore
 	identities  OAuthIdentityStore
 	auth        *AuthService
-	provider    GoogleOAuthProvider
-	cfg         config.GoogleOAuthConfig
+	provider    GitHubOAuthProvider
+	cfg         config.GitHubOAuthConfig
 	stateSecret string
 }
 
-func NewGoogleOAuthService(
+func NewGitHubOAuthService(
 	users UserStore,
 	identities OAuthIdentityStore,
 	auth *AuthService,
-	provider GoogleOAuthProvider,
+	provider GitHubOAuthProvider,
 	stateSecret string,
-	cfg config.GoogleOAuthConfig,
-) *GoogleOAuthService {
-	return &GoogleOAuthService{
+	cfg config.GitHubOAuthConfig,
+) *GitHubOAuthService {
+	return &GitHubOAuthService{
 		users:       users,
 		identities:  identities,
 		auth:        auth,
@@ -94,7 +83,7 @@ func NewGoogleOAuthService(
 	}
 }
 
-func (s *GoogleOAuthService) Start() (*GoogleOAuthStartResult, error) {
+func (s *GitHubOAuthService) Start() (*GitHubOAuthStartResult, error) {
 	if !s.isConfigured() {
 		return nil, ErrOAuthNotConfigured
 	}
@@ -108,13 +97,13 @@ func (s *GoogleOAuthService) Start() (*GoogleOAuthStartResult, error) {
 		return nil, err
 	}
 
-	return &GoogleOAuthStartResult{
+	return &GitHubOAuthStartResult{
 		AuthorizationURL: s.provider.AuthorizationURL(state),
 		StateNonce:       nonce,
 	}, nil
 }
 
-func (s *GoogleOAuthService) HandleCallback(ctx context.Context, input GoogleOAuthCallbackInput) (*GoogleOAuthCallbackResult, error) {
+func (s *GitHubOAuthService) HandleCallback(ctx context.Context, input GitHubOAuthCallbackInput) (*GitHubOAuthCallbackResult, error) {
 	if !s.isConfigured() {
 		return nil, ErrOAuthNotConfigured
 	}
@@ -156,43 +145,43 @@ func (s *GoogleOAuthService) HandleCallback(ctx context.Context, input GoogleOAu
 		return nil, err
 	}
 
-	return &GoogleOAuthCallbackResult{
+	return &GitHubOAuthCallbackResult{
 		AuthResult: authResult,
 		User:       ToUserProfile(user),
 		Linked:     linked,
 	}, nil
 }
 
-func (s *GoogleOAuthService) SuccessRedirectURL() string {
+func (s *GitHubOAuthService) SuccessRedirectURL() string {
 	return strings.TrimSpace(s.cfg.SuccessRedirectURL)
 }
 
-func (s *GoogleOAuthService) FailureRedirectURL() string {
+func (s *GitHubOAuthService) FailureRedirectURL() string {
 	return strings.TrimSpace(s.cfg.FailureRedirectURL)
 }
 
-func (s *GoogleOAuthService) StateTTL() time.Duration {
+func (s *GitHubOAuthService) StateTTL() time.Duration {
 	if s.cfg.StateTTL <= 0 {
 		return 10 * time.Minute
 	}
 	return s.cfg.StateTTL
 }
 
-func (s *GoogleOAuthService) isConfigured() bool {
+func (s *GitHubOAuthService) isConfigured() bool {
 	return s.cfg.Enabled &&
 		strings.TrimSpace(s.cfg.ClientID) != "" &&
 		strings.TrimSpace(s.cfg.ClientSecret) != "" &&
 		strings.TrimSpace(s.cfg.CallbackURL) != ""
 }
 
-func (s *GoogleOAuthService) signState(nonce string) (string, error) {
+func (s *GitHubOAuthService) signState(nonce string) (string, error) {
 	now := time.Now().UTC()
-	claims := googleOAuthStateClaims{
-		Provider: GoogleOAuthProviderName,
+	claims := githubOAuthStateClaims{
+		Provider: GitHubOAuthProviderName,
 		Nonce:    nonce,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "lazyops-google-oauth-state",
-			Subject:   GoogleOAuthProviderName,
+			Issuer:    "lazyops-github-oauth-state",
+			Subject:   GitHubOAuthProviderName,
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.StateTTL())),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
@@ -203,12 +192,12 @@ func (s *GoogleOAuthService) signState(nonce string) (string, error) {
 	return token.SignedString([]byte(s.stateSecret))
 }
 
-func (s *GoogleOAuthService) validateState(state, nonce string) error {
+func (s *GitHubOAuthService) validateState(state, nonce string) error {
 	if strings.TrimSpace(state) == "" || strings.TrimSpace(nonce) == "" {
 		return ErrInvalidOAuthState
 	}
 
-	claims := &googleOAuthStateClaims{}
+	claims := &githubOAuthStateClaims{}
 	parsed, err := jwt.ParseWithClaims(
 		state,
 		claims,
@@ -218,21 +207,21 @@ func (s *GoogleOAuthService) validateState(state, nonce string) error {
 			}
 			return []byte(s.stateSecret), nil
 		},
-		jwt.WithIssuer("lazyops-google-oauth-state"),
-		jwt.WithSubject(GoogleOAuthProviderName),
+		jwt.WithIssuer("lazyops-github-oauth-state"),
+		jwt.WithSubject(GitHubOAuthProviderName),
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 	)
 	if err != nil || !parsed.Valid {
 		return ErrInvalidOAuthState
 	}
-	if claims.Provider != GoogleOAuthProviderName || claims.Nonce != nonce {
+	if claims.Provider != GitHubOAuthProviderName || claims.Nonce != nonce {
 		return ErrInvalidOAuthState
 	}
 
 	return nil
 }
 
-func (s *GoogleOAuthService) resolveUser(identity *GoogleIdentity) (*models.User, bool, error) {
+func (s *GitHubOAuthService) resolveUser(identity *GitHubIdentity) (*models.User, bool, error) {
 	if identity == nil {
 		return nil, false, ErrOAuthProviderFailure
 	}
@@ -241,11 +230,8 @@ func (s *GoogleOAuthService) resolveUser(identity *GoogleIdentity) (*models.User
 	if strings.TrimSpace(identity.Subject) == "" || !isValidEmail(normalizedEmail) {
 		return nil, false, ErrOAuthProviderFailure
 	}
-	if !identity.EmailVerified {
-		return nil, false, ErrOAuthProviderFailure
-	}
 
-	existingIdentity, err := s.identities.GetByProviderSubject(GoogleOAuthProviderName, identity.Subject)
+	existingIdentity, err := s.identities.GetByProviderSubject(GitHubOAuthProviderName, identity.Subject)
 	if err != nil {
 		return nil, false, err
 	}
@@ -284,6 +270,9 @@ func (s *GoogleOAuthService) resolveUser(identity *GoogleIdentity) (*models.User
 	if user == nil {
 		displayName := utils.NormalizeSpace(identity.Name)
 		if displayName == "" {
+			displayName = strings.TrimSpace(identity.Login)
+		}
+		if displayName == "" {
 			displayName = strings.Split(normalizedEmail, "@")[0]
 		}
 
@@ -299,10 +288,25 @@ func (s *GoogleOAuthService) resolveUser(identity *GoogleIdentity) (*models.User
 		}
 	}
 
+	if linkedExistingUser {
+		userIdentity, err := s.identities.GetByUserProvider(user.ID, GitHubOAuthProviderName)
+		if err != nil {
+			return nil, false, err
+		}
+		if userIdentity != nil {
+			if userIdentity.RevokedAt != nil {
+				return nil, false, ErrRevokedOAuthIdentity
+			}
+			if userIdentity.ProviderSubject != strings.TrimSpace(identity.Subject) {
+				return nil, false, ErrOAuthIdentityOwnershipMismatch
+			}
+		}
+	}
+
 	linkedIdentity := &models.OAuthIdentity{
 		ID:              utils.NewPrefixedID("oid"),
 		UserID:          user.ID,
-		Provider:        GoogleOAuthProviderName,
+		Provider:        GitHubOAuthProviderName,
 		ProviderSubject: strings.TrimSpace(identity.Subject),
 		Email:           normalizedEmail,
 		AvatarURL:       strings.TrimSpace(identity.AvatarURL),
@@ -312,13 +316,4 @@ func (s *GoogleOAuthService) resolveUser(identity *GoogleIdentity) (*models.User
 	}
 
 	return user, linkedExistingUser, nil
-}
-
-func newOAuthNonce() (string, error) {
-	raw := make([]byte, 24)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(raw), nil
 }

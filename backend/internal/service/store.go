@@ -24,6 +24,7 @@ type PATStore interface {
 type OAuthIdentityStore interface {
 	Create(identity *models.OAuthIdentity) error
 	GetByProviderSubject(provider, subject string) (*models.OAuthIdentity, error)
+	GetByUserProvider(userID, provider string) (*models.OAuthIdentity, error)
 	UpdateProfile(identityID, email, avatarURL string, at time.Time) error
 }
 

@@ -3,6 +3,8 @@ package command
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +174,67 @@ func TestLoginSpinnerStartsAfterOneSecond(t *testing.T) {
 	}
 	if spinnerFactory.spinner.stopCalls == 0 {
 		t.Fatal("expected delayed spinner to stop after login completes")
+	}
+}
+
+func TestInitPrintsRepoScanPreviewUsingServiceAbstraction(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(cwd); chdirErr != nil {
+			t.Fatalf("Chdir() restore error = %v", chdirErr)
+		}
+	}()
+
+	repoRoot := t.TempDir()
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "keep"), "")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "go.mod"), "module api\n\ngo 1.22.2\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "web", "package.json"), `{"name":"web"}`)
+
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "repo scan complete") {
+		t.Fatalf("expected init scan header, got %q", output)
+	}
+	if !strings.Contains(output, "repo layout: monorepo") {
+		t.Fatalf("expected monorepo label, got %q", output)
+	}
+	if !strings.Contains(output, "service api -> apps/api (go.mod)") {
+		t.Fatalf("expected api service preview, got %q", output)
+	}
+	if !strings.Contains(output, "service web -> apps/web (package.json)") {
+		t.Fatalf("expected web service preview, got %q", output)
+	}
+	lowerOutput := strings.ToLower(output)
+	if strings.Contains(lowerOutput, "frontend") || strings.Contains(lowerOutput, "backend") {
+		t.Fatalf("expected init scan output to stay service-only, got %q", output)
 	}
 }
 
@@ -374,6 +437,17 @@ func mustSeedCredential(t *testing.T, store *credentials.Store, record credentia
 
 	if _, err := store.Save(context.Background(), record); err != nil {
 		t.Fatalf("Save() error = %v", err)
+	}
+}
+
+func mustWriteTestFile(t *testing.T, path string, contents string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}
 }
 

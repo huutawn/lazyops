@@ -9,12 +9,13 @@ import (
 )
 
 type MockClient struct {
-	logger      *slog.Logger
-	mu          sync.Mutex
-	connected   bool
-	sessionAuth contracts.SessionAuthPayload
-	transcript  []contracts.CommandEnvelope
-	bootstrap   *bootstrapRegistry
+	logger         *slog.Logger
+	mu             sync.Mutex
+	connected      bool
+	commandHandler CommandHandler
+	sessionAuth    contracts.SessionAuthPayload
+	transcript     []contracts.CommandEnvelope
+	bootstrap      *bootstrapRegistry
 }
 
 func NewMockClient(logger *slog.Logger) *MockClient {
@@ -56,12 +57,49 @@ func (c *MockClient) Connect(_ context.Context, auth contracts.SessionAuthPayloa
 	return nil
 }
 
+func (c *MockClient) RegisterCommandHandler(handler CommandHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.commandHandler = handler
+}
+
 func (c *MockClient) SendHandshake(_ context.Context, payload contracts.AgentHandshakePayload) error {
 	return c.recordEnvelope(handshakeEnvelopeType, payload.Auth.AgentID, payload)
 }
 
 func (c *MockClient) SendHeartbeat(_ context.Context, payload contracts.HeartbeatPayload) error {
 	return c.recordEnvelope(heartbeatEnvelopeType, payload.AgentID, payload)
+}
+
+func (c *MockClient) SendCommandAck(_ context.Context, envelope contracts.CommandAckEnvelope) error {
+	c.logger.Info("mock command ack sent",
+		"request_id", envelope.RequestID,
+		"correlation_id", envelope.CorrelationID,
+		"command_type", envelope.CommandType,
+		"status", envelope.Status,
+	)
+	return nil
+}
+
+func (c *MockClient) SendCommandNack(_ context.Context, envelope contracts.CommandNackEnvelope) error {
+	c.logger.Warn("mock command nack sent",
+		"request_id", envelope.RequestID,
+		"correlation_id", envelope.CorrelationID,
+		"command_type", envelope.CommandType,
+		"code", envelope.Code,
+	)
+	return nil
+}
+
+func (c *MockClient) SendCommandError(_ context.Context, envelope contracts.CommandErrorEnvelope) error {
+	c.logger.Warn("mock command error sent",
+		"request_id", envelope.RequestID,
+		"correlation_id", envelope.CorrelationID,
+		"command_type", envelope.CommandType,
+		"code", envelope.Code,
+		"retryable", envelope.Retryable,
+	)
+	return nil
 }
 
 func (c *MockClient) Close(_ context.Context) error {

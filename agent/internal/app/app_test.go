@@ -31,7 +31,7 @@ func TestNewCreatesApplicationWithMockClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
-	if app.store == nil || app.control == nil || app.logger == nil {
+	if app.store == nil || app.control == nil || app.logger == nil || app.dispatcher == nil {
 		t.Fatal("expected app dependencies to be initialized")
 	}
 }
@@ -63,7 +63,7 @@ func TestNewCreatesApplicationWithWebSocketClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
-	if app.store == nil || app.control == nil || app.logger == nil {
+	if app.store == nil || app.control == nil || app.logger == nil || app.dispatcher == nil {
 		t.Fatal("expected app dependencies to be initialized")
 	}
 }

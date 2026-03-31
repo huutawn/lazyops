@@ -57,6 +57,15 @@ func (f *fakeOAuthIdentityStore) GetByProviderSubject(provider, subject string) 
 	return nil, nil
 }
 
+func (f *fakeOAuthIdentityStore) GetByUserProvider(userID, provider string) (*models.OAuthIdentity, error) {
+	for _, identity := range f.byProviderSubject {
+		if identity.UserID == userID && identity.Provider == provider {
+			return identity, nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeOAuthIdentityStore) UpdateProfile(identityID, email, avatarURL string, at time.Time) error {
 	if f.updateErr != nil {
 		return f.updateErr

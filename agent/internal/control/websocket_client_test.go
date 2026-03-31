@@ -265,6 +265,94 @@ func TestWebSocketClientReconnectsAndReplaysHandshake(t *testing.T) {
 	}
 }
 
+func TestWebSocketClientDispatchesInboundCommandEnvelope(t *testing.T) {
+	receivedCh := make(chan contracts.CommandEnvelope, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != contracts.ControlWebSocketPath {
+			http.NotFound(w, r)
+			return
+		}
+
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		command := contracts.CommandEnvelope{
+			Type:          contracts.CommandPrepareReleaseWorkspace,
+			RequestID:     "req_dispatch",
+			CorrelationID: "corr_dispatch",
+			AgentID:       "agt_ws_dispatch",
+			Source:        contracts.EnvelopeSourceBackend,
+			OccurredAt:    time.Now().UTC(),
+			Payload:       json.RawMessage(`{"revision_id":"rev_123"}`),
+		}
+		raw, err := json.Marshal(command)
+		if err != nil {
+			t.Errorf("marshal command envelope: %v", err)
+			return
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
+			t.Errorf("write command envelope: %v", err)
+			return
+		}
+
+		<-time.After(100 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client := NewWebSocketClient(testLogger(), WebSocketClientConfig{
+		ControlPlaneURL:     wsBaseURL(t, server.URL),
+		DialTimeout:         time.Second,
+		WriteTimeout:        time.Second,
+		PongWait:            3 * time.Second,
+		PingPeriod:          time.Second,
+		ReconnectMinBackoff: 20 * time.Millisecond,
+		ReconnectMaxBackoff: 40 * time.Millisecond,
+		ReconnectJitter:     0,
+	})
+	client.RegisterCommandHandler(func(_ context.Context, envelope contracts.CommandEnvelope) {
+		receivedCh <- envelope
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	auth := contracts.SessionAuthPayload{
+		AgentID:      "agt_ws_dispatch",
+		AgentToken:   "agt-token-dispatch",
+		SessionID:    "sess_dispatch",
+		RuntimeMode:  contracts.RuntimeModeStandalone,
+		AgentKind:    contracts.AgentKindInstance,
+		HandshakeVer: "v0",
+		SentAt:       time.Now().UTC(),
+	}
+
+	if err := client.Connect(ctx, auth); err != nil {
+		t.Fatalf("connect control client: %v", err)
+	}
+
+	select {
+	case envelope := <-receivedCh:
+		if envelope.Type != contracts.CommandPrepareReleaseWorkspace {
+			t.Fatalf("unexpected command type %q", envelope.Type)
+		}
+		if envelope.RequestID != "req_dispatch" {
+			t.Fatalf("unexpected request ID %q", envelope.RequestID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for inbound command dispatch")
+	}
+
+	if err := client.Close(ctx); err != nil {
+		t.Fatalf("close control client: %v", err)
+	}
+}
+
 func wsBaseURL(t *testing.T, raw string) string {
 	t.Helper()
 

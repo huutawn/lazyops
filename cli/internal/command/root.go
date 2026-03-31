@@ -2,11 +2,13 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"lazyops-cli/internal/credentials"
 	"lazyops-cli/internal/redact"
+	"lazyops-cli/internal/repo"
 	"lazyops-cli/internal/transport"
 )
 
@@ -74,6 +76,16 @@ func initCommand() *Command {
 		Summary: "Initialize the repository into a valid LazyOps deploy contract.",
 		Usage:   "lazyops init",
 		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
+			scanResult, err := repo.Scan(".")
+			if err != nil {
+				if errors.Is(err, repo.ErrRepoRootNotFound) {
+					return fmt.Errorf("could not find the repository root. next: run `lazyops init` from inside a git repository")
+				}
+				return fmt.Errorf("could not scan the local repository. next: verify the working tree is readable and retry `lazyops init`: %w", err)
+			}
+
+			printRepoScanPreview(runtime, scanResult)
+
 			requests := []transport.Request{
 				{Method: "GET", Path: "/api/v1/projects"},
 				{Method: "GET", Path: "/api/v1/instances"},
@@ -83,6 +95,21 @@ func initCommand() *Command {
 
 			return runAuthorizedSequence(ctx, runtime, "Day 2 scaffold: init dependencies are wired to the transport abstraction.", credential, requests...)
 		}),
+	}
+}
+
+func printRepoScanPreview(runtime *Runtime, result repo.RepoScanResult) {
+	runtime.Output.Success("repo scan complete")
+	runtime.Output.Info("repo root: %s", result.RepoRoot)
+	runtime.Output.Info("repo layout: %s", result.LayoutLabel())
+
+	if len(result.Services) == 0 {
+		runtime.Output.Warn("no service markers found yet; expected one of package.json, go.mod, requirements.txt, or Dockerfile")
+		return
+	}
+
+	for _, service := range result.Services {
+		runtime.Output.Info("service %s -> %s (%s)", service.Name, service.Path, strings.Join(service.SignalNames(), ", "))
 	}
 }
 

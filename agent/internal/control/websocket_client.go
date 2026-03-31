@@ -29,9 +29,9 @@ type WebSocketClientConfig struct {
 	SendBufferSize      int
 }
 
-type queuedEnvelope struct {
-	envelope contracts.CommandEnvelope
-	raw      []byte
+type queuedMessage struct {
+	transcript *contracts.CommandEnvelope
+	raw        []byte
 }
 
 type WebSocketClient struct {
@@ -44,9 +44,10 @@ type WebSocketClient struct {
 	closing         bool
 	connected       bool
 	auth            contracts.SessionAuthPayload
+	commandHandler  CommandHandler
 	transcript      []contracts.CommandEnvelope
-	cachedHandshake *queuedEnvelope
-	sendCh          chan queuedEnvelope
+	cachedHandshake *queuedMessage
+	sendCh          chan queuedMessage
 	closeCh         chan struct{}
 	doneCh          chan struct{}
 	readyCh         chan struct{}
@@ -90,7 +91,7 @@ func (c *WebSocketClient) Connect(ctx context.Context, auth contracts.SessionAut
 
 	c.started = true
 	c.auth = auth
-	c.sendCh = make(chan queuedEnvelope, c.cfg.SendBufferSize)
+	c.sendCh = make(chan queuedMessage, c.cfg.SendBufferSize)
 	c.closeCh = make(chan struct{})
 	c.doneCh = make(chan struct{})
 	c.readyCh = make(chan struct{})
@@ -112,6 +113,12 @@ func (c *WebSocketClient) Connect(ctx context.Context, auth contracts.SessionAut
 	}
 }
 
+func (c *WebSocketClient) RegisterCommandHandler(handler CommandHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.commandHandler = handler
+}
+
 func (c *WebSocketClient) SendHandshake(ctx context.Context, payload contracts.AgentHandshakePayload) error {
 	envelope, raw, err := buildEnvelope(handshakeEnvelopeType, payload.Auth.AgentID, payload)
 	if err != nil {
@@ -119,13 +126,13 @@ func (c *WebSocketClient) SendHandshake(ctx context.Context, payload contracts.A
 	}
 
 	c.mu.Lock()
-	c.cachedHandshake = &queuedEnvelope{
-		envelope: envelope,
-		raw:      raw,
+	c.cachedHandshake = &queuedMessage{
+		transcript: &envelope,
+		raw:        raw,
 	}
 	c.mu.Unlock()
 
-	return c.enqueue(ctx, queuedEnvelope{envelope: envelope, raw: raw})
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
 }
 
 func (c *WebSocketClient) SendHeartbeat(ctx context.Context, payload contracts.HeartbeatPayload) error {
@@ -134,7 +141,31 @@ func (c *WebSocketClient) SendHeartbeat(ctx context.Context, payload contracts.H
 		return err
 	}
 
-	return c.enqueue(ctx, queuedEnvelope{envelope: envelope, raw: raw})
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
+}
+
+func (c *WebSocketClient) SendCommandAck(ctx context.Context, envelope contracts.CommandAckEnvelope) error {
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return c.enqueue(ctx, queuedMessage{raw: raw})
+}
+
+func (c *WebSocketClient) SendCommandNack(ctx context.Context, envelope contracts.CommandNackEnvelope) error {
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return c.enqueue(ctx, queuedMessage{raw: raw})
+}
+
+func (c *WebSocketClient) SendCommandError(ctx context.Context, envelope contracts.CommandErrorEnvelope) error {
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return c.enqueue(ctx, queuedMessage{raw: raw})
 }
 
 func (c *WebSocketClient) Close(ctx context.Context) error {
@@ -298,8 +329,12 @@ func (c *WebSocketClient) writeLoop(conn *websocket.Conn, replayHandshake bool, 
 				errCh <- err
 				return
 			}
+			agentID := c.auth.AgentID
+			if message.transcript != nil {
+				agentID = message.transcript.AgentID
+			}
 			c.logger.Info("replayed cached agent handshake",
-				"agent_id", message.envelope.AgentID,
+				"agent_id", agentID,
 				"session_id", c.auth.SessionID,
 			)
 		}
@@ -333,6 +368,12 @@ func (c *WebSocketClient) handleInbound(raw []byte) {
 			"request_id", envelope.RequestID,
 			"correlation_id", envelope.CorrelationID,
 		)
+		if c.shouldDispatch(envelope.Type) {
+			handler := c.commandHandlerSnapshot()
+			if handler != nil {
+				go handler(context.Background(), envelope)
+			}
+		}
 		return
 	}
 
@@ -341,7 +382,7 @@ func (c *WebSocketClient) handleInbound(raw []byte) {
 	)
 }
 
-func (c *WebSocketClient) enqueue(ctx context.Context, message queuedEnvelope) error {
+func (c *WebSocketClient) enqueue(ctx context.Context, message queuedMessage) error {
 	c.mu.RLock()
 	started := c.started
 	closing := c.closing
@@ -358,7 +399,9 @@ func (c *WebSocketClient) enqueue(ctx context.Context, message queuedEnvelope) e
 
 	select {
 	case sendCh <- message:
-		c.appendTranscript(message.envelope)
+		if message.transcript != nil {
+			c.appendTranscript(*message.transcript)
+		}
 		return nil
 	case <-closeCh:
 		return ErrControlClientClosed
@@ -373,14 +416,25 @@ func (c *WebSocketClient) appendTranscript(envelope contracts.CommandEnvelope) {
 	c.transcript = append(c.transcript, envelope)
 }
 
-func (c *WebSocketClient) cachedHandshakeSnapshot() (queuedEnvelope, bool) {
+func (c *WebSocketClient) cachedHandshakeSnapshot() (queuedMessage, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	if c.cachedHandshake == nil {
-		return queuedEnvelope{}, false
+		return queuedMessage{}, false
 	}
 	return *c.cachedHandshake, true
+}
+
+func (c *WebSocketClient) commandHandlerSnapshot() CommandHandler {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.commandHandler
+}
+
+func (c *WebSocketClient) shouldDispatch(messageType contracts.CommandType) bool {
+	_, ok := contracts.CommandHandlerBindings[messageType]
+	return ok
 }
 
 func (c *WebSocketClient) signalReady() {

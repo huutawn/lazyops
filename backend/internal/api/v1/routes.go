@@ -11,7 +11,7 @@ import (
 
 func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	healthController := controller.NewHealthController(app.Config)
-	authController := controller.NewAuthController(app.AuthService, app.GoogleOAuthService, app.Config)
+	authController := controller.NewAuthController(app.AuthService, app.GoogleOAuthService, app.GitHubOAuthService, app.Config)
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
@@ -26,6 +26,8 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			authGroup.POST("/register", authController.Register)
 			authGroup.GET("/oauth/google/start", authController.GoogleOAuthStart)
 			authGroup.GET("/oauth/google/callback", authController.GoogleOAuthCallback)
+			authGroup.GET("/oauth/github/start", authController.GitHubOAuthStart)
+			authGroup.GET("/oauth/github/callback", authController.GitHubOAuthCallback)
 			authGroup.POST(
 				"/cli-login",
 				middleware.ScopedRateLimit(
