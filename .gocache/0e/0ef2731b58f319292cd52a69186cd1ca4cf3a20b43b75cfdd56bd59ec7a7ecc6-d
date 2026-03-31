@@ -1,0 +1,3 @@
+./app.go
+./database.go
+./seed.go
