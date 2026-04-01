@@ -15,6 +15,10 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	githubController := controller.NewGitHubController(app.GitHubInstallSvc)
 	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
+	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
+	instanceController := controller.NewInstanceController(app.InstanceService)
+	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService)
+	agentRuntimeController := controller.NewAgentRuntimeController(app.AgentEnrollmentSvc)
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
@@ -23,6 +27,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	{
 		v1.GET("/health", healthController.Health)
 		v1.POST("/integrations/github/webhook", integrationController.GitHubWebhook)
+		v1.POST("/agents/enroll", agentRuntimeController.Enroll)
 
 		authGroup := v1.Group("/auth")
 		{
@@ -43,26 +48,44 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			)
 		}
 
-		protected := v1.Group("/")
-		protected.Use(middleware.Authenticate(app.AuthService))
+		userProtected := v1.Group("/")
+		userProtected.Use(middleware.Authenticate(app.AuthService))
+		userProtected.Use(middleware.RequireAuthKinds(service.AuthKindWebSession, service.AuthKindCLIPAT))
 		{
-			protected.POST("/auth/pat/revoke", authController.RevokePAT)
-			protected.POST("/github/app/installations/sync", githubController.SyncInstallations)
-			protected.GET("/github/repos", githubController.ListRepos)
-			protected.POST("/projects", projectController.Create)
-			protected.GET("/projects", projectController.List)
-			protected.POST("/projects/:id/repo-link", projectController.LinkRepo)
-			protected.GET("/users/me", userController.Me)
-			protected.GET("/agents", agentController.List)
-			protected.POST("/agents",
+			userProtected.POST("/auth/pat/revoke", authController.RevokePAT)
+			userProtected.POST("/github/app/installations/sync", githubController.SyncInstallations)
+			userProtected.GET("/github/repos", githubController.ListRepos)
+			userProtected.POST("/projects", projectController.Create)
+			userProtected.GET("/projects", projectController.List)
+			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+			userProtected.POST("/projects/:id/deployment-bindings",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				deploymentBindingController.Create,
+			)
+			userProtected.POST("/instances", instanceController.Create)
+			userProtected.GET("/instances", instanceController.List)
+			userProtected.POST("/mesh-networks", targetController.CreateMeshNetwork)
+			userProtected.GET("/mesh-networks", targetController.ListMeshNetworks)
+			userProtected.POST("/clusters", targetController.CreateCluster)
+			userProtected.GET("/clusters", targetController.ListClusters)
+			userProtected.GET("/users/me", userController.Me)
+			userProtected.GET("/agents", agentController.List)
+			userProtected.POST("/agents",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				agentController.Create,
 			)
-			protected.PUT("/agents/:agentID/status",
+			userProtected.PUT("/agents/:agentID/status",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				agentController.UpdateStatus,
 			)
-			protected.GET("/ws/agents", wsController.AgentStream)
+			userProtected.GET("/ws/agents", wsController.AgentStream)
+		}
+
+		agentProtected := v1.Group("/")
+		agentProtected.Use(middleware.Authenticate(app.AuthService))
+		agentProtected.Use(middleware.RequireAuthKinds(service.AuthKindAgentToken))
+		{
+			agentProtected.POST("/agents/heartbeat", agentRuntimeController.Heartbeat)
 		}
 	}
 }

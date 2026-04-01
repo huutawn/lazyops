@@ -13,26 +13,37 @@ import (
 )
 
 type Application struct {
-	Config              config.Config
-	DB                  *gorm.DB
-	Hub                 *hub.Hub
-	AI                  *ai.GeminiClient
-	UserRepo            *repository.UserRepository
-	OAuthIdentityRepo   *repository.OAuthIdentityRepository
-	GitHubInstallRepo   *repository.GitHubInstallationRepository
-	ProjectRepo         *repository.ProjectRepository
-	ProjectRepoLinkRepo *repository.ProjectRepoLinkRepository
-	PATRepo             *repository.PersonalAccessTokenRepository
-	AgentRepo           *repository.AgentRepository
-	AuthService         *service.AuthService
-	GoogleOAuthService  *service.GoogleOAuthService
-	GitHubOAuthService  *service.GitHubOAuthService
-	GitHubInstallSvc    *service.GitHubInstallationService
-	GitHubWebhookSvc    *service.GitHubWebhookService
-	ProjectService      *service.ProjectService
-	ProjectRepoLinkSvc  *service.ProjectRepoLinkService
-	UserService         *service.UserService
-	AgentService        *service.AgentService
+	Config                config.Config
+	DB                    *gorm.DB
+	Hub                   *hub.Hub
+	AI                    *ai.GeminiClient
+	UserRepo              *repository.UserRepository
+	OAuthIdentityRepo     *repository.OAuthIdentityRepository
+	GitHubInstallRepo     *repository.GitHubInstallationRepository
+	ProjectRepo           *repository.ProjectRepository
+	ProjectRepoLinkRepo   *repository.ProjectRepoLinkRepository
+	DeploymentBindingRepo *repository.DeploymentBindingRepository
+	InstanceRepo          *repository.InstanceRepository
+	MeshNetworkRepo       *repository.MeshNetworkRepository
+	ClusterRepo           *repository.ClusterRepository
+	BootstrapTokenRepo    *repository.BootstrapTokenRepository
+	AgentTokenRepo        *repository.AgentTokenRepository
+	PATRepo               *repository.PersonalAccessTokenRepository
+	AgentRepo             *repository.AgentRepository
+	AuthService           *service.AuthService
+	GoogleOAuthService    *service.GoogleOAuthService
+	GitHubOAuthService    *service.GitHubOAuthService
+	GitHubInstallSvc      *service.GitHubInstallationService
+	GitHubWebhookSvc      *service.GitHubWebhookService
+	ProjectService        *service.ProjectService
+	ProjectRepoLinkSvc    *service.ProjectRepoLinkService
+	DeploymentBindingSvc  *service.DeploymentBindingService
+	InstanceService       *service.InstanceService
+	MeshNetworkService    *service.MeshNetworkService
+	ClusterService        *service.ClusterService
+	AgentEnrollmentSvc    *service.AgentEnrollmentService
+	UserService           *service.UserService
+	AgentService          *service.AgentService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -53,9 +64,15 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	githubInstallRepo := repository.NewGitHubInstallationRepository(db)
 	projectRepo := repository.NewProjectRepository(db)
 	projectRepoLinkRepo := repository.NewProjectRepoLinkRepository(db)
+	deploymentBindingRepo := repository.NewDeploymentBindingRepository(db)
+	instanceRepo := repository.NewInstanceRepository(db)
+	meshNetworkRepo := repository.NewMeshNetworkRepository(db)
+	clusterRepo := repository.NewClusterRepository(db)
+	bootstrapTokenRepo := repository.NewBootstrapTokenRepository(db)
+	agentTokenRepo := repository.NewAgentTokenRepository(db)
 	patRepo := repository.NewPersonalAccessTokenRepository(db)
 	agentRepo := repository.NewAgentRepository(db)
-	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT)
+	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT).WithAgentTokens(agentTokenRepo)
 	googleProvider := oauth.NewGoogleProvider(cfg.GoogleOAuth, nil)
 	googleOAuthService := service.NewGoogleOAuthService(
 		userRepo,
@@ -82,32 +99,48 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	)
 	projectService := service.NewProjectService(projectRepo)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
+	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc)
+	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
+	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
+	clusterService := service.NewClusterService(clusterRepo)
+	agentEnrollmentSvc := service.NewAgentEnrollmentService(agentRepo, instanceRepo, bootstrapTokenRepo, agentTokenRepo, cfg.Enrollment)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
 	wsHub.Start()
 
 	return &Application{
-		Config:              cfg,
-		DB:                  db,
-		Hub:                 wsHub,
-		AI:                  ai.NewGeminiClient(""),
-		UserRepo:            userRepo,
-		OAuthIdentityRepo:   oauthIdentityRepo,
-		GitHubInstallRepo:   githubInstallRepo,
-		ProjectRepo:         projectRepo,
-		ProjectRepoLinkRepo: projectRepoLinkRepo,
-		PATRepo:             patRepo,
-		AgentRepo:           agentRepo,
-		AuthService:         authService,
-		GoogleOAuthService:  googleOAuthService,
-		GitHubOAuthService:  githubOAuthService,
-		GitHubInstallSvc:    githubInstallSvc,
-		GitHubWebhookSvc:    githubWebhookSvc,
-		ProjectService:      projectService,
-		ProjectRepoLinkSvc:  projectRepoLinkSvc,
-		UserService:         userService,
-		AgentService:        agentService,
+		Config:                cfg,
+		DB:                    db,
+		Hub:                   wsHub,
+		AI:                    ai.NewGeminiClient(""),
+		UserRepo:              userRepo,
+		OAuthIdentityRepo:     oauthIdentityRepo,
+		GitHubInstallRepo:     githubInstallRepo,
+		ProjectRepo:           projectRepo,
+		ProjectRepoLinkRepo:   projectRepoLinkRepo,
+		DeploymentBindingRepo: deploymentBindingRepo,
+		InstanceRepo:          instanceRepo,
+		MeshNetworkRepo:       meshNetworkRepo,
+		ClusterRepo:           clusterRepo,
+		BootstrapTokenRepo:    bootstrapTokenRepo,
+		AgentTokenRepo:        agentTokenRepo,
+		PATRepo:               patRepo,
+		AgentRepo:             agentRepo,
+		AuthService:           authService,
+		GoogleOAuthService:    googleOAuthService,
+		GitHubOAuthService:    githubOAuthService,
+		GitHubInstallSvc:      githubInstallSvc,
+		GitHubWebhookSvc:      githubWebhookSvc,
+		ProjectService:        projectService,
+		ProjectRepoLinkSvc:    projectRepoLinkSvc,
+		DeploymentBindingSvc:  deploymentBindingSvc,
+		InstanceService:       instanceService,
+		MeshNetworkService:    meshNetworkService,
+		ClusterService:        clusterService,
+		AgentEnrollmentSvc:    agentEnrollmentSvc,
+		UserService:           userService,
+		AgentService:          agentService,
 	}, nil
 }

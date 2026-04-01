@@ -51,7 +51,9 @@ func (r *AgentRepository) UpdateStatusForUser(userID, agentID, name, status stri
 		return nil, nil
 	}
 
-	agent.Name = name
+	if name != "" {
+		agent.Name = name
+	}
 	agent.Status = status
 	agent.LastSeenAt = &at
 	if err := r.db.Save(agent).Error; err != nil {

@@ -7,22 +7,28 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"lazyops-cli/internal/contracts"
 	"lazyops-cli/internal/credentials"
 	"lazyops-cli/internal/initplan"
+	"lazyops-cli/internal/lazyyaml"
 	"lazyops-cli/internal/repo"
 	"lazyops-cli/internal/transport"
 )
 
 type initArgs struct {
-	Project       string
-	RuntimeMode   initplan.RuntimeMode
-	Target        string
-	Binding       string
-	CreateBinding bool
-	BindingName   string
+	Project             string
+	RuntimeMode         initplan.RuntimeMode
+	Target              string
+	Binding             string
+	CreateBinding       bool
+	BindingName         string
+	Write               bool
+	Overwrite           bool
+	MagicDomainProvider string
+	ScaleToZero         bool
 }
 
 func runInit(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
@@ -93,7 +99,7 @@ func runInit(ctx context.Context, runtime *Runtime, args []string, credential cr
 	}
 
 	printInitPlanReview(runtime, plan)
-	return nil
+	return validatePreviewAndMaybeWriteLazyopsYAML(runtime, plan, initArgs)
 }
 
 func parseInitArgs(args []string) (initArgs, error) {
@@ -106,9 +112,13 @@ func parseInitArgs(args []string) (initArgs, error) {
 	binding := flagSet.String("binding", "", "existing binding id, name, or target_ref")
 	createBinding := flagSet.Bool("create-binding", false, "create a new deployment binding")
 	bindingName := flagSet.String("binding-name", "", "name for a newly created deployment binding")
+	writeFile := flagSet.Bool("write", false, "write lazyops.yaml to the repository root after review")
+	overwrite := flagSet.Bool("overwrite", false, "confirm overwrite if lazyops.yaml already exists")
+	magicDomainProvider := flagSet.String("magic-domain-provider", "", "magic domain provider: sslip.io or nip.io")
+	scaleToZero := flagSet.Bool("scale-to-zero", false, "opt in the generated lazyops.yaml scale_to_zero_policy")
 
 	if err := flagSet.Parse(args); err != nil {
-		return initArgs{}, errors.New("invalid init flags. next: use `lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]]`")
+		return initArgs{}, errors.New("invalid init flags. next: use `lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]] [--magic-domain-provider <sslip.io|nip.io>] [--scale-to-zero] [--write [--overwrite]]`")
 	}
 	if flagSet.NArg() > 0 {
 		return initArgs{}, fmt.Errorf("unexpected init arguments: %s. next: use flags instead of positional arguments", strings.Join(flagSet.Args(), " "))
@@ -124,14 +134,26 @@ func parseInitArgs(args []string) (initArgs, error) {
 	if strings.TrimSpace(*bindingName) != "" && !*createBinding {
 		return initArgs{}, errors.New("`--binding-name` requires `--create-binding`. next: rerun `lazyops init --create-binding --binding-name <name>`")
 	}
+	if *overwrite && !*writeFile {
+		return initArgs{}, errors.New("`--overwrite` requires `--write`. next: rerun `lazyops init --write --overwrite`")
+	}
+
+	provider := strings.TrimSpace(*magicDomainProvider)
+	if provider != "" && !isAllowedMagicDomainProvider(provider) {
+		return initArgs{}, fmt.Errorf("magic domain provider %q is invalid. next: use `--magic-domain-provider sslip.io` or `--magic-domain-provider nip.io`", provider)
+	}
 
 	return initArgs{
-		Project:       strings.TrimSpace(*project),
-		RuntimeMode:   mode,
-		Target:        strings.TrimSpace(*target),
-		Binding:       strings.TrimSpace(*binding),
-		CreateBinding: *createBinding,
-		BindingName:   strings.TrimSpace(*bindingName),
+		Project:             strings.TrimSpace(*project),
+		RuntimeMode:         mode,
+		Target:              strings.TrimSpace(*target),
+		Binding:             strings.TrimSpace(*binding),
+		CreateBinding:       *createBinding,
+		BindingName:         strings.TrimSpace(*bindingName),
+		Write:               *writeFile,
+		Overwrite:           *overwrite,
+		MagicDomainProvider: provider,
+		ScaleToZero:         *scaleToZero,
 	}, nil
 }
 
@@ -296,6 +318,9 @@ func printInitPlanReview(runtime *Runtime, plan initplan.InitPlan) {
 
 	if plan.RuntimeMode != "" {
 		runtime.Output.Info("selected runtime mode: %s", plan.RuntimeMode)
+		if plan.RuntimeMode == initplan.RuntimeModeDistributedK3s {
+			runtime.Output.Info("distributed-k3s boundary: K3s remains the workload scheduler; CLI writes logical binding refs only")
+		}
 	} else {
 		runtime.Output.Warn("runtime mode selection pending; use `--runtime-mode <standalone|distributed-mesh|distributed-k3s>`")
 		for _, mode := range []initplan.RuntimeMode{initplan.RuntimeModeStandalone, initplan.RuntimeModeDistributedMesh, initplan.RuntimeModeDistributedK3s} {
@@ -328,6 +353,9 @@ func printInitPlanReview(runtime *Runtime, plan initplan.InitPlan) {
 	printBindingReview(runtime, plan)
 
 	if len(plan.DependencyBindings) == 0 {
+		if plan.RuntimeMode == initplan.RuntimeModeDistributedMesh && len(plan.Services) > 1 {
+			runtime.Output.Warn("distributed-mesh review found multiple services but no dependency bindings were inferred yet")
+		}
 		runtime.Output.Info("dependency bindings: none inferred yet")
 		return
 	}
@@ -401,4 +429,89 @@ func printBindingReview(runtime *Runtime, plan initplan.InitPlan) {
 	if len(filtered) > 1 {
 		runtime.Output.Warn("binding selection pending; use `--binding <binding-id|name|target-ref>` to reuse one of the listed bindings")
 	}
+}
+
+func validatePreviewAndMaybeWriteLazyopsYAML(runtime *Runtime, plan initplan.InitPlan, initArgs initArgs) error {
+	missing := missingLazyopsYAMLRequirements(plan)
+	if len(missing) > 0 {
+		runtime.Output.Warn("lazyops.yaml generation pending; complete %s before writing", strings.Join(missing, ", "))
+		if initArgs.Write {
+			return fmt.Errorf("cannot write lazyops.yaml yet. next: select %s before rerunning `lazyops init --write`", strings.Join(missing, ", "))
+		}
+		return nil
+	}
+
+	payload, err := lazyyaml.Generate(plan, generateOptionsFromInitArgs(initArgs))
+	if err != nil {
+		return fmt.Errorf("lazyops.yaml local validation failed. next: fix the init selections or detected services and retry: %w", err)
+	}
+
+	configPath := lazyyaml.DefaultPath(plan.RepoRoot)
+	runtime.Output.Success("lazyops.yaml local validation passed")
+	runtime.Output.Info("lazyops.yaml path: %s", configPath)
+	runtime.Output.Info("pre-write review:")
+	runtime.Output.Print("")
+	runtime.Output.Print("%s", string(payload))
+
+	if !initArgs.Write {
+		runtime.Output.Warn("write pending; rerun `lazyops init --write` to create lazyops.yaml at the repository root")
+		return nil
+	}
+
+	result, err := lazyyaml.WriteFile(plan.RepoRoot, payload, initArgs.Overwrite)
+	if err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("could not write lazyops.yaml due to filesystem permissions. next: fix write access to the repo root and retry: %w", err)
+		}
+		return err
+	}
+
+	if result.Overwrote {
+		runtime.Output.Success("lazyops.yaml written after confirmed overwrite")
+		runtime.Output.Info("backup created: %s", result.BackupPath)
+	} else {
+		runtime.Output.Success("lazyops.yaml written")
+	}
+	runtime.Output.Info("written path: %s", result.Path)
+	runtime.Output.Success("init complete for %s", plan.RuntimeMode)
+	return nil
+}
+
+func missingLazyopsYAMLRequirements(plan initplan.InitPlan) []string {
+	missing := make([]string, 0, 3)
+	if plan.SelectedProject == nil {
+		missing = append(missing, "project selection")
+	}
+	if plan.RuntimeMode == "" {
+		missing = append(missing, "runtime mode selection")
+	}
+	if plan.SelectedBinding == nil {
+		missing = append(missing, "deployment binding selection")
+	}
+	return missing
+}
+
+func generateOptionsFromInitArgs(initArgs initArgs) lazyyaml.GenerateOptions {
+	options := lazyyaml.GenerateOptions{}
+	if strings.TrimSpace(initArgs.MagicDomainProvider) != "" {
+		options.MagicDomainProvider = initArgs.MagicDomainProvider
+	}
+	if initArgs.ScaleToZero {
+		options.ScaleToZeroEnabled = boolPointer(true)
+	}
+	return options
+}
+
+func isAllowedMagicDomainProvider(provider string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	for _, allowed := range lazyyaml.AllowedMagicDomainProviders() {
+		if normalized == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

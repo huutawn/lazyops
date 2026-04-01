@@ -109,17 +109,27 @@ type EnrollmentState struct {
 }
 
 type RevisionCache struct {
-	CurrentRevisionID      string    `json:"current_revision_id,omitempty"`
-	StableRevisionID       string    `json:"stable_revision_id,omitempty"`
-	PendingRevisionID      string    `json:"pending_revision_id,omitempty"`
-	CandidateRevisionID    string    `json:"candidate_revision_id,omitempty"`
-	CandidateState         string    `json:"candidate_state,omitempty"`
-	CandidateWorkspaceRoot string    `json:"candidate_workspace_root,omitempty"`
-	LastHealthGateAt       time.Time `json:"last_health_gate_at,omitempty"`
-	LastHealthGateState    string    `json:"last_health_gate_state,omitempty"`
-	LastHealthGateSummary  string    `json:"last_health_gate_summary,omitempty"`
-	LastPolicyAction       string    `json:"last_policy_action,omitempty"`
-	UpdatedAt              time.Time `json:"updated_at,omitempty"`
+	CurrentRevisionID        string    `json:"current_revision_id,omitempty"`
+	StableRevisionID         string    `json:"stable_revision_id,omitempty"`
+	PreviousStableRevisionID string    `json:"previous_stable_revision_id,omitempty"`
+	PendingRevisionID        string    `json:"pending_revision_id,omitempty"`
+	CandidateRevisionID      string    `json:"candidate_revision_id,omitempty"`
+	CandidateState           string    `json:"candidate_state,omitempty"`
+	CandidateWorkspaceRoot   string    `json:"candidate_workspace_root,omitempty"`
+	DrainingRevisionID       string    `json:"draining_revision_id,omitempty"`
+	LastHealthGateAt         time.Time `json:"last_health_gate_at,omitempty"`
+	LastHealthGateState      string    `json:"last_health_gate_state,omitempty"`
+	LastHealthGateSummary    string    `json:"last_health_gate_summary,omitempty"`
+	LastPolicyAction         string    `json:"last_policy_action,omitempty"`
+	LastPromotionAt          time.Time `json:"last_promotion_at,omitempty"`
+	LastPromotionSummary     string    `json:"last_promotion_summary,omitempty"`
+	LastRollbackAt           time.Time `json:"last_rollback_at,omitempty"`
+	LastRollbackFromRevision string    `json:"last_rollback_from_revision,omitempty"`
+	LastRollbackToRevision   string    `json:"last_rollback_to_revision,omitempty"`
+	LastRollbackSummary      string    `json:"last_rollback_summary,omitempty"`
+	LastRuntimeGCAt          time.Time `json:"last_runtime_gc_at,omitempty"`
+	LastRuntimeGCSummary     string    `json:"last_runtime_gc_summary,omitempty"`
+	UpdatedAt                time.Time `json:"updated_at,omitempty"`
 }
 
 type HealthSnapshotState struct {

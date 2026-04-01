@@ -18,6 +18,8 @@ type FilesystemDriver struct {
 	root    string
 	fetcher AssetFetcher
 	gateway *GatewayManager
+	sidecar *SidecarManager
+	mesh    *MeshManager
 	now     func() time.Time
 }
 
@@ -27,6 +29,8 @@ func NewFilesystemDriver(logger *slog.Logger, root string) *FilesystemDriver {
 		root:    root,
 		fetcher: NewLocalCacheFetcher(filepath.Join(root, "cache", "assets")),
 		gateway: NewGatewayManager(logger, root),
+		sidecar: NewSidecarManager(logger, root),
+		mesh:    NewMeshManager(logger, root),
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -57,6 +61,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 		layout.Config,
 		layout.Sidecars,
 		layout.Gateway,
+		layout.Mesh,
 		layout.Services,
 	} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -120,6 +125,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 	sidecarPlan := SidecarPlan{
 		EnabledServices: serviceNames(runtimeCtx.Services),
 		Compatibility:   runtimeCtx.Revision.CompatibilityPolicy,
+		Precedence:      sidecarPrecedence(),
 	}
 	sidecarConfigPath := filepath.Join(layout.Sidecars, "config.json")
 	if err := writeJSON(sidecarConfigPath, map[string]any{
@@ -156,6 +162,20 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 		return PreparedWorkspace{}, err
 	}
 
+	var meshResult MeshFoundationResult
+	var meshSnapshot *MeshFoundationSnapshot
+	if runtimeCtx.Binding.RuntimeMode == contracts.RuntimeModeDistributedMesh {
+		if d.mesh == nil {
+			d.mesh = NewMeshManager(d.logger, d.root)
+		}
+		d.mesh.now = d.now
+		meshResult, err = d.mesh.BuildFoundation(ctx, runtimeCtx, layout)
+		if err != nil {
+			return PreparedWorkspace{}, err
+		}
+		meshSnapshot = &meshResult.Snapshot
+	}
+
 	manifest := WorkspaceManifest{
 		PreparedAt:   d.now(),
 		Project:      runtimeCtx.Project,
@@ -166,6 +186,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 		ArtifactPlan: artifactPlan,
 		GatewayPlan:  gatewayPlan,
 		SidecarPlan:  sidecarPlan,
+		MeshSnapshot: meshSnapshot,
 	}
 	if err := capabilityNoContainerLeak(manifest); err != nil {
 		return PreparedWorkspace{}, err
@@ -194,6 +215,8 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 		Artifact:          artifact,
 		SidecarConfigPath: sidecarConfigPath,
 		GatewayConfigPath: gatewayConfigPath,
+		MeshStatePath:     meshResult.WorkspaceStatePath,
+		ServiceCachePath:  meshResult.WorkspaceServiceCachePath,
 	}, nil
 }
 
@@ -204,6 +227,15 @@ func (d *FilesystemDriver) RenderGatewayConfig(ctx context.Context, runtimeCtx R
 	}
 	d.gateway.now = d.now
 	return d.gateway.RenderGatewayConfig(ctx, runtimeCtx, layout)
+}
+
+func (d *FilesystemDriver) RenderSidecars(ctx context.Context, runtimeCtx RuntimeContext) (SidecarRenderResult, error) {
+	layout := workspaceLayout(d.root, runtimeCtx)
+	if d.sidecar == nil {
+		d.sidecar = NewSidecarManager(d.logger, d.root)
+	}
+	d.sidecar.now = d.now
+	return d.sidecar.RenderSidecars(ctx, runtimeCtx, layout)
 }
 
 func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx RuntimeContext) (CandidateRecord, error) {
@@ -248,23 +280,11 @@ func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx R
 	return candidate, nil
 }
 
-func (d *FilesystemDriver) PromoteRelease(context.Context, RuntimeContext) error {
-	return ErrNotImplemented
-}
-
-func (d *FilesystemDriver) RollbackRelease(context.Context, RuntimeContext) error {
-	return ErrNotImplemented
-}
-
 func (d *FilesystemDriver) SleepService(context.Context, RuntimeContext, string) error {
 	return ErrNotImplemented
 }
 
 func (d *FilesystemDriver) WakeService(context.Context, RuntimeContext, string) error {
-	return ErrNotImplemented
-}
-
-func (d *FilesystemDriver) GarbageCollectRuntime(context.Context, RuntimeContext) error {
 	return ErrNotImplemented
 }
 

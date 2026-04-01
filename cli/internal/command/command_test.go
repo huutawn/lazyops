@@ -453,6 +453,739 @@ func TestInitCreatesBindingWhenRequested(t *testing.T) {
 	}
 }
 
+func TestInitStandaloneHappyPathWritesDeployContract(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--write"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"selected target: instance prod-solo-1 [online]",
+		"selected binding: prod-solo-binding -> prod-solo-1 (standalone, instance)",
+		"lazyops.yaml written",
+		"init complete for standalone",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected standalone happy path output to contain %q, got %q", expected, output)
+		}
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(repoRoot, "lazyops.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, expected := range []string{"project_slug: acme-shop", "runtime_mode: standalone", "target_ref: prod-solo-1"} {
+		if !strings.Contains(string(rendered), expected) {
+			t.Fatalf("expected written standalone contract to contain %q, got %q", expected, string(rendered))
+		}
+	}
+}
+
+func TestInitDistributedMeshHappyPathWritesDeployContractWithDependencyReview(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareMeshInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-mesh", "--write"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"selected target: mesh prod-ap [online]",
+		"selected binding: prod-ap-mesh -> prod-ap (distributed-mesh, mesh)",
+		"dependency binding web.api -> api (http)",
+		"lazyops.yaml written",
+		"init complete for distributed-mesh",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected distributed-mesh happy path output to contain %q, got %q", expected, output)
+		}
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(repoRoot, "lazyops.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, expected := range []string{
+		"runtime_mode: distributed-mesh",
+		"target_ref: prod-ap",
+		"dependency_bindings:",
+		"service: web",
+		"target_service: api",
+		"local_endpoint: 'localhost:8080'",
+	} {
+		if !strings.Contains(string(rendered), expected) {
+			t.Fatalf("expected mesh deploy contract to contain %q, got %q", expected, string(rendered))
+		}
+	}
+}
+
+func TestInitDistributedK3sHappyPathWritesDeployContract(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-k3s", "--write"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"selected runtime mode: distributed-k3s",
+		"distributed-k3s boundary: K3s remains the workload scheduler; CLI writes logical binding refs only",
+		"selected target: cluster prod-k3s-ap [registered]",
+		"selected binding: prod-k3s-binding -> prod-k3s-ap (distributed-k3s, cluster)",
+		"lazyops.yaml written",
+		"init complete for distributed-k3s",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected distributed-k3s happy path output to contain %q, got %q", expected, output)
+		}
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(repoRoot, "lazyops.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, expected := range []string{
+		"runtime_mode: distributed-k3s",
+		"target_ref: prod-k3s-ap",
+	} {
+		if !strings.Contains(string(rendered), expected) {
+			t.Fatalf("expected distributed-k3s contract to contain %q, got %q", expected, string(rendered))
+		}
+	}
+	for _, forbidden := range []string{"secret://clusters/cls_demo/kubeconfig", "cluster_id", "target_id", "cls_demo"} {
+		if strings.Contains(string(rendered), forbidden) {
+			t.Fatalf("expected distributed-k3s contract to stay logical, but found %q in %q", forbidden, string(rendered))
+		}
+	}
+}
+
+func TestInitPrintsLazyopsYAMLPreviewWhenPlanIsValid(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--target", "prod-solo-1"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "lazyops.yaml local validation passed") {
+		t.Fatalf("expected lazyops.yaml validation output, got %q", output)
+	}
+	if !strings.Contains(output, "pre-write review:") {
+		t.Fatalf("expected pre-write review output, got %q", output)
+	}
+	for _, expected := range []string{"project_slug: acme-shop", "runtime_mode: standalone", "deployment_binding:", "target_ref: prod-solo-1"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected lazyops.yaml preview to contain %q, got %q", expected, output)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, "lazyops.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected preview-only init to avoid writing lazyops.yaml, stat err = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "write pending") {
+		t.Fatalf("expected write pending warning, got %q", stderr.String())
+	}
+}
+
+func TestInitWriteCreatesLazyopsYAMLAtRepoRoot(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--target", "prod-solo-1", "--write"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(repoRoot, "lazyops.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(rendered), "project_slug: acme-shop") || !strings.Contains(string(rendered), "runtime_mode: standalone") {
+		t.Fatalf("expected written lazyops.yaml contents, got %q", string(rendered))
+	}
+	if !strings.Contains(stdout.String(), "lazyops.yaml written") {
+		t.Fatalf("expected write success output, got %q", stdout.String())
+	}
+}
+
+func TestInitWriteRequiresOverwriteConfirmation(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+	mustWriteTestFile(t, filepath.Join(repoRoot, "lazyops.yaml"), "project_slug: old\n")
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--target", "prod-solo-1", "--write"})
+	if err == nil {
+		t.Fatal("expected overwrite confirmation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--overwrite") {
+		t.Fatalf("expected overwrite guidance, got %v", err)
+	}
+
+	rendered, readErr := os.ReadFile(filepath.Join(repoRoot, "lazyops.yaml"))
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if string(rendered) != "project_slug: old\n" {
+		t.Fatalf("expected existing lazyops.yaml to remain unchanged, got %q", string(rendered))
+	}
+}
+
+func TestInitOverwriteCreatesBackupAndWritesNewLazyopsYAML(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+	mustWriteTestFile(t, filepath.Join(repoRoot, "lazyops.yaml"), "project_slug: old\n")
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--target", "prod-solo-1", "--magic-domain-provider", "nip.io", "--scale-to-zero", "--write", "--overwrite"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(repoRoot, "lazyops.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(rendered), "provider: nip.io") || !strings.Contains(string(rendered), "scale_to_zero_policy:\n  enabled: true") {
+		t.Fatalf("expected overwritten lazyops.yaml to include requested overrides, got %q", string(rendered))
+	}
+
+	backups, err := filepath.Glob(filepath.Join(repoRoot, "lazyops.yaml.bak.*"))
+	if err != nil {
+		t.Fatalf("Glob() error = %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("expected one backup file, got %d (%v)", len(backups), backups)
+	}
+
+	backup, err := os.ReadFile(backups[0])
+	if err != nil {
+		t.Fatalf("ReadFile(backup) error = %v", err)
+	}
+	if string(backup) != "project_slug: old\n" {
+		t.Fatalf("expected backup to preserve previous contents, got %q", string(backup))
+	}
+	if !strings.Contains(stdout.String(), "backup created:") {
+		t.Fatalf("expected backup output, got %q", stdout.String())
+	}
+}
+
+func TestInitRejectsOverwriteWithoutWriteFlag(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--overwrite"})
+	if err == nil {
+		t.Fatal("expected overwrite flag validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "`--overwrite` requires `--write`") {
+		t.Fatalf("expected overwrite/write validation error, got %v", err)
+	}
+}
+
+func TestInitStandaloneFailsWhenNoValidTargetExists(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","name":"Acme Shop","slug":"acme-shop"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances-empty",
+						Body:        []byte(`{"instances":[]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-empty",
+						Body:        []byte(`{"mesh_networks":[]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-empty",
+						Body:        []byte(`{"clusters":[]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone"})
+	if err == nil {
+		t.Fatal("expected no valid target error, got nil")
+	}
+	if !strings.Contains(err.Error(), `no valid target exists for runtime mode "standalone"`) {
+		t.Fatalf("expected no valid target error, got %v", err)
+	}
+}
+
+func TestInitReturnsActionableErrorForInvalidPAT(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_invalid_demo",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone"})
+	if err == nil {
+		t.Fatal("expected invalid PAT error, got nil")
+	}
+	if !strings.Contains(err.Error(), "CLI PAT is invalid or revoked") {
+		t.Fatalf("expected invalid PAT message, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "lazyops login") {
+		t.Fatalf("expected invalid PAT next step, got %v", err)
+	}
+}
+
+func TestInitDistributedMeshFailsWhenMeshOwnershipMismatchesProject(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareMeshInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances-empty",
+						Body:        []byte(`{"instances":[]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-list",
+						Body:        []byte(`{"mesh_networks":[{"id":"mesh_demo","user_id":"usr_other","name":"prod-ap","provider":"wireguard","status":"online"}]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-empty",
+						Body:        []byte(`{"clusters":[]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-mesh", "--target", "prod-ap"})
+	if err == nil {
+		t.Fatal("expected mesh ownership mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not owned by the selected project user") {
+		t.Fatalf("expected ownership mismatch message, got %v", err)
+	}
+}
+
+func TestInitDistributedMeshFailsWhenSelectedMeshIsOffline(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareMeshInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances-empty",
+						Body:        []byte(`{"instances":[]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-list",
+						Body:        []byte(`{"mesh_networks":[{"id":"mesh_demo","user_id":"usr_demo","name":"prod-ap","provider":"wireguard","status":"offline"}]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-empty",
+						Body:        []byte(`{"clusters":[]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-mesh", "--target", "prod-ap"})
+	if err == nil {
+		t.Fatal("expected offline mesh error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not currently online") {
+		t.Fatalf("expected offline mesh message, got %v", err)
+	}
+}
+
+func TestInitDistributedK3sFailsWhenClusterOwnershipMismatchesProject(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances-empty",
+						Body:        []byte(`{"instances":[]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-empty",
+						Body:        []byte(`{"mesh_networks":[]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-list",
+						Body:        []byte(`{"clusters":[{"id":"cls_demo","user_id":"usr_other","name":"prod-k3s-ap","provider":"k3s","status":"registered"}]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-k3s", "--target", "prod-k3s-ap"})
+	if err == nil {
+		t.Fatal("expected cluster ownership mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not owned by the selected project user") {
+		t.Fatalf("expected cluster ownership mismatch message, got %v", err)
+	}
+}
+
+func TestInitDistributedK3sFailsWhenSelectedClusterIsUnavailable(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances-empty",
+						Body:        []byte(`{"instances":[]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-empty",
+						Body:        []byte(`{"mesh_networks":[]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-list",
+						Body:        []byte(`{"clusters":[{"id":"cls_demo","user_id":"usr_demo","name":"prod-k3s-ap","provider":"k3s","status":"unavailable"}]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-k3s", "--target", "prod-k3s-ap"})
+	if err == nil {
+		t.Fatal("expected unavailable cluster error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not currently available") {
+		t.Fatalf("expected unavailable cluster message, got %v", err)
+	}
+}
+
 func TestInitRejectsIncompatibleBindingSelection(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -511,6 +1244,9 @@ func TestBindingsCommandRendersTypedBindingList(t *testing.T) {
 	}
 	if !strings.Contains(output, "binding prod-solo-binding -> prod-solo-1 (standalone, instance)") {
 		t.Fatalf("expected typed standalone binding output, got %q", output)
+	}
+	if !strings.Contains(output, "binding prod-k3s-binding -> prod-k3s-ap (distributed-k3s, cluster)") {
+		t.Fatalf("expected typed k3s binding output, got %q", output)
 	}
 }
 
@@ -724,6 +1460,44 @@ func mustWriteTestFile(t *testing.T, path string, contents string) {
 	}
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+}
+
+func mustPrepareInitRepo(t *testing.T) string {
+	t.Helper()
+
+	repoRoot := t.TempDir()
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "keep"), "")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "go.mod"), "module api\n\ngo 1.22.2\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "cmd", "server", "main.go"), "package main\nfunc main(){}\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "internal", "api", "routes.go"), `package api; func routes(){ GET("/healthz", nil) }`)
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "api", "internal", "config", "config.go"), "package config\nconst _ = `SERVER_PORT\", \"8080\"`\n")
+	return repoRoot
+}
+
+func mustPrepareMeshInitRepo(t *testing.T) string {
+	t.Helper()
+
+	repoRoot := mustPrepareInitRepo(t)
+	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "web", "package.json"), `{"name":"web","scripts":{"start":"next start"}}`)
+	return repoRoot
+}
+
+func mustChdir(t *testing.T, dir string) func() {
+	t.Helper()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir(%q) error = %v", dir, err)
+	}
+
+	return func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatalf("Chdir() restore error = %v", err)
+		}
 	}
 }
 

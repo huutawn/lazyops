@@ -39,7 +39,9 @@ func (f *fakeAgentStore) GetByAgentIDForUser(userID, agentID string) (*models.Ag
 func (f *fakeAgentStore) UpdateStatusForUser(userID, agentID, name, status string, at time.Time) (*models.Agent, error) {
 	for _, agent := range f.agents {
 		if agent.UserID == userID && agent.AgentID == agentID {
-			agent.Name = name
+			if name != "" {
+				agent.Name = name
+			}
 			agent.Status = status
 			agent.LastSeenAt = &at
 			agent.UpdatedAt = at

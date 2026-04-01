@@ -43,6 +43,9 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	if strings.EqualFold(req.Method, "POST") && req.Path == "/api/v1/auth/pat/revoke" {
 		return mockPATRevoke(req)
 	}
+	if response, handled := mockAuthorize(req); handled {
+		return response, nil
+	}
 	if strings.EqualFold(req.Method, "POST") && isProjectBindingsPath(req.Path) {
 		return mockCreateDeploymentBinding(req)
 	}
@@ -53,6 +56,55 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	}
 
 	return response, nil
+}
+
+func mockAuthorize(req Request) (Response, bool) {
+	if !requiresMockAuth(req.Path) {
+		return Response{}, false
+	}
+
+	authHeader := strings.TrimSpace(req.Headers["Authorization"])
+	if authHeader == "" {
+		return Response{
+			StatusCode:  401,
+			FixtureName: "mock-missing-auth",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_auth",
+				"message":   "CLI session is missing or expired.",
+				"next_step": "run `lazyops login` again and retry the command",
+			}),
+		}, true
+	}
+	if authHeader != "Bearer lazyops_pat_mock_secret_value" {
+		return Response{
+			StatusCode:  401,
+			FixtureName: "mock-invalid-auth",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_auth",
+				"message":   "CLI PAT is invalid or revoked.",
+				"next_step": "run `lazyops login` again to issue a fresh PAT",
+			}),
+		}, true
+	}
+
+	return Response{}, false
+}
+
+func requiresMockAuth(path string) bool {
+	switch {
+	case path == "/api/v1/auth/cli-login":
+		return false
+	case path == "/api/v1/auth/pat/revoke":
+		return false
+	case strings.HasPrefix(path, "/api/v1/"):
+		return true
+	case strings.HasPrefix(path, "/ws/"):
+		return true
+	case strings.HasPrefix(path, "/mock/v1/"):
+		return true
+	default:
+		return false
+	}
 }
 
 func mockCLILogin(req Request) (Response, error) {
@@ -447,8 +499,33 @@ func DefaultFixtures() map[string]Response {
 		CreatedAt: bindingCreatedAt.Add(-30 * time.Minute),
 	}
 
+	k3sBinding := contracts.DeploymentBinding{
+		ID:          "bind_k3s_demo",
+		ProjectID:   "prj_demo",
+		Name:        "prod-k3s-binding",
+		TargetRef:   "prod-k3s-ap",
+		RuntimeMode: "distributed-k3s",
+		TargetKind:  "cluster",
+		TargetID:    "cls_demo",
+		PlacementPolicyJSON: map[string]any{
+			"strategy": "cluster-native",
+		},
+		DomainPolicyJSON: map[string]any{
+			"provider": "sslip.io",
+		},
+		CompatibilityPolicyJSON: map[string]any{
+			"env_injection":       true,
+			"managed_credentials": true,
+			"localhost_rescue":    true,
+		},
+		ScaleToZeroPolicyJSON: map[string]any{
+			"enabled": false,
+		},
+		CreatedAt: bindingCreatedAt.Add(-15 * time.Minute),
+	}
+
 	bindingList := contracts.DeploymentBindingsResponse{
-		Bindings: []contracts.DeploymentBinding{binding, standaloneBinding},
+		Bindings: []contracts.DeploymentBinding{binding, standaloneBinding, k3sBinding},
 	}
 
 	traceSummary := contracts.TraceSummary{

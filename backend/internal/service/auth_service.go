@@ -24,6 +24,9 @@ const (
 	RoleOperator         = "operator"
 	RoleViewer           = "viewer"
 	WebSessionCookieName = "lazyops_session"
+	AuthKindWebSession   = "web_session"
+	AuthKindCLIPAT       = "cli_pat"
+	AuthKindAgentToken   = "agent_token"
 )
 
 var (
@@ -41,18 +44,23 @@ var (
 )
 
 type AuthService struct {
-	users  UserStore
-	pats   PATStore
-	jwtCfg config.JWTConfig
-	patCfg config.PATConfig
+	users       UserStore
+	pats        PATStore
+	agentTokens AgentTokenStore
+	jwtCfg      config.JWTConfig
+	patCfg      config.PATConfig
 }
 
 type Claims struct {
-	AuthKind string `json:"auth_kind"`
-	UserID   string `json:"user_id"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TokenID  string `json:"token_id,omitempty"`
+	AuthKind     string         `json:"auth_kind"`
+	SubjectType  string         `json:"subject_type,omitempty"`
+	UserID       string         `json:"user_id"`
+	Email        string         `json:"email"`
+	Role         string         `json:"role"`
+	TokenID      string         `json:"token_id,omitempty"`
+	AgentID      string         `json:"agent_id,omitempty"`
+	InstanceID   string         `json:"instance_id,omitempty"`
+	Capabilities map[string]any `json:"capabilities,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -63,6 +71,11 @@ func NewAuthService(users UserStore, pats PATStore, jwtCfg config.JWTConfig, pat
 		jwtCfg: jwtCfg,
 		patCfg: patCfg,
 	}
+}
+
+func (s *AuthService) WithAgentTokens(agentTokens AgentTokenStore) *AuthService {
+	s.agentTokens = agentTokens
+	return s
 }
 
 func (s *AuthService) Register(cmd RegisterCommand) (*AuthResult, error) {
@@ -165,7 +178,19 @@ func (s *AuthService) ParseToken(token string) (*Claims, error) {
 		return s.parseWebSessionToken(token)
 	}
 
-	return s.parsePATToken(token)
+	if looksLikePAT(token) {
+		return s.parsePATToken(token)
+	}
+	if looksLikeAgentToken(token) {
+		return s.parseAgentToken(token)
+	}
+
+	claims, err := s.parsePATToken(token)
+	if err == nil || !errors.Is(err, ErrUnauthorized) {
+		return claims, err
+	}
+
+	return s.parseAgentToken(token)
 }
 
 func (s *AuthService) parseWebSessionToken(token string) (*Claims, error) {
@@ -191,7 +216,7 @@ func (s *AuthService) parseWebSessionToken(token string) (*Claims, error) {
 	if !parsed.Valid {
 		return nil, ErrUnauthorized
 	}
-	if claims.AuthKind != "web_session" || claims.UserID == "" {
+	if claims.AuthKind != AuthKindWebSession || claims.UserID == "" {
 		return nil, ErrUnauthorized
 	}
 
@@ -201,6 +226,7 @@ func (s *AuthService) parseWebSessionToken(token string) (*Claims, error) {
 	}
 	claims.Email = user.Email
 	claims.Role = user.Role
+	claims.SubjectType = "user"
 	claims.Subject = user.ID
 
 	return claims, nil
@@ -233,14 +259,71 @@ func (s *AuthService) parsePATToken(token string) (*Claims, error) {
 	}
 
 	claims := &Claims{
-		AuthKind: "cli_pat",
-		UserID:   user.ID,
-		Email:    user.Email,
-		Role:     user.Role,
-		TokenID:  record.ID,
+		AuthKind:    AuthKindCLIPAT,
+		SubjectType: "user",
+		UserID:      user.ID,
+		Email:       user.Email,
+		Role:        user.Role,
+		TokenID:     record.ID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:  s.jwtCfg.Issuer,
 			Subject: user.ID,
+			ID:      record.ID,
+		},
+	}
+	if !record.CreatedAt.IsZero() {
+		claims.IssuedAt = jwt.NewNumericDate(record.CreatedAt)
+	}
+	if record.ExpiresAt != nil {
+		claims.ExpiresAt = jwt.NewNumericDate(*record.ExpiresAt)
+	}
+
+	return claims, nil
+}
+
+func (s *AuthService) parseAgentToken(token string) (*Claims, error) {
+	if s.agentTokens == nil {
+		return nil, ErrUnauthorized
+	}
+
+	tokenHash := hashOpaqueToken(token)
+	record, err := s.agentTokens.GetByHash(tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, ErrUnauthorized
+	}
+	if record.RevokedAt != nil {
+		return nil, ErrTokenRevoked
+	}
+	if record.ExpiresAt != nil && time.Now().UTC().After(*record.ExpiresAt) {
+		return nil, ErrTokenExpired
+	}
+
+	user, err := s.validateActiveUser(record.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	if err := s.agentTokens.TouchLastUsed(record.ID, now); err != nil {
+		return nil, err
+	}
+
+	claims := &Claims{
+		AuthKind:     AuthKindAgentToken,
+		SubjectType:  "agent",
+		UserID:       user.ID,
+		Email:        user.Email,
+		Role:         user.Role,
+		TokenID:      record.ID,
+		AgentID:      record.AgentID,
+		InstanceID:   record.InstanceID,
+		Capabilities: map[string]any{},
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:  s.jwtCfg.Issuer,
+			Subject: record.AgentID,
 			ID:      record.ID,
 		},
 	}
@@ -262,10 +345,11 @@ func (s *AuthService) issueWebSession(user *models.User) (*AuthResult, error) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(s.jwtCfg.ExpiresIn)
 	claims := Claims{
-		AuthKind: "web_session",
-		UserID:   user.ID,
-		Email:    user.Email,
-		Role:     user.Role,
+		AuthKind:    AuthKindWebSession,
+		SubjectType: "user",
+		UserID:      user.ID,
+		Email:       user.Email,
+		Role:        user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.jwtCfg.Issuer,
 			Subject:   user.ID,
@@ -407,6 +491,14 @@ func validatePassword(password string) error {
 
 func looksLikeJWT(token string) bool {
 	return strings.Count(token, ".") == 2
+}
+
+func looksLikePAT(token string) bool {
+	return strings.HasPrefix(strings.TrimSpace(token), "lop_pat_")
+}
+
+func looksLikeAgentToken(token string) bool {
+	return strings.HasPrefix(strings.TrimSpace(token), "lop_atok_")
 }
 
 func newOpaquePAT() (string, string, error) {

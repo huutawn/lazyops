@@ -66,7 +66,7 @@ func initCommand() *Command {
 	return &Command{
 		Name:    "init",
 		Summary: "Initialize the repository into a valid LazyOps deploy contract.",
-		Usage:   "lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]]",
+		Usage:   "lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]] [--magic-domain-provider <sslip.io|nip.io>] [--scale-to-zero] [--write [--overwrite]]",
 		Run:     withAuth(runInit),
 	}
 }

@@ -33,6 +33,7 @@ type InitPlan struct {
 
 type ProjectSummary struct {
 	ID            string `json:"id"`
+	UserID        string `json:"-"`
 	Slug          string `json:"slug"`
 	Name          string `json:"name"`
 	DefaultBranch string `json:"default_branch,omitempty"`
@@ -43,6 +44,7 @@ type TargetSummary struct {
 	Name        string      `json:"name"`
 	Kind        string      `json:"kind"`
 	Status      string      `json:"status"`
+	OwnerUserID string      `json:"-"`
 	RuntimeMode RuntimeMode `json:"runtime_mode"`
 }
 
@@ -152,6 +154,11 @@ func ApplyDiscovery(
 			return InitPlan{}, err
 		}
 		plan.RuntimeMode = selection.RuntimeMode
+		if plan.RuntimeMode == RuntimeModeDistributedMesh {
+			plan.DependencyBindings = inferDependencyBindings(plan.Services)
+		} else {
+			plan.DependencyBindings = []DependencyBindingDraft{}
+		}
 	}
 
 	selectedProject, err := pickProject(plan.Projects, selection.Project)
@@ -165,16 +172,20 @@ func ApplyDiscovery(
 	}
 
 	if plan.RuntimeMode != "" {
-		compatibleTargets := plan.TargetsForMode(plan.RuntimeMode)
-		if len(compatibleTargets) == 0 {
+		eligibleTargets := eligibleTargetsForMode(plan.Targets, plan.RuntimeMode, plan.SelectedProject)
+		if len(eligibleTargets) == 0 && strings.TrimSpace(selection.Target) == "" {
 			return InitPlan{}, fmt.Errorf("no valid target exists for runtime mode %q. next: enroll a compatible target or choose a different runtime mode", plan.RuntimeMode)
 		}
 
-		selectedTarget, err := pickTarget(plan.Targets, plan.RuntimeMode, selection.Target)
+		selectedTarget, err := pickTarget(plan.Targets, plan.RuntimeMode, plan.SelectedProject, selection.Target)
 		if err != nil {
 			return InitPlan{}, err
 		}
 		plan.SelectedTarget = selectedTarget
+
+		if len(eligibleTargets) == 0 && plan.SelectedTarget == nil {
+			return InitPlan{}, fmt.Errorf("no valid target exists for runtime mode %q. next: enroll a compatible target or choose a different runtime mode", plan.RuntimeMode)
+		}
 	}
 
 	if err := plan.Validate(); err != nil {
@@ -324,6 +335,15 @@ func (plan InitPlan) Validate() error {
 		if err := binding.Validate(); err != nil {
 			return err
 		}
+		if _, exists := names[binding.Service]; !exists {
+			return fmt.Errorf("dependency binding service %q is not declared in init plan services", binding.Service)
+		}
+		if _, exists := names[binding.TargetService]; !exists {
+			return fmt.Errorf("dependency binding target_service %q is not declared in init plan services", binding.TargetService)
+		}
+		if plan.RuntimeMode == RuntimeModeDistributedK3s && strings.TrimSpace(binding.LocalEndpoint) != "" {
+			return fmt.Errorf("distributed-k3s init must not inject local dependency endpoints; K3s scheduling must stay cluster-native")
+		}
 	}
 
 	return plan.CompatibilityPolicy.Validate()
@@ -449,6 +469,7 @@ func summarizeProjects(projects []contracts.Project) []ProjectSummary {
 	for _, project := range projects {
 		summaries = append(summaries, ProjectSummary{
 			ID:            project.ID,
+			UserID:        project.UserID,
 			Slug:          project.Slug,
 			Name:          project.Name,
 			DefaultBranch: project.DefaultBranch,
@@ -466,6 +487,7 @@ func summarizeTargets(instances []contracts.Instance, meshNetworks []contracts.M
 			Name:        instance.Name,
 			Kind:        "instance",
 			Status:      instance.Status,
+			OwnerUserID: instance.UserID,
 			RuntimeMode: RuntimeModeStandalone,
 		})
 	}
@@ -475,6 +497,7 @@ func summarizeTargets(instances []contracts.Instance, meshNetworks []contracts.M
 			Name:        network.Name,
 			Kind:        "mesh",
 			Status:      network.Status,
+			OwnerUserID: network.UserID,
 			RuntimeMode: RuntimeModeDistributedMesh,
 		})
 	}
@@ -484,6 +507,7 @@ func summarizeTargets(instances []contracts.Instance, meshNetworks []contracts.M
 			Name:        cluster.Name,
 			Kind:        "cluster",
 			Status:      cluster.Status,
+			OwnerUserID: cluster.UserID,
 			RuntimeMode: RuntimeModeDistributedK3s,
 		})
 	}
@@ -529,7 +553,7 @@ func pickProject(projects []ProjectSummary, selector string) (*ProjectSummary, e
 	return nil, fmt.Errorf("project %q was not found. next: rerun `lazyops init --project <project-id-or-slug>` with one of the listed projects", selector)
 }
 
-func pickTarget(targets []TargetSummary, mode RuntimeMode, selector string) (*TargetSummary, error) {
+func pickTarget(targets []TargetSummary, mode RuntimeMode, project *ProjectSummary, selector string) (*TargetSummary, error) {
 	compatible := make([]TargetSummary, 0, len(targets))
 	incompatible := make([]TargetSummary, 0, len(targets))
 	for _, target := range targets {
@@ -542,8 +566,9 @@ func pickTarget(targets []TargetSummary, mode RuntimeMode, selector string) (*Ta
 
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
-		if len(compatible) == 1 {
-			target := compatible[0]
+		eligible := eligibleTargetsForMode(compatible, mode, project)
+		if len(eligible) == 1 {
+			target := eligible[0]
 			return &target, nil
 		}
 		return nil, nil
@@ -551,6 +576,9 @@ func pickTarget(targets []TargetSummary, mode RuntimeMode, selector string) (*Ta
 
 	for _, target := range compatible {
 		if selector == target.ID || selector == target.Name {
+			if ok, reason := targetSelectableForProject(target, project); !ok {
+				return nil, invalidTargetSelectionError(target, reason)
+			}
 			selected := target
 			return &selected, nil
 		}
@@ -562,6 +590,54 @@ func pickTarget(targets []TargetSummary, mode RuntimeMode, selector string) (*Ta
 	}
 
 	return nil, fmt.Errorf("target %q was not found for runtime mode %q. next: rerun `lazyops init --runtime-mode %s --target <id|name>` with a listed target", selector, mode, mode)
+}
+
+func eligibleTargetsForMode(targets []TargetSummary, mode RuntimeMode, project *ProjectSummary) []TargetSummary {
+	eligible := make([]TargetSummary, 0, len(targets))
+	for _, target := range targets {
+		if target.RuntimeMode != mode {
+			continue
+		}
+		if ok, _ := targetSelectableForProject(target, project); !ok {
+			continue
+		}
+		eligible = append(eligible, target)
+	}
+	return eligible
+}
+
+func targetSelectableForProject(target TargetSummary, project *ProjectSummary) (bool, string) {
+	if project != nil && strings.TrimSpace(project.UserID) != "" && strings.TrimSpace(target.OwnerUserID) != "" && project.UserID != target.OwnerUserID {
+		return false, "ownership"
+	}
+
+	switch target.RuntimeMode {
+	case RuntimeModeStandalone, RuntimeModeDistributedMesh:
+		if !strings.EqualFold(target.Status, "online") {
+			return false, "offline"
+		}
+	case RuntimeModeDistributedK3s:
+		if !strings.EqualFold(target.Status, "registered") &&
+			!strings.EqualFold(target.Status, "online") &&
+			!strings.EqualFold(target.Status, "available") {
+			return false, "unavailable"
+		}
+	}
+
+	return true, ""
+}
+
+func invalidTargetSelectionError(target TargetSummary, reason string) error {
+	switch reason {
+	case "ownership":
+		return fmt.Errorf("%s target %q is not owned by the selected project user. next: choose a %s target that belongs to the project owner or switch `--project`", target.Kind, target.Name, target.Kind)
+	case "offline":
+		return fmt.Errorf("%s target %q is not currently online. next: bring the target online or choose a different %s target", target.Kind, target.Name, target.Kind)
+	case "unavailable":
+		return fmt.Errorf("%s target %q is not currently available. next: wait for the target to register or choose a different %s target", target.Kind, target.Name, target.Kind)
+	default:
+		return fmt.Errorf("%s target %q is not selectable. next: choose a different target", target.Kind, target.Name)
+	}
 }
 
 func pickBinding(bindings []BindingSummary, selector string, mode RuntimeMode, target *TargetSummary) (*BindingSummary, error) {
@@ -616,4 +692,44 @@ func defaultBindingName(target TargetSummary) string {
 		normalized = "binding"
 	}
 	return normalized + "-" + suffix[target.RuntimeMode]
+}
+
+func inferDependencyBindings(services []ServiceCandidate) []DependencyBindingDraft {
+	if len(services) < 2 {
+		return []DependencyBindingDraft{}
+	}
+
+	byName := map[string]ServiceCandidate{}
+	for _, service := range services {
+		byName[strings.ToLower(strings.TrimSpace(service.Name))] = service
+	}
+
+	api, ok := byName["api"]
+	if !ok {
+		return []DependencyBindingDraft{}
+	}
+
+	drafts := make([]DependencyBindingDraft, 0, 2)
+	for _, sourceName := range []string{"web", "gateway"} {
+		source, exists := byName[sourceName]
+		if !exists {
+			continue
+		}
+		drafts = append(drafts, DependencyBindingDraft{
+			Service:       source.Name,
+			Alias:         "api",
+			TargetService: api.Name,
+			Protocol:      "http",
+			LocalEndpoint: fmt.Sprintf("localhost:%d", inferredHTTPPort(api)),
+		})
+	}
+
+	return drafts
+}
+
+func inferredHTTPPort(service ServiceCandidate) int {
+	if service.Healthcheck.Port > 0 {
+		return service.Healthcheck.Port
+	}
+	return 8080
 }

@@ -50,6 +50,49 @@ type ProjectRepoLinkStore interface {
 	LookupWebhookRoute(githubInstallationID int64, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error)
 }
 
+type DeploymentBindingStore interface {
+	Create(binding *models.DeploymentBinding) error
+	GetByTargetRefForProject(projectID, targetRef string) (*models.DeploymentBinding, error)
+}
+
+type InstanceStore interface {
+	Create(instance *models.Instance) error
+	ListByUser(userID string) ([]models.Instance, error)
+	GetByNameForUser(userID, name string) (*models.Instance, error)
+	GetByIDForUser(userID, instanceID string) (*models.Instance, error)
+	GetByID(instanceID string) (*models.Instance, error)
+	UpdateAgentState(instanceID, agentID, status string, runtimeCapabilitiesJSON *string, at time.Time) (*models.Instance, error)
+}
+
+type MeshNetworkStore interface {
+	Create(mesh *models.MeshNetwork) error
+	ListByUser(userID string) ([]models.MeshNetwork, error)
+	GetByNameForUser(userID, name string) (*models.MeshNetwork, error)
+	GetByIDForUser(userID, meshID string) (*models.MeshNetwork, error)
+	GetByID(meshID string) (*models.MeshNetwork, error)
+}
+
+type ClusterStore interface {
+	Create(cluster *models.Cluster) error
+	ListByUser(userID string) ([]models.Cluster, error)
+	GetByNameForUser(userID, name string) (*models.Cluster, error)
+	GetByIDForUser(userID, clusterID string) (*models.Cluster, error)
+	GetByID(clusterID string) (*models.Cluster, error)
+}
+
+type BootstrapTokenStore interface {
+	Create(token *models.BootstrapToken) error
+	GetByHash(tokenHash string) (*models.BootstrapToken, error)
+	MarkUsed(tokenID string, at time.Time) error
+}
+
+type AgentTokenStore interface {
+	Create(token *models.AgentToken) error
+	GetByHash(tokenHash string) (*models.AgentToken, error)
+	TouchLastUsed(tokenID string, at time.Time) error
+	RevokeByAgent(agentID string, at time.Time) error
+}
+
 type AgentStore interface {
 	Create(agent *models.Agent) error
 	ListByUser(userID string) ([]models.Agent, error)

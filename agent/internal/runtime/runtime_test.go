@@ -50,6 +50,7 @@ func TestFilesystemDriverPrepareReleaseWorkspaceCreatesLayout(t *testing.T) {
 		prepared.Layout.Config,
 		prepared.Layout.Sidecars,
 		prepared.Layout.Gateway,
+		prepared.Layout.Mesh,
 		prepared.Layout.Services,
 		prepared.ManifestPath,
 		prepared.ServiceManifests["api"],
@@ -89,6 +90,115 @@ func TestFilesystemDriverPrepareReleaseWorkspaceCreatesLayout(t *testing.T) {
 	}
 	if _, err := os.Stat(prepared.GatewayConfigPath); err != nil {
 		t.Fatalf("expected gateway config to exist: %v", err)
+	}
+	if prepared.MeshStatePath != "" || prepared.ServiceCachePath != "" {
+		t.Fatalf("expected standalone prepare release workspace to keep mesh foundation disabled, got mesh paths %#v", prepared)
+	}
+}
+
+func TestFilesystemDriverPrepareReleaseWorkspaceBuildsMeshFoundationInDistributedMesh(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 11, 30, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+
+	prepared, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if prepared.MeshStatePath == "" || prepared.ServiceCachePath == "" {
+		t.Fatalf("expected distributed mesh prepare release workspace to record mesh foundation paths, got %#v", prepared)
+	}
+	for _, path := range []string{prepared.MeshStatePath, prepared.ServiceCachePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected mesh artifact %s to exist: %v", path, err)
+		}
+	}
+
+	var snapshot MeshFoundationSnapshot
+	meshRaw, err := os.ReadFile(prepared.MeshStatePath)
+	if err != nil {
+		t.Fatalf("read mesh snapshot: %v", err)
+	}
+	if err := json.Unmarshal(meshRaw, &snapshot); err != nil {
+		t.Fatalf("decode mesh snapshot: %v", err)
+	}
+	if !snapshot.Enabled {
+		t.Fatal("expected distributed mesh snapshot to be enabled")
+	}
+	if snapshot.Health.Status != "planning" {
+		t.Fatalf("expected planning mesh health while remote peers are still planned, got %q", snapshot.Health.Status)
+	}
+	if len(snapshot.Membership.Peers) != 2 {
+		t.Fatalf("expected 2 mesh peers, got %d", len(snapshot.Membership.Peers))
+	}
+	if snapshot.Membership.LocalState != MeshPeerStateActive {
+		t.Fatalf("expected local mesh peer state active, got %q", snapshot.Membership.LocalState)
+	}
+	if len(snapshot.RouteCache) != 1 {
+		t.Fatalf("expected 1 mesh route, got %d", len(snapshot.RouteCache))
+	}
+	if snapshot.RouteCache[0].PathKind != "mesh_private" {
+		t.Fatalf("expected cross-node dependency to require mesh_private route, got %#v", snapshot.RouteCache[0])
+	}
+
+	var cache ServiceMetadataCache
+	cacheRaw, err := os.ReadFile(prepared.ServiceCachePath)
+	if err != nil {
+		t.Fatalf("read mesh service cache: %v", err)
+	}
+	if err := json.Unmarshal(cacheRaw, &cache); err != nil {
+		t.Fatalf("decode mesh service cache: %v", err)
+	}
+	webMeta, ok := cache.Services["web"]
+	if !ok {
+		t.Fatal("expected service metadata cache to include web")
+	}
+	if webMeta.PlacementTargetID != "mesh_remote" {
+		t.Fatalf("expected web placement target mesh_remote, got %q", webMeta.PlacementTargetID)
+	}
+	if len(webMeta.Dependencies) != 1 {
+		t.Fatalf("expected web metadata to include 1 dependency, got %#v", webMeta.Dependencies)
+	}
+	if webMeta.Dependencies[0].RouteScope != "mesh_private" || !webMeta.Dependencies[0].PrivateOnly {
+		t.Fatalf("expected web dependency to be routed through mesh_private, got %#v", webMeta.Dependencies[0])
+	}
+
+	manifestRaw, err := os.ReadFile(prepared.ManifestPath)
+	if err != nil {
+		t.Fatalf("read workspace manifest: %v", err)
+	}
+	var manifest WorkspaceManifest
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		t.Fatalf("decode workspace manifest: %v", err)
+	}
+	if manifest.MeshSnapshot == nil || !manifest.MeshSnapshot.Enabled {
+		t.Fatalf("expected workspace manifest to embed enabled mesh snapshot, got %#v", manifest.MeshSnapshot)
 	}
 }
 
@@ -296,6 +406,452 @@ func TestFilesystemDriverRenderGatewayConfigRollsBackOnReloadFailure(t *testing.
 	}
 }
 
+func TestFilesystemDriverRenderSidecarsInjectsRuntimeConfigAndMetadataCache(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 9, 30, 0, 0, time.UTC)
+	}
+	if driver.sidecar != nil {
+		driver.sidecar.now = driver.now
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if rendered.Version == "" {
+		t.Fatal("expected sidecar version to be set")
+	}
+	if len(rendered.Services) != 1 || rendered.Services[0] != "web" {
+		t.Fatalf("expected only web to have sidecar bindings, got %#v", rendered.Services)
+	}
+	if _, err := os.Stat(rendered.MetadataCachePath); err != nil {
+		t.Fatalf("expected metadata cache to exist: %v", err)
+	}
+
+	var plan SidecarPlan
+	planRaw, err := os.ReadFile(rendered.PlanPath)
+	if err != nil {
+		t.Fatalf("read sidecar plan: %v", err)
+	}
+	if err := json.Unmarshal(planRaw, &plan); err != nil {
+		t.Fatalf("decode sidecar plan: %v", err)
+	}
+	if plan.Services[0].SelectedMode != "env_injection" {
+		t.Fatalf("expected env_injection mode, got %q", plan.Services[0].SelectedMode)
+	}
+	if plan.Services[0].Env["LAZYOPS_DEP_API_ENDPOINT"] != "http://localhost:8080" {
+		t.Fatalf("expected env injection endpoint for api dependency, got %#v", plan.Services[0].Env)
+	}
+
+	webRuntimePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_123", "services", "web", "runtime.json")
+	var webRuntime map[string]any
+	webRaw, err := os.ReadFile(webRuntimePath)
+	if err != nil {
+		t.Fatalf("read web runtime config: %v", err)
+	}
+	if err := json.Unmarshal(webRaw, &webRuntime); err != nil {
+		t.Fatalf("decode web runtime config: %v", err)
+	}
+	sidecarBlock, ok := webRuntime["sidecar"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected web runtime sidecar block, got %#v", webRuntime["sidecar"])
+	}
+	if enabled, _ := sidecarBlock["enabled"].(bool); !enabled {
+		t.Fatal("expected web runtime to have sidecar enabled")
+	}
+	if sidecarBlock["selected_mode"] != "env_injection" {
+		t.Fatalf("expected web runtime selected_mode env_injection, got %#v", sidecarBlock["selected_mode"])
+	}
+
+	apiRuntimePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_123", "services", "api", "runtime.json")
+	var apiRuntime map[string]any
+	apiRaw, err := os.ReadFile(apiRuntimePath)
+	if err != nil {
+		t.Fatalf("read api runtime config: %v", err)
+	}
+	if err := json.Unmarshal(apiRaw, &apiRuntime); err != nil {
+		t.Fatalf("decode api runtime config: %v", err)
+	}
+	apiSidecarBlock, ok := apiRuntime["sidecar"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected api runtime sidecar block, got %#v", apiRuntime["sidecar"])
+	}
+	if enabled, _ := apiSidecarBlock["enabled"].(bool); enabled {
+		t.Fatal("expected api runtime to keep sidecar disabled without dependencies")
+	}
+
+	var metadata SidecarMetadataCache
+	metadataRaw, err := os.ReadFile(rendered.MetadataCachePath)
+	if err != nil {
+		t.Fatalf("read sidecar metadata cache: %v", err)
+	}
+	if err := json.Unmarshal(metadataRaw, &metadata); err != nil {
+		t.Fatalf("decode sidecar metadata cache: %v", err)
+	}
+	webMeta, ok := metadata.Services["web"]
+	if !ok {
+		t.Fatal("expected metadata cache to include web")
+	}
+	if webMeta.SelectedMode != "env_injection" {
+		t.Fatalf("expected metadata selected mode env_injection, got %q", webMeta.SelectedMode)
+	}
+	if webMeta.ConfigPath == "" || webMeta.RuntimePath == "" {
+		t.Fatalf("expected metadata cache to include config/runtime paths, got %#v", webMeta)
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsUsesManagedCredentialsFallbackWhenEnvInjectionDisabled(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Binding.CompatibilityPolicy.EnvInjection = false
+	payload.Binding.CompatibilityPolicy.ManagedCredentials = true
+	payload.Revision.CompatibilityPolicy.EnvInjection = false
+	payload.Revision.CompatibilityPolicy.ManagedCredentials = true
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if rendered.Plan.Services[0].SelectedMode != "managed_credentials" {
+		t.Fatalf("expected managed_credentials mode, got %q", rendered.Plan.Services[0].SelectedMode)
+	}
+	if len(rendered.Plan.Services[0].ManagedCredentials) == 0 {
+		t.Fatal("expected managed credential injection config to be generated")
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsRemovesStaleServiceConfigOnVersionChange(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	firstCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build first runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), firstCtx); err != nil {
+		t.Fatalf("prepare first release workspace: %v", err)
+	}
+	if _, err := driver.RenderSidecars(context.Background(), firstCtx); err != nil {
+		t.Fatalf("render first sidecars: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "sidecars", "live", "services", "web", "config.json")); err != nil {
+		t.Fatalf("expected live web sidecar config to exist after first render: %v", err)
+	}
+
+	secondPayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	secondPayload.Revision.RevisionID = "rev_124"
+	secondPayload.Revision.DependencyBindings = nil
+	secondCtx, err := ContextFromPreparePayload(secondPayload)
+	if err != nil {
+		t.Fatalf("build second runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), secondCtx); err != nil {
+		t.Fatalf("prepare second release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), secondCtx)
+	if err != nil {
+		t.Fatalf("render second sidecars: %v", err)
+	}
+	if rendered.Plan.Restart == nil || rendered.Plan.Restart.Status != "restarted" {
+		t.Fatalf("expected sidecar restart on version change, got %#v", rendered.Plan.Restart)
+	}
+	if _, err := os.Stat(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "sidecars", "live", "services", "web")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected stale web sidecar config to be removed, got %v", err)
+	}
+}
+
+func TestFilesystemDriverPromoteReleaseWritesTrafficShiftAndSummary(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	}
+	if driver.gateway != nil {
+		driver.gateway.now = driver.now
+	}
+	if driver.sidecar != nil {
+		driver.sidecar.now = driver.now
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+
+	stablePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stablePayload.Revision.RevisionID = "rev_122"
+	stableCtx, err := ContextFromPreparePayload(stablePayload)
+	if err != nil {
+		t.Fatalf("build stable runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), stableCtx); err != nil {
+		t.Fatalf("prepare stable release workspace: %v", err)
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	runtimeCtx.Rollout.CurrentRevisionID = "rev_122"
+	runtimeCtx.Rollout.StableRevisionID = "rev_122"
+
+	preparePromotionReadyRuntime(t, driver, runtimeCtx)
+
+	promoted, err := driver.PromoteRelease(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("promote release: %v", err)
+	}
+	if !promoted.ZeroDowntime {
+		t.Fatal("expected zero-downtime promotion to be enabled by default")
+	}
+	if !promoted.RollbackReady {
+		t.Fatal("expected rollback path to remain ready when previous stable exists")
+	}
+	if promoted.PreviousStableRevisionID != "rev_122" {
+		t.Fatalf("expected previous stable rev_122, got %q", promoted.PreviousStableRevisionID)
+	}
+	for _, path := range []string{promoted.TrafficPath, promoted.DrainPlanPath, promoted.SummaryPath, promoted.EventsPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected promotion artifact %s to exist: %v", path, err)
+		}
+	}
+	if promoted.Traffic.ActiveRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected active revision %q, got %q", payload.Revision.RevisionID, promoted.Traffic.ActiveRevisionID)
+	}
+	if promoted.DrainPlan.Status != "draining" {
+		t.Fatalf("expected drain status draining, got %q", promoted.DrainPlan.Status)
+	}
+	if len(promoted.Events) != 2 {
+		t.Fatalf("expected 2 deployment events, got %d", len(promoted.Events))
+	}
+	if promoted.Events[0].Type != "deployment.candidate_ready" || promoted.Events[1].Type != "deployment.promoted" {
+		t.Fatalf("unexpected deployment event sequence: %#v", promoted.Events)
+	}
+	if len(promoted.Summary.LatencySignals) != 2 {
+		t.Fatalf("expected latency signals for 2 services, got %d", len(promoted.Summary.LatencySignals))
+	}
+
+	historyRaw, err := os.ReadFile(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "rollout", "live", "history.json"))
+	if err != nil {
+		t.Fatalf("read rollout history: %v", err)
+	}
+	var history []PromotionSummary
+	if err := json.Unmarshal(historyRaw, &history); err != nil {
+		t.Fatalf("decode rollout history: %v", err)
+	}
+	if len(history) != 1 || history[0].RevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected rollout history to contain promoted revision, got %#v", history)
+	}
+}
+
+func TestFilesystemDriverPromoteReleaseRejectsNonPromotableCandidate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	runtimeCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.RenderGatewayConfig(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("render gateway config: %v", err)
+	}
+	if _, err := driver.RenderSidecars(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if _, err := driver.StartReleaseCandidate(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("start release candidate: %v", err)
+	}
+
+	_, err = driver.PromoteRelease(context.Background(), runtimeCtx)
+	if err == nil {
+		t.Fatal("expected promotion to fail before health gate marks candidate promotable")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "promotion_candidate_not_ready" {
+		t.Fatalf("expected promotion_candidate_not_ready code, got %q", opErr.Code)
+	}
+	if opErr.Retryable {
+		t.Fatal("expected non-promotable candidate error to be non-retryable")
+	}
+}
+
+func TestFilesystemDriverRollbackReleaseReturnsTrafficToPreviousStableAndWritesIncident(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 10, 30, 0, 0, time.UTC)
+	}
+	if driver.gateway != nil {
+		driver.gateway.now = driver.now
+	}
+	if driver.sidecar != nil {
+		driver.sidecar.now = driver.now
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+
+	stablePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stablePayload.Revision.RevisionID = "rev_122"
+	stableCtx, err := ContextFromPreparePayload(stablePayload)
+	if err != nil {
+		t.Fatalf("build stable runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), stableCtx); err != nil {
+		t.Fatalf("prepare stable release workspace: %v", err)
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	runtimeCtx.Rollout.CurrentRevisionID = "rev_122"
+	runtimeCtx.Rollout.StableRevisionID = "rev_122"
+
+	preparePromotionReadyRuntime(t, driver, runtimeCtx)
+	if _, err := driver.PromoteRelease(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("promote release: %v", err)
+	}
+
+	runtimeCtx.Rollout.CurrentRevisionID = payload.Revision.RevisionID
+	runtimeCtx.Rollout.StableRevisionID = payload.Revision.RevisionID
+	runtimeCtx.Rollout.PreviousStableRevisionID = "rev_122"
+	runtimeCtx.Rollout.DrainingRevisionID = "rev_122"
+
+	rolledBack, err := driver.RollbackRelease(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("rollback release: %v", err)
+	}
+	if rolledBack.FailedRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected failed revision %q, got %q", payload.Revision.RevisionID, rolledBack.FailedRevisionID)
+	}
+	if rolledBack.RestoredRevisionID != "rev_122" {
+		t.Fatalf("expected restored revision rev_122, got %q", rolledBack.RestoredRevisionID)
+	}
+	if rolledBack.Incident == nil {
+		t.Fatal("expected rollback incident to be emitted")
+	}
+	if rolledBack.Incident.Severity != contracts.SeverityCritical {
+		t.Fatalf("expected critical incident severity, got %q", rolledBack.Incident.Severity)
+	}
+	if rolledBack.Traffic.ActiveRevisionID != "rev_122" || rolledBack.Traffic.StableRevisionID != "rev_122" {
+		t.Fatalf("expected traffic to return to rev_122, got %#v", rolledBack.Traffic)
+	}
+	if rolledBack.Traffic.PreviousRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected previous revision to track unhealthy revision %q, got %q", payload.Revision.RevisionID, rolledBack.Traffic.PreviousRevisionID)
+	}
+	if len(rolledBack.Events) != 2 {
+		t.Fatalf("expected 2 rollback deployment events, got %d", len(rolledBack.Events))
+	}
+	if rolledBack.Events[0].Type != "deployment.unhealthy" || rolledBack.Events[1].Type != "deployment.rolled_back" {
+		t.Fatalf("unexpected rollback event sequence: %#v", rolledBack.Events)
+	}
+	for _, path := range []string{rolledBack.TrafficPath, rolledBack.SummaryPath, rolledBack.IncidentPath, rolledBack.DrainPlanPath, rolledBack.EventsPath, rolledBack.RollbackPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected rollback artifact %s to exist: %v", path, err)
+		}
+	}
+
+	candidate, err := loadCandidateRecord(workspaceLayout(root, runtimeCtx))
+	if err != nil {
+		t.Fatalf("load rolled back candidate record: %v", err)
+	}
+	if candidate.State != CandidateStateFailed {
+		t.Fatalf("expected candidate audit state failed after rollback, got %q", candidate.State)
+	}
+	if candidate.LatestIncident == nil || candidate.LatestIncident.Kind != "deployment_promoted_revision_unhealthy" {
+		t.Fatalf("expected candidate audit to retain rollback incident, got %#v", candidate.LatestIncident)
+	}
+}
+
+func TestFilesystemDriverRollbackReleaseRejectsWhenNoPreviousStableExists(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 10, 45, 0, 0, time.UTC)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+
+	preparePromotionReadyRuntime(t, driver, runtimeCtx)
+	if _, err := driver.PromoteRelease(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("promote initial release: %v", err)
+	}
+
+	runtimeCtx.Rollout.CurrentRevisionID = payload.Revision.RevisionID
+	runtimeCtx.Rollout.StableRevisionID = payload.Revision.RevisionID
+
+	_, err = driver.RollbackRelease(context.Background(), runtimeCtx)
+	if err == nil {
+		t.Fatal("expected rollback to fail without a previous stable revision")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "rollback_previous_stable_missing" {
+		t.Fatalf("expected rollback_previous_stable_missing code, got %q", opErr.Code)
+	}
+	if opErr.Retryable {
+		t.Fatal("expected missing previous stable rollback failure to be non-retryable")
+	}
+}
+
 func TestFilesystemDriverRunHealthGateMarksCandidatePromotable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
@@ -438,12 +994,95 @@ func TestFilesystemDriverRunHealthGateFailsWithRollbackPolicyAndDedupesIncident(
 	}
 }
 
-func TestFilesystemDriverStubOperationsStayUnimplemented(t *testing.T) {
-	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
-	runtimeCtx := RuntimeContext{}
+func TestFilesystemDriverGarbageCollectRuntimeRemovesOnlyUnprotectedState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC)
+	}
 
-	if err := driver.GarbageCollectRuntime(context.Background(), runtimeCtx); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("expected garbage collect runtime to remain unimplemented, got %v", err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	stalePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stalePayload.Revision.RevisionID = "rev_120"
+	configureServiceHealthChecks(t, &stalePayload, server, tcpListener)
+	staleCtx, err := ContextFromPreparePayload(stalePayload)
+	if err != nil {
+		t.Fatalf("build stale runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), staleCtx); err != nil {
+		t.Fatalf("prepare stale release workspace: %v", err)
+	}
+	if _, err := driver.RenderGatewayConfig(context.Background(), staleCtx); err != nil {
+		t.Fatalf("render stale gateway config: %v", err)
+	}
+	if _, err := driver.RenderSidecars(context.Background(), staleCtx); err != nil {
+		t.Fatalf("render stale sidecars: %v", err)
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	stablePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stablePayload.Revision.RevisionID = "rev_122"
+	stableCtx, err := ContextFromPreparePayload(stablePayload)
+	if err != nil {
+		t.Fatalf("build stable runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), stableCtx); err != nil {
+		t.Fatalf("prepare stable release workspace: %v", err)
+	}
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	runtimeCtx.Rollout.CurrentRevisionID = "rev_122"
+	runtimeCtx.Rollout.StableRevisionID = "rev_122"
+	preparePromotionReadyRuntime(t, driver, runtimeCtx)
+	if _, err := driver.PromoteRelease(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("promote release: %v", err)
+	}
+	runtimeCtx.Rollout.CurrentRevisionID = payload.Revision.RevisionID
+	runtimeCtx.Rollout.StableRevisionID = payload.Revision.RevisionID
+	runtimeCtx.Rollout.PreviousStableRevisionID = "rev_122"
+	if _, err := driver.RollbackRelease(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("rollback release: %v", err)
+	}
+
+	runtimeCtx.Rollout.CurrentRevisionID = "rev_122"
+	runtimeCtx.Rollout.StableRevisionID = "rev_122"
+	runtimeCtx.Rollout.PreviousStableRevisionID = ""
+	runtimeCtx.Rollout.DrainingRevisionID = payload.Revision.RevisionID
+	runtimeCtx.Revision.RevisionID = "rev_122"
+
+	collected, err := driver.GarbageCollectRuntime(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("garbage collect runtime: %v", err)
+	}
+	if len(collected.ProtectedRevisionIDs) == 0 {
+		t.Fatal("expected protected revision list to be recorded")
+	}
+	if _, err := os.Stat(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_120")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected stale revision rev_120 to be removed, got %v", err)
+	}
+	for _, revisionID := range []string{"rev_122", "rev_123"} {
+		if _, err := os.Stat(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", revisionID)); err != nil {
+			t.Fatalf("expected protected revision %s to remain, got %v", revisionID, err)
+		}
+	}
+	if len(collected.RemovedGatewayVersions) == 0 {
+		t.Fatal("expected stale gateway version directories to be removed")
+	}
+	if len(collected.RemovedSidecarVersions) == 0 {
+		t.Fatal("expected stale sidecar version directories to be removed")
+	}
+	if _, err := os.Stat(collected.ReportPath); err != nil {
+		t.Fatalf("expected garbage collection report to exist: %v", err)
 	}
 }
 
@@ -478,11 +1117,23 @@ func TestPrepareReleaseWorkspaceHandlerCanBeRegistered(t *testing.T) {
 	if _, ok := registry.Resolve(contracts.CommandRenderGatewayConfig); !ok {
 		t.Fatal("expected runtime service to register render_gateway_config handler")
 	}
+	if _, ok := registry.Resolve(contracts.CommandRenderSidecars); !ok {
+		t.Fatal("expected runtime service to register render_sidecars handler")
+	}
 	if _, ok := registry.Resolve(contracts.CommandStartReleaseCandidate); !ok {
 		t.Fatal("expected runtime service to register start_release_candidate handler")
 	}
 	if _, ok := registry.Resolve(contracts.CommandRunHealthGate); !ok {
 		t.Fatal("expected runtime service to register run_health_gate handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandPromoteRelease); !ok {
+		t.Fatal("expected runtime service to register promote_release handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandRollbackRelease); !ok {
+		t.Fatal("expected runtime service to register rollback_release handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandGarbageCollectRuntime); !ok {
+		t.Fatal("expected runtime service to register garbage_collect_runtime handler")
 	}
 }
 
@@ -646,6 +1297,404 @@ func TestRenderGatewayConfigHandlerReturnsNonRetryableValidationError(t *testing
 	}
 	if result.Error.Code != "gateway_invalid_route_port" {
 		t.Fatalf("expected gateway_invalid_route_port code, got %q", result.Error.Code)
+	}
+}
+
+func TestRenderSidecarsHandlerAppliesSidecarConfig(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if result := service.handlePrepareReleaseWorkspace(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPrepareReleaseWorkspace,
+		RequestID:     "req_prepare_sidecar",
+		CorrelationID: "corr_prepare_sidecar",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}); result.Error != nil {
+		t.Fatalf("prepare workspace failed: %#v", result.Error)
+	}
+
+	result := service.handleRenderSidecars(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRenderSidecars,
+		RequestID:     "req_sidecar",
+		CorrelationID: "corr_sidecar",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected render sidecars to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "cache", "sidecars", "prj_123", "bind_123", "metadata.json")); err != nil {
+		t.Fatalf("expected sidecar metadata cache to exist: %v", err)
+	}
+}
+
+func TestRenderSidecarsHandlerReturnsNonRetryableValidationError(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, NewFilesystemDriver(nil, filepath.Join(t.TempDir(), "runtime-root")))
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Revision.DependencyBindings[0].TargetService = "missing-service"
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if result := service.handlePrepareReleaseWorkspace(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPrepareReleaseWorkspace,
+		RequestID:     "req_prepare_sidecar_invalid",
+		CorrelationID: "corr_prepare_sidecar_invalid",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}); result.Error != nil {
+		t.Fatalf("prepare workspace failed: %#v", result.Error)
+	}
+
+	result := service.handleRenderSidecars(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRenderSidecars,
+		RequestID:     "req_sidecar_invalid",
+		CorrelationID: "corr_sidecar_invalid",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected render sidecars to fail validation")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected invalid sidecar config to be non-retryable")
+	}
+	if result.Error.Code != "sidecar_missing_target_service" {
+		t.Fatalf("expected sidecar_missing_target_service code, got %q", result.Error.Code)
+	}
+}
+
+func TestPromoteReleaseHandlerUpdatesRevisionCacheAndRolloutState(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	if _, err := store.Update(context.Background(), func(local *state.AgentLocalState) error {
+		local.RevisionCache.CurrentRevisionID = "rev_122"
+		local.RevisionCache.StableRevisionID = "rev_122"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed stable/current revision: %v", err)
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	stablePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stablePayload.Revision.RevisionID = "rev_122"
+	stableCtx, err := ContextFromPreparePayload(stablePayload)
+	if err != nil {
+		t.Fatalf("build stable runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), stableCtx); err != nil {
+		t.Fatalf("prepare stable release workspace: %v", err)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	runPromotionReadySetup(t, service, raw)
+
+	result := service.handlePromoteRelease(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPromoteRelease,
+		RequestID:     "req_promote",
+		CorrelationID: "corr_promote",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected promote release to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	local, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load updated state: %v", err)
+	}
+	if local.RevisionCache.CurrentRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected current revision %q, got %q", payload.Revision.RevisionID, local.RevisionCache.CurrentRevisionID)
+	}
+	if local.RevisionCache.StableRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected stable revision %q, got %q", payload.Revision.RevisionID, local.RevisionCache.StableRevisionID)
+	}
+	if local.RevisionCache.PreviousStableRevisionID != "rev_122" {
+		t.Fatalf("expected previous stable revision rev_122, got %q", local.RevisionCache.PreviousStableRevisionID)
+	}
+	if local.RevisionCache.DrainingRevisionID != "rev_122" {
+		t.Fatalf("expected draining revision rev_122, got %q", local.RevisionCache.DrainingRevisionID)
+	}
+	if local.RevisionCache.CandidateRevisionID != "" || local.RevisionCache.CandidateState != "" {
+		t.Fatalf("expected candidate state to be cleared after promotion, got %#v", local.RevisionCache)
+	}
+	if local.RevisionCache.LastPromotionSummary == "" {
+		t.Fatal("expected last promotion summary to be stored")
+	}
+}
+
+func TestPromoteReleaseHandlerReturnsNonRetryableErrorWhenHealthGateNotPassed(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	if _, err := store.Update(context.Background(), func(local *state.AgentLocalState) error {
+		local.RevisionCache.CurrentRevisionID = "rev_122"
+		local.RevisionCache.StableRevisionID = "rev_122"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed stable/current revision: %v", err)
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	runRuntimeCommands(t, service, raw,
+		contracts.CommandPrepareReleaseWorkspace,
+		contracts.CommandRenderGatewayConfig,
+		contracts.CommandRenderSidecars,
+		contracts.CommandStartReleaseCandidate,
+	)
+
+	result := service.handlePromoteRelease(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPromoteRelease,
+		RequestID:     "req_promote_invalid",
+		CorrelationID: "corr_promote_invalid",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected promote release to fail when candidate is not promotable")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected non-promotable promotion failure to be non-retryable")
+	}
+	if result.Error.Code != "promotion_candidate_not_ready" {
+		t.Fatalf("expected promotion_candidate_not_ready code, got %q", result.Error.Code)
+	}
+}
+
+func TestRollbackReleaseHandlerRestoresStableRevisionAndStoresRollbackAudit(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+	service.now = func() time.Time {
+		return time.Date(2026, 4, 1, 10, 35, 0, 0, time.UTC)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	if _, err := store.Update(context.Background(), func(local *state.AgentLocalState) error {
+		local.RevisionCache.CurrentRevisionID = "rev_122"
+		local.RevisionCache.StableRevisionID = "rev_122"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed stable/current revision: %v", err)
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	stablePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stablePayload.Revision.RevisionID = "rev_122"
+	stableCtx, err := ContextFromPreparePayload(stablePayload)
+	if err != nil {
+		t.Fatalf("build stable runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), stableCtx); err != nil {
+		t.Fatalf("prepare stable release workspace: %v", err)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	runPromotionReadySetup(t, service, raw)
+	if result := service.handlePromoteRelease(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPromoteRelease,
+		RequestID:     "req_promote_for_rollback",
+		CorrelationID: "corr_promote_for_rollback",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}); result.Error != nil {
+		t.Fatalf("promote release failed: %#v", result.Error)
+	}
+
+	result := service.handleRollbackRelease(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRollbackRelease,
+		RequestID:     "req_rollback",
+		CorrelationID: "corr_rollback",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected rollback release to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	local, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load updated state: %v", err)
+	}
+	if local.RevisionCache.CurrentRevisionID != "rev_122" {
+		t.Fatalf("expected current revision rev_122, got %q", local.RevisionCache.CurrentRevisionID)
+	}
+	if local.RevisionCache.StableRevisionID != "rev_122" {
+		t.Fatalf("expected stable revision rev_122, got %q", local.RevisionCache.StableRevisionID)
+	}
+	if local.RevisionCache.DrainingRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected draining revision %q, got %q", payload.Revision.RevisionID, local.RevisionCache.DrainingRevisionID)
+	}
+	if local.RevisionCache.LastPolicyAction != string(HealthGatePolicyRollbackRelease) {
+		t.Fatalf("expected rollback policy action, got %q", local.RevisionCache.LastPolicyAction)
+	}
+	if local.RevisionCache.LastRollbackFromRevision != payload.Revision.RevisionID {
+		t.Fatalf("expected rollback from revision %q, got %q", payload.Revision.RevisionID, local.RevisionCache.LastRollbackFromRevision)
+	}
+	if local.RevisionCache.LastRollbackToRevision != "rev_122" {
+		t.Fatalf("expected rollback to revision rev_122, got %q", local.RevisionCache.LastRollbackToRevision)
+	}
+	if local.RevisionCache.LastRollbackSummary == "" {
+		t.Fatal("expected rollback summary to be stored")
+	}
+}
+
+func TestGarbageCollectRuntimeHandlerStoresLastRunSummary(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+	service.now = func() time.Time {
+		return time.Date(2026, 4, 1, 11, 5, 0, 0, time.UTC)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	stalePayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	stalePayload.Revision.RevisionID = "rev_120"
+	configureServiceHealthChecks(t, &stalePayload, server, tcpListener)
+	staleRaw, err := json.Marshal(stalePayload)
+	if err != nil {
+		t.Fatalf("marshal stale payload: %v", err)
+	}
+	runRuntimeCommands(t, service, staleRaw,
+		contracts.CommandPrepareReleaseWorkspace,
+		contracts.CommandRenderGatewayConfig,
+		contracts.CommandRenderSidecars,
+	)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if _, err := store.Update(context.Background(), func(local *state.AgentLocalState) error {
+		local.RevisionCache.CurrentRevisionID = "rev_122"
+		local.RevisionCache.StableRevisionID = "rev_122"
+		local.RevisionCache.DrainingRevisionID = payload.Revision.RevisionID
+		return nil
+	}); err != nil {
+		t.Fatalf("seed runtime gc protected state: %v", err)
+	}
+
+	runRuntimeCommands(t, service, raw,
+		contracts.CommandPrepareReleaseWorkspace,
+		contracts.CommandRenderGatewayConfig,
+		contracts.CommandRenderSidecars,
+	)
+
+	gcPayload := payload
+	gcPayload.Revision.RevisionID = "rev_122"
+	gcRaw, err := json.Marshal(gcPayload)
+	if err != nil {
+		t.Fatalf("marshal gc payload: %v", err)
+	}
+
+	result := service.handleGarbageCollectRuntime(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandGarbageCollectRuntime,
+		RequestID:     "req_gc",
+		CorrelationID: "corr_gc",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       gcRaw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected garbage collect runtime to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	local, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load updated state: %v", err)
+	}
+	if local.RevisionCache.LastRuntimeGCSummary == "" {
+		t.Fatal("expected runtime gc summary to be stored")
+	}
+	if local.RevisionCache.LastRuntimeGCAt.IsZero() {
+		t.Fatal("expected runtime gc timestamp to be stored")
 	}
 }
 
@@ -924,36 +1973,78 @@ func startTCPHealthListener(t *testing.T) (net.Listener, func()) {
 func runRuntimeSetup(t *testing.T, service *Service, raw []byte) {
 	t.Helper()
 
-	for _, envelope := range []contracts.CommandEnvelope{
-		{
-			Type:          contracts.CommandPrepareReleaseWorkspace,
-			RequestID:     "req_prepare",
-			CorrelationID: "corr_prepare",
+	runRuntimeCommands(t, service, raw, contracts.CommandPrepareReleaseWorkspace, contracts.CommandStartReleaseCandidate)
+}
+
+func runPromotionReadySetup(t *testing.T, service *Service, raw []byte) {
+	t.Helper()
+
+	runRuntimeCommands(t, service, raw,
+		contracts.CommandPrepareReleaseWorkspace,
+		contracts.CommandRenderGatewayConfig,
+		contracts.CommandRenderSidecars,
+		contracts.CommandStartReleaseCandidate,
+		contracts.CommandRunHealthGate,
+	)
+}
+
+func runRuntimeCommands(t *testing.T, service *Service, raw []byte, commands ...contracts.CommandType) {
+	t.Helper()
+
+	for _, command := range commands {
+		envelope := contracts.CommandEnvelope{
+			Type:          command,
+			RequestID:     "req_" + string(command),
+			CorrelationID: "corr_" + string(command),
 			AgentID:       "agt_local",
 			Source:        contracts.EnvelopeSourceBackend,
 			OccurredAt:    time.Now().UTC(),
 			Payload:       raw,
-		},
-		{
-			Type:          contracts.CommandStartReleaseCandidate,
-			RequestID:     "req_start",
-			CorrelationID: "corr_start",
-			AgentID:       "agt_local",
-			Source:        contracts.EnvelopeSourceBackend,
-			OccurredAt:    time.Now().UTC(),
-			Payload:       raw,
-		},
-	} {
+		}
 		var result dispatcher.Result
-		switch envelope.Type {
+		switch command {
 		case contracts.CommandPrepareReleaseWorkspace:
 			result = service.handlePrepareReleaseWorkspace(context.Background(), envelope)
+		case contracts.CommandRenderGatewayConfig:
+			result = service.handleRenderGatewayConfig(context.Background(), envelope)
+		case contracts.CommandRenderSidecars:
+			result = service.handleRenderSidecars(context.Background(), envelope)
 		case contracts.CommandStartReleaseCandidate:
 			result = service.handleStartReleaseCandidate(context.Background(), envelope)
+		case contracts.CommandRunHealthGate:
+			result = service.handleRunHealthGate(context.Background(), envelope)
+		case contracts.CommandPromoteRelease:
+			result = service.handlePromoteRelease(context.Background(), envelope)
+		case contracts.CommandRollbackRelease:
+			result = service.handleRollbackRelease(context.Background(), envelope)
+		case contracts.CommandGarbageCollectRuntime:
+			result = service.handleGarbageCollectRuntime(context.Background(), envelope)
+		default:
+			t.Fatalf("unsupported runtime command in test helper: %s", command)
 		}
 		if result.Error != nil {
-			t.Fatalf("runtime setup command %s failed: %#v", envelope.Type, result.Error)
+			t.Fatalf("runtime command %s failed: %#v", command, result.Error)
 		}
+	}
+}
+
+func preparePromotionReadyRuntime(t *testing.T, driver *FilesystemDriver, runtimeCtx RuntimeContext) {
+	t.Helper()
+
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.RenderGatewayConfig(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("render gateway config: %v", err)
+	}
+	if _, err := driver.RenderSidecars(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if _, err := driver.StartReleaseCandidate(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("start release candidate: %v", err)
+	}
+	if _, err := driver.RunHealthGate(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("run health gate: %v", err)
 	}
 }
 

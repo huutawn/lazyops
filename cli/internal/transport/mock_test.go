@@ -13,8 +13,9 @@ func TestMockTransportReturnsFixture(t *testing.T) {
 	client := NewMockTransport(DefaultFixtures())
 
 	response, err := client.Do(context.Background(), Request{
-		Method: "GET",
-		Path:   "/api/v1/projects",
+		Method:  "GET",
+		Path:    "/api/v1/projects",
+		Headers: map[string]string{"Authorization": "Bearer lazyops_pat_mock_secret_value"},
 	})
 	if err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -135,7 +136,7 @@ func TestDefaultFixturesCoverDaySixContracts(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			response, err := client.Do(context.Background(), tc.req)
+			response, err := client.Do(context.Background(), authorizeMockTestRequest(tc.req))
 			if err != nil {
 				t.Fatalf("Do() error = %v", err)
 			}
@@ -156,4 +157,18 @@ func mustTestJSON(t *testing.T, value any) []byte {
 	}
 
 	return payload
+}
+
+func authorizeMockTestRequest(req Request) Request {
+	if !requiresMockAuth(req.Path) {
+		return req
+	}
+
+	headers := map[string]string{}
+	for key, value := range req.Headers {
+		headers[key] = value
+	}
+	headers["Authorization"] = "Bearer lazyops_pat_mock_secret_value"
+	req.Headers = headers
+	return req
 }

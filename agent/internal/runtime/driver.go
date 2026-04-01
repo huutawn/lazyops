@@ -18,13 +18,14 @@ var ErrNotImplemented = fmt.Errorf("runtime driver operation is not implemented 
 type Driver interface {
 	PrepareReleaseWorkspace(context.Context, RuntimeContext) (PreparedWorkspace, error)
 	RenderGatewayConfig(context.Context, RuntimeContext) (GatewayRenderResult, error)
+	RenderSidecars(context.Context, RuntimeContext) (SidecarRenderResult, error)
 	StartReleaseCandidate(context.Context, RuntimeContext) (CandidateRecord, error)
 	RunHealthGate(context.Context, RuntimeContext) (HealthGateResult, error)
-	PromoteRelease(context.Context, RuntimeContext) error
-	RollbackRelease(context.Context, RuntimeContext) error
+	PromoteRelease(context.Context, RuntimeContext) (PromoteReleaseResult, error)
+	RollbackRelease(context.Context, RuntimeContext) (RollbackReleaseResult, error)
 	SleepService(context.Context, RuntimeContext, string) error
 	WakeService(context.Context, RuntimeContext, string) error
-	GarbageCollectRuntime(context.Context, RuntimeContext) error
+	GarbageCollectRuntime(context.Context, RuntimeContext) (GarbageCollectRuntimeResult, error)
 }
 
 type RuntimeContext struct {
@@ -36,7 +37,12 @@ type RuntimeContext struct {
 }
 
 type RolloutContext struct {
-	StableRevisionID string
+	StableRevisionID         string
+	CurrentRevisionID        string
+	PreviousStableRevisionID string
+	PendingRevisionID        string
+	CandidateRevisionID      string
+	DrainingRevisionID       string
 }
 
 type ProjectMetadata struct {
@@ -64,6 +70,7 @@ type WorkspaceLayout struct {
 	Config    string `json:"config"`
 	Sidecars  string `json:"sidecars"`
 	Gateway   string `json:"gateway"`
+	Mesh      string `json:"mesh"`
 	Services  string `json:"services"`
 }
 
@@ -74,6 +81,8 @@ type PreparedWorkspace struct {
 	Artifact          ArtifactMaterialization `json:"artifact"`
 	SidecarConfigPath string                  `json:"sidecar_config_path"`
 	GatewayConfigPath string                  `json:"gateway_config_path"`
+	MeshStatePath     string                  `json:"mesh_state_path,omitempty"`
+	ServiceCachePath  string                  `json:"service_cache_path,omitempty"`
 }
 
 type WorkspaceManifest struct {
@@ -86,6 +95,7 @@ type WorkspaceManifest struct {
 	ArtifactPlan ArtifactPlan                       `json:"artifact_plan"`
 	GatewayPlan  GatewayPlan                        `json:"gateway_plan"`
 	SidecarPlan  SidecarPlan                        `json:"sidecar_plan"`
+	MeshSnapshot *MeshFoundationSnapshot            `json:"mesh_snapshot,omitempty"`
 }
 
 type ArtifactPlan struct {
@@ -153,8 +163,90 @@ type GatewayRenderResult struct {
 }
 
 type SidecarPlan struct {
-	EnabledServices []string                      `json:"enabled_services"`
-	Compatibility   contracts.CompatibilityPolicy `json:"compatibility_policy"`
+	Version           string                        `json:"version,omitempty"`
+	GeneratedAt       time.Time                     `json:"generated_at,omitempty"`
+	EnabledServices   []string                      `json:"enabled_services"`
+	Compatibility     contracts.CompatibilityPolicy `json:"compatibility_policy"`
+	Precedence        []string                      `json:"precedence,omitempty"`
+	Bindings          []SidecarBinding              `json:"bindings,omitempty"`
+	Services          []SidecarServiceConfig        `json:"services,omitempty"`
+	MetadataCachePath string                        `json:"metadata_cache_path,omitempty"`
+	Create            *SidecarHookResult            `json:"create,omitempty"`
+	Reconcile         *SidecarHookResult            `json:"reconcile,omitempty"`
+	Restart           *SidecarHookResult            `json:"restart,omitempty"`
+	Remove            *SidecarHookResult            `json:"remove,omitempty"`
+}
+
+type SidecarBinding struct {
+	ServiceName   string `json:"service_name"`
+	Alias         string `json:"alias"`
+	TargetService string `json:"target_service"`
+	Protocol      string `json:"protocol"`
+	LocalEndpoint string `json:"local_endpoint,omitempty"`
+}
+
+type SidecarServiceConfig struct {
+	ServiceName            string              `json:"service_name"`
+	SelectedMode           string              `json:"selected_mode"`
+	DependencyAliases      []string            `json:"dependency_aliases,omitempty"`
+	Env                    map[string]string   `json:"env,omitempty"`
+	ManagedCredentials     map[string]string   `json:"managed_credentials,omitempty"`
+	ProxyRoutes            []SidecarProxyRoute `json:"proxy_routes,omitempty"`
+	CorrelationPropagation bool                `json:"correlation_propagation"`
+	LatencyMeasurement     bool                `json:"latency_measurement"`
+}
+
+type SidecarProxyRoute struct {
+	Alias           string `json:"alias"`
+	TargetService   string `json:"target_service"`
+	Protocol        string `json:"protocol"`
+	LocalEndpoint   string `json:"local_endpoint,omitempty"`
+	Upstream        string `json:"upstream"`
+	LocalhostRescue bool   `json:"localhost_rescue"`
+}
+
+type SidecarHookResult struct {
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Message    string    `json:"message,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type SidecarActivation struct {
+	Version    string    `json:"version"`
+	PlanPath   string    `json:"plan_path"`
+	ConfigPath string    `json:"config_path"`
+	AppliedAt  time.Time `json:"applied_at"`
+}
+
+type SidecarMetadataCache struct {
+	Version   string                            `json:"version"`
+	UpdatedAt time.Time                         `json:"updated_at"`
+	Services  map[string]SidecarServiceMetadata `json:"services"`
+}
+
+type SidecarServiceMetadata struct {
+	SelectedMode           string   `json:"selected_mode"`
+	DependencyAliases      []string `json:"dependency_aliases,omitempty"`
+	Protocols              []string `json:"protocols,omitempty"`
+	ConfigPath             string   `json:"config_path,omitempty"`
+	RuntimePath            string   `json:"runtime_path,omitempty"`
+	CorrelationPropagation bool     `json:"correlation_propagation"`
+	LatencyMeasurement     bool     `json:"latency_measurement"`
+}
+
+type SidecarRenderResult struct {
+	Version           string            `json:"version"`
+	PlanPath          string            `json:"plan_path"`
+	ConfigPath        string            `json:"config_path"`
+	LivePlanPath      string            `json:"live_plan_path"`
+	LiveConfigRoot    string            `json:"live_config_root"`
+	ActivationPath    string            `json:"activation_path"`
+	MetadataCachePath string            `json:"metadata_cache_path"`
+	Services          []string          `json:"services,omitempty"`
+	Plan              SidecarPlan       `json:"plan"`
+	Activation        SidecarActivation `json:"activation"`
 }
 
 type ArtifactMaterialization struct {
@@ -260,6 +352,128 @@ type HealthGateResult struct {
 	IncidentSuppressed bool                       `json:"incident_suppressed,omitempty"`
 	ReportPath         string                     `json:"report_path,omitempty"`
 	RolloutSummaryPath string                     `json:"rollout_summary_path,omitempty"`
+}
+
+type DeploymentEvent struct {
+	Type       string         `json:"type"`
+	RevisionID string         `json:"revision_id"`
+	OccurredAt time.Time      `json:"occurred_at"`
+	Summary    string         `json:"summary"`
+	Details    map[string]any `json:"details,omitempty"`
+}
+
+type LatencySignal struct {
+	ServiceName string  `json:"service_name"`
+	Protocol    string  `json:"protocol"`
+	LatencyMS   float64 `json:"latency_ms"`
+	Status      string  `json:"status"`
+}
+
+type DrainPlan struct {
+	PreviousRevisionID string    `json:"previous_revision_id,omitempty"`
+	PromotedRevisionID string    `json:"promoted_revision_id"`
+	Status             string    `json:"status"`
+	ZeroDowntime       bool      `json:"zero_downtime"`
+	CleanupPolicy      string    `json:"cleanup_policy"`
+	StartedAt          time.Time `json:"started_at"`
+}
+
+type TrafficShiftRecord struct {
+	ActiveRevisionID   string    `json:"active_revision_id"`
+	PreviousRevisionID string    `json:"previous_revision_id,omitempty"`
+	StableRevisionID   string    `json:"stable_revision_id,omitempty"`
+	GatewayVersion     string    `json:"gateway_version,omitempty"`
+	SidecarVersion     string    `json:"sidecar_version,omitempty"`
+	ZeroDowntime       bool      `json:"zero_downtime"`
+	RollbackReady      bool      `json:"rollback_ready"`
+	ShiftedAt          time.Time `json:"shifted_at"`
+	DrainPlanPath      string    `json:"drain_plan_path,omitempty"`
+}
+
+type PromotionSummary struct {
+	ProjectID                string            `json:"project_id"`
+	BindingID                string            `json:"binding_id"`
+	RevisionID               string            `json:"revision_id"`
+	PreviousStableRevisionID string            `json:"previous_stable_revision_id,omitempty"`
+	ZeroDowntime             bool              `json:"zero_downtime"`
+	RollbackReady            bool              `json:"rollback_ready"`
+	DrainStatus              string            `json:"drain_status"`
+	GatewayVersion           string            `json:"gateway_version,omitempty"`
+	SidecarVersion           string            `json:"sidecar_version,omitempty"`
+	PublicURLs               []string          `json:"public_urls,omitempty"`
+	LatencySignals           []LatencySignal   `json:"latency_signals,omitempty"`
+	Events                   []DeploymentEvent `json:"events,omitempty"`
+	Summary                  string            `json:"summary"`
+	PromotedAt               time.Time         `json:"promoted_at"`
+}
+
+type PromoteReleaseResult struct {
+	RevisionID               string             `json:"revision_id"`
+	PreviousStableRevisionID string             `json:"previous_stable_revision_id,omitempty"`
+	ZeroDowntime             bool               `json:"zero_downtime"`
+	RollbackReady            bool               `json:"rollback_ready"`
+	GatewayVersion           string             `json:"gateway_version,omitempty"`
+	SidecarVersion           string             `json:"sidecar_version,omitempty"`
+	TrafficPath              string             `json:"traffic_path"`
+	DrainPlanPath            string             `json:"drain_plan_path"`
+	SummaryPath              string             `json:"summary_path"`
+	EventsPath               string             `json:"events_path"`
+	Summary                  PromotionSummary   `json:"summary_payload"`
+	Traffic                  TrafficShiftRecord `json:"traffic"`
+	DrainPlan                DrainPlan          `json:"drain_plan"`
+	Events                   []DeploymentEvent  `json:"events"`
+}
+
+type RollbackDrainPlan struct {
+	FailedRevisionID   string    `json:"failed_revision_id"`
+	RestoredRevisionID string    `json:"restored_revision_id"`
+	Status             string    `json:"status"`
+	ZeroDowntime       bool      `json:"zero_downtime"`
+	CleanupPolicy      string    `json:"cleanup_policy"`
+	StartedAt          time.Time `json:"started_at"`
+}
+
+type RollbackSummary struct {
+	ProjectID          string                     `json:"project_id"`
+	BindingID          string                     `json:"binding_id"`
+	FailedRevisionID   string                     `json:"failed_revision_id"`
+	RestoredRevisionID string                     `json:"restored_revision_id"`
+	ZeroDowntime       bool                       `json:"zero_downtime"`
+	GatewayVersion     string                     `json:"gateway_version,omitempty"`
+	SidecarVersion     string                     `json:"sidecar_version,omitempty"`
+	PublicURLs         []string                   `json:"public_urls,omitempty"`
+	Incident           *contracts.IncidentPayload `json:"incident,omitempty"`
+	Events             []DeploymentEvent          `json:"events,omitempty"`
+	Summary            string                     `json:"summary"`
+	RolledBackAt       time.Time                  `json:"rolled_back_at"`
+}
+
+type RollbackReleaseResult struct {
+	FailedRevisionID   string                     `json:"failed_revision_id"`
+	RestoredRevisionID string                     `json:"restored_revision_id"`
+	TrafficPath        string                     `json:"traffic_path"`
+	EventsPath         string                     `json:"events_path"`
+	SummaryPath        string                     `json:"summary_path"`
+	IncidentPath       string                     `json:"incident_path"`
+	DrainPlanPath      string                     `json:"drain_plan_path"`
+	RollbackPath       string                     `json:"rollback_path"`
+	Summary            RollbackSummary            `json:"summary_payload"`
+	Traffic            TrafficShiftRecord         `json:"traffic"`
+	Incident           *contracts.IncidentPayload `json:"incident,omitempty"`
+	DrainPlan          RollbackDrainPlan          `json:"drain_plan"`
+	Events             []DeploymentEvent          `json:"events"`
+}
+
+type GarbageCollectRuntimeResult struct {
+	ProjectID              string    `json:"project_id"`
+	BindingID              string    `json:"binding_id"`
+	ProtectedRevisionIDs   []string  `json:"protected_revision_ids,omitempty"`
+	RemovedRevisionRoots   []string  `json:"removed_revision_roots,omitempty"`
+	RemovedGatewayVersions []string  `json:"removed_gateway_versions,omitempty"`
+	RemovedSidecarVersions []string  `json:"removed_sidecar_versions,omitempty"`
+	Summary                string    `json:"summary"`
+	ReportPath             string    `json:"report_path"`
+	CollectedAt            time.Time `json:"collected_at"`
 }
 
 type OperationError struct {
@@ -387,6 +601,7 @@ func workspaceLayout(root string, runtimeCtx RuntimeContext) WorkspaceLayout {
 		Config:    filepath.Join(workspaceRoot, "config"),
 		Sidecars:  filepath.Join(workspaceRoot, "sidecars"),
 		Gateway:   filepath.Join(workspaceRoot, "gateway"),
+		Mesh:      filepath.Join(workspaceRoot, "mesh"),
 		Services:  filepath.Join(workspaceRoot, "services"),
 	}
 }

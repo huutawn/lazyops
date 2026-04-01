@@ -37,8 +37,12 @@ func (s *Service) Register(registry *dispatcher.Registry) {
 	}
 	registry.Register(contracts.CommandPrepareReleaseWorkspace, dispatcher.HandlerFunc(s.handlePrepareReleaseWorkspace))
 	registry.Register(contracts.CommandRenderGatewayConfig, dispatcher.HandlerFunc(s.handleRenderGatewayConfig))
+	registry.Register(contracts.CommandRenderSidecars, dispatcher.HandlerFunc(s.handleRenderSidecars))
 	registry.Register(contracts.CommandStartReleaseCandidate, dispatcher.HandlerFunc(s.handleStartReleaseCandidate))
 	registry.Register(contracts.CommandRunHealthGate, dispatcher.HandlerFunc(s.handleRunHealthGate))
+	registry.Register(contracts.CommandPromoteRelease, dispatcher.HandlerFunc(s.handlePromoteRelease))
+	registry.Register(contracts.CommandRollbackRelease, dispatcher.HandlerFunc(s.handleRollbackRelease))
+	registry.Register(contracts.CommandGarbageCollectRuntime, dispatcher.HandlerFunc(s.handleGarbageCollectRuntime))
 }
 
 func (s *Service) handlePrepareReleaseWorkspace(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
@@ -188,6 +192,58 @@ func (s *Service) handleRenderGatewayConfig(ctx context.Context, envelope contra
 	return dispatcher.Done(fmt.Sprintf("gateway config rendered and applied as %s", rendered.Version))
 }
 
+func (s *Service) handleRenderSidecars(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	var payload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return dispatcher.NonRetryable("invalid_render_sidecars_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
+	}
+
+	rendered, err := s.driver.RenderSidecars(ctx, runtimeCtx)
+	if err != nil {
+		return dispatchOperationError(
+			err,
+			"render_sidecars_failed",
+			map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			},
+		)
+	}
+
+	if s.store != nil {
+		if _, err := s.store.Update(ctx, func(local *state.AgentLocalState) error {
+			recordPendingRevision(local, runtimeCtx.Revision.RevisionID, s.now())
+			return nil
+		}); err != nil {
+			return dispatcher.Retryable("persist_sidecar_render_state_failed", fmt.Sprintf("sidecar config rendered but local state update failed: %v", err), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+				"version":     rendered.Version,
+			})
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("runtime sidecar config rendered",
+			"request_id", envelope.RequestID,
+			"correlation_id", envelope.CorrelationID,
+			"revision_id", runtimeCtx.Revision.RevisionID,
+			"binding_id", runtimeCtx.Binding.BindingID,
+			"sidecar_version", rendered.Version,
+			"enabled_services", len(rendered.Services),
+		)
+	}
+
+	return dispatcher.Done(fmt.Sprintf("sidecar config rendered and applied as %s", rendered.Version))
+}
+
 func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
 	var payload contracts.PrepareReleaseWorkspacePayload
 	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
@@ -202,14 +258,12 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 	}
 
 	if s.store != nil {
-		local, err := s.store.Load(ctx)
-		if err != nil {
-			return dispatcher.Retryable("load_runtime_state_failed", fmt.Sprintf("could not load local state for health gate: %v", err), map[string]any{
+		if err := s.populateRolloutContext(ctx, &runtimeCtx, "health gate"); err != nil {
+			return dispatcher.Retryable("load_runtime_state_failed", err.Error(), map[string]any{
 				"revision_id": runtimeCtx.Revision.RevisionID,
 				"binding_id":  runtimeCtx.Binding.BindingID,
 			})
 		}
-		runtimeCtx.Rollout.StableRevisionID = local.RevisionCache.StableRevisionID
 	}
 
 	report, err := s.driver.RunHealthGate(ctx, runtimeCtx)
@@ -271,6 +325,247 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 	}
 
 	return dispatcher.Done(report.Summary)
+}
+
+func (s *Service) handlePromoteRelease(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	var payload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return dispatcher.NonRetryable("invalid_promote_release_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
+	}
+
+	if s.store != nil {
+		if err := s.populateRolloutContext(ctx, &runtimeCtx, "promotion"); err != nil {
+			return dispatcher.Retryable("load_runtime_state_failed", err.Error(), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			})
+		}
+	}
+
+	promoted, err := s.driver.PromoteRelease(ctx, runtimeCtx)
+	if err != nil {
+		return dispatchOperationError(
+			err,
+			"promote_release_failed",
+			map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			},
+		)
+	}
+
+	if s.store != nil {
+		if _, err := s.store.Update(ctx, func(local *state.AgentLocalState) error {
+			recordPendingRevision(local, runtimeCtx.Revision.RevisionID, s.now())
+			local.RevisionCache.CurrentRevisionID = promoted.RevisionID
+			local.RevisionCache.PreviousStableRevisionID = promoted.PreviousStableRevisionID
+			local.RevisionCache.StableRevisionID = promoted.RevisionID
+			local.RevisionCache.PendingRevisionID = ""
+			local.RevisionCache.CandidateRevisionID = ""
+			local.RevisionCache.CandidateState = ""
+			local.RevisionCache.CandidateWorkspaceRoot = ""
+			local.RevisionCache.DrainingRevisionID = promoted.DrainPlan.PreviousRevisionID
+			local.RevisionCache.LastPolicyAction = string(HealthGatePolicyPromoteCandidate)
+			local.RevisionCache.LastPromotionAt = s.now()
+			local.RevisionCache.LastPromotionSummary = promoted.Summary.Summary
+			return nil
+		}); err != nil {
+			return dispatcher.Retryable("persist_promotion_state_failed", fmt.Sprintf("promotion completed but local state update failed: %v", err), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			})
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("runtime release promoted",
+			"request_id", envelope.RequestID,
+			"correlation_id", envelope.CorrelationID,
+			"revision_id", runtimeCtx.Revision.RevisionID,
+			"binding_id", runtimeCtx.Binding.BindingID,
+			"previous_stable_revision_id", promoted.PreviousStableRevisionID,
+			"rollback_ready", promoted.RollbackReady,
+			"gateway_version", promoted.GatewayVersion,
+			"sidecar_version", promoted.SidecarVersion,
+		)
+	}
+
+	return dispatcher.Done(promoted.Summary.Summary)
+}
+
+func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	var payload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return dispatcher.NonRetryable("invalid_rollback_release_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
+	}
+
+	if s.store != nil {
+		if err := s.populateRolloutContext(ctx, &runtimeCtx, "rollback"); err != nil {
+			return dispatcher.Retryable("load_runtime_state_failed", err.Error(), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			})
+		}
+	}
+
+	rolledBack, err := s.driver.RollbackRelease(ctx, runtimeCtx)
+	if err != nil {
+		return dispatchOperationError(
+			err,
+			"rollback_release_failed",
+			map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			},
+		)
+	}
+
+	if s.store != nil {
+		if _, err := s.store.Update(ctx, func(local *state.AgentLocalState) error {
+			local.RevisionCache.CurrentRevisionID = rolledBack.RestoredRevisionID
+			local.RevisionCache.StableRevisionID = rolledBack.RestoredRevisionID
+			local.RevisionCache.PreviousStableRevisionID = ""
+			local.RevisionCache.PendingRevisionID = ""
+			local.RevisionCache.CandidateRevisionID = ""
+			local.RevisionCache.CandidateState = ""
+			local.RevisionCache.CandidateWorkspaceRoot = ""
+			local.RevisionCache.DrainingRevisionID = rolledBack.FailedRevisionID
+			local.RevisionCache.LastPolicyAction = string(HealthGatePolicyRollbackRelease)
+			local.RevisionCache.LastRollbackAt = s.now()
+			local.RevisionCache.LastRollbackFromRevision = rolledBack.FailedRevisionID
+			local.RevisionCache.LastRollbackToRevision = rolledBack.RestoredRevisionID
+			local.RevisionCache.LastRollbackSummary = rolledBack.Summary.Summary
+			local.RevisionCache.UpdatedAt = s.now()
+			return nil
+		}); err != nil {
+			return dispatcher.Retryable("persist_rollback_state_failed", fmt.Sprintf("rollback completed but local state update failed: %v", err), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			})
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Warn("runtime release rolled back",
+			"request_id", envelope.RequestID,
+			"correlation_id", envelope.CorrelationID,
+			"revision_id", rolledBack.FailedRevisionID,
+			"binding_id", runtimeCtx.Binding.BindingID,
+			"restored_revision_id", rolledBack.RestoredRevisionID,
+			"incident_kind", nonNilIncidentKind(rolledBack.Incident),
+			"incident_severity", nonNilIncidentSeverity(rolledBack.Incident),
+		)
+	}
+
+	return dispatcher.Done(rolledBack.Summary.Summary)
+}
+
+func (s *Service) handleGarbageCollectRuntime(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	var payload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return dispatcher.NonRetryable("invalid_garbage_collect_runtime_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
+	}
+
+	if s.store != nil {
+		if err := s.populateRolloutContext(ctx, &runtimeCtx, "runtime garbage collection"); err != nil {
+			return dispatcher.Retryable("load_runtime_state_failed", err.Error(), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			})
+		}
+	}
+
+	collected, err := s.driver.GarbageCollectRuntime(ctx, runtimeCtx)
+	if err != nil {
+		return dispatchOperationError(
+			err,
+			"garbage_collect_runtime_failed",
+			map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			},
+		)
+	}
+
+	if s.store != nil {
+		if _, err := s.store.Update(ctx, func(local *state.AgentLocalState) error {
+			local.RevisionCache.LastRuntimeGCAt = collected.CollectedAt
+			local.RevisionCache.LastRuntimeGCSummary = collected.Summary
+			local.RevisionCache.UpdatedAt = s.now()
+			return nil
+		}); err != nil {
+			return dispatcher.Retryable("persist_runtime_gc_state_failed", fmt.Sprintf("runtime gc completed but local state update failed: %v", err), map[string]any{
+				"revision_id": runtimeCtx.Revision.RevisionID,
+				"binding_id":  runtimeCtx.Binding.BindingID,
+			})
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("runtime garbage collection completed",
+			"request_id", envelope.RequestID,
+			"correlation_id", envelope.CorrelationID,
+			"binding_id", runtimeCtx.Binding.BindingID,
+			"removed_revisions", len(collected.RemovedRevisionRoots),
+			"removed_gateway_versions", len(collected.RemovedGatewayVersions),
+			"removed_sidecar_versions", len(collected.RemovedSidecarVersions),
+		)
+	}
+
+	return dispatcher.Done(collected.Summary)
+}
+
+func (s *Service) populateRolloutContext(ctx context.Context, runtimeCtx *RuntimeContext, operation string) error {
+	if s.store == nil || runtimeCtx == nil {
+		return nil
+	}
+
+	local, err := s.store.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("could not load local state for %s: %w", operation, err)
+	}
+	runtimeCtx.Rollout.CurrentRevisionID = local.RevisionCache.CurrentRevisionID
+	runtimeCtx.Rollout.StableRevisionID = local.RevisionCache.StableRevisionID
+	runtimeCtx.Rollout.PreviousStableRevisionID = local.RevisionCache.PreviousStableRevisionID
+	runtimeCtx.Rollout.PendingRevisionID = local.RevisionCache.PendingRevisionID
+	runtimeCtx.Rollout.CandidateRevisionID = local.RevisionCache.CandidateRevisionID
+	runtimeCtx.Rollout.DrainingRevisionID = local.RevisionCache.DrainingRevisionID
+	return nil
+}
+
+func nonNilIncidentKind(incident *contracts.IncidentPayload) string {
+	if incident == nil {
+		return ""
+	}
+	return incident.Kind
+}
+
+func nonNilIncidentSeverity(incident *contracts.IncidentPayload) contracts.Severity {
+	if incident == nil {
+		return ""
+	}
+	return incident.Severity
 }
 
 func dispatchOperationError(err error, fallbackCode string, fallbackDetails map[string]any) dispatcher.Result {

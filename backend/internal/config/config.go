@@ -17,6 +17,7 @@ type Config struct {
 	GoogleOAuth GoogleOAuthConfig
 	GitHubOAuth GitHubOAuthConfig
 	GitHubApp   GitHubAppConfig
+	Enrollment  EnrollmentConfig
 	Security    SecurityConfig
 	Seed        SeedConfig
 	WebSocket   WebSocketConfig
@@ -86,6 +87,11 @@ type GitHubAppConfig struct {
 	CallbackURL   string
 	WebhookURL    string
 	InstallURL    string
+}
+
+type EnrollmentConfig struct {
+	BootstrapTokenTTL time.Duration
+	AgentTokenTTL     time.Duration
 }
 
 type SecurityConfig struct {
@@ -170,6 +176,10 @@ func Load() Config {
 			CallbackURL:   getEnv("GITHUB_APP_CALLBACK_URL", ""),
 			WebhookURL:    getEnv("GITHUB_APP_WEBHOOK_URL", ""),
 			InstallURL:    getEnv("GITHUB_APP_INSTALL_URL", ""),
+		},
+		Enrollment: EnrollmentConfig{
+			BootstrapTokenTTL: getEnvAsDuration("BOOTSTRAP_TOKEN_TTL", 15*time.Minute),
+			AgentTokenTTL:     getEnvAsDuration("AGENT_TOKEN_TTL", 30*24*time.Hour),
 		},
 		Security: SecurityConfig{
 			AllowedOrigins:         getEnvAsSlice("ALLOWED_ORIGINS", []string{"*"}),

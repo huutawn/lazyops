@@ -48,6 +48,21 @@ func Authenticate(auth *service.AuthService) gin.HandlerFunc {
 	}
 }
 
+func RequireAuthKinds(authKinds ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims := MustClaims(c)
+		for _, authKind := range authKinds {
+			if claims.AuthKind == authKind {
+				c.Next()
+				return
+			}
+		}
+
+		response.Error(c, http.StatusForbidden, "auth kind not allowed", "auth_kind_not_allowed", nil)
+		c.Abort()
+	}
+}
+
 func extractAuthToken(c *gin.Context) (string, string) {
 	header := strings.TrimSpace(c.GetHeader("Authorization"))
 	if header == "" {

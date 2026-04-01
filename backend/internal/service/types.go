@@ -122,6 +122,168 @@ type GitHubWebhookNormalizedEventRecord struct {
 	ShouldDestroyPreview bool
 }
 
+type CreateInstanceCommand struct {
+	UserID    string
+	Name      string
+	PublicIP  string
+	PrivateIP string
+	Labels    map[string]string
+}
+
+type BootstrapTokenIssue struct {
+	Token     string
+	TokenID   string
+	ExpiresAt time.Time
+	SingleUse bool
+}
+
+type AgentMachineInfo struct {
+	Hostname string
+	OS       string
+	Arch     string
+	Kernel   string
+	IPs      []string
+	Labels   map[string]string
+}
+
+type AgentEnrollmentCommand struct {
+	BootstrapToken string
+	RuntimeMode    string
+	AgentKind      string
+	Machine        AgentMachineInfo
+	Capabilities   map[string]any
+}
+
+type AgentEnrollmentResult struct {
+	AgentID    string
+	AgentToken string
+	InstanceID string
+	IssuedAt   time.Time
+	ExpiresAt  *time.Time
+}
+
+type AgentHeartbeatCommand struct {
+	UserID           string
+	AgentID          string
+	InstanceID       string
+	SessionID        string
+	State            string
+	HealthStatus     string
+	HealthSummary    string
+	RuntimeMode      string
+	AgentKind        string
+	SentAt           time.Time
+	UptimeSeconds    int64
+	CapabilityHash   string
+	CapabilityUpdate map[string]any
+	Capabilities     map[string]any
+}
+
+type AgentHeartbeatResult struct {
+	AgentID        string
+	InstanceID     string
+	AgentStatus    string
+	InstanceStatus string
+	ReceivedAt     time.Time
+}
+
+type InstanceSummary struct {
+	ID                  string
+	TargetKind          string
+	Name                string
+	PublicIP            *string
+	PrivateIP           *string
+	AgentID             *string
+	Status              string
+	Labels              map[string]string
+	RuntimeCapabilities map[string]any
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+type CreateInstanceResult struct {
+	Instance  InstanceSummary
+	Bootstrap BootstrapTokenIssue
+}
+
+type InstanceListResult struct {
+	Items []InstanceSummary
+}
+
+type CreateMeshNetworkCommand struct {
+	UserID   string
+	Name     string
+	Provider string
+	CIDR     string
+}
+
+type MeshNetworkSummary struct {
+	ID         string
+	TargetKind string
+	Name       string
+	Provider   string
+	CIDR       string
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type MeshNetworkListResult struct {
+	Items []MeshNetworkSummary
+}
+
+type CreateClusterCommand struct {
+	UserID              string
+	Name                string
+	Provider            string
+	KubeconfigSecretRef string
+}
+
+type ClusterSummary struct {
+	ID         string
+	TargetKind string
+	Name       string
+	Provider   string
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type ClusterListResult struct {
+	Items []ClusterSummary
+}
+
+type CreateDeploymentBindingCommand struct {
+	RequesterUserID     string
+	RequesterRole       string
+	ProjectID           string
+	Name                string
+	TargetRef           string
+	RuntimeMode         string
+	TargetKind          string
+	TargetID            string
+	PlacementPolicy     map[string]any
+	DomainPolicy        map[string]any
+	CompatibilityPolicy map[string]any
+	ScaleToZeroPolicy   map[string]any
+}
+
+type DeploymentBindingRecord struct {
+	ID                  string
+	ProjectID           string
+	Name                string
+	TargetRef           string
+	RuntimeMode         string
+	TargetKind          string
+	TargetID            string
+	PlacementPolicy     map[string]any
+	DomainPolicy        map[string]any
+	CompatibilityPolicy map[string]any
+	ScaleToZeroPolicy   map[string]any
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
 type CreateProjectCommand struct {
 	UserID        string
 	Name          string

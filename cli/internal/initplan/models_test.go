@@ -163,6 +163,191 @@ func TestApplyDiscoveryRejectsIncompatibleTargetForMode(t *testing.T) {
 	}
 }
 
+func TestApplyDiscoveryInfersMeshDependencyBindings(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot: "/tmp/repo",
+		Layout:   "monorepo",
+		Services: []ServiceCandidate{
+			{Name: "web", Path: "apps/web"},
+			{
+				Name:      "api",
+				Path:      "apps/api",
+				StartHint: "go run ./cmd/server",
+				Healthcheck: HealthcheckHint{
+					Path: "/healthz",
+					Port: 8080,
+				},
+			},
+		},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	enriched, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		nil,
+		[]contracts.MeshNetwork{{ID: "mesh_demo", UserID: "usr_demo", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
+		nil,
+		SelectionInput{
+			Project:     "acme-shop",
+			RuntimeMode: RuntimeModeDistributedMesh,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ApplyDiscovery() error = %v", err)
+	}
+
+	if len(enriched.DependencyBindings) != 1 {
+		t.Fatalf("expected one inferred mesh dependency binding, got %+v", enriched.DependencyBindings)
+	}
+	binding := enriched.DependencyBindings[0]
+	if binding.Service != "web" || binding.TargetService != "api" || binding.Protocol != "http" || binding.LocalEndpoint != "localhost:8080" {
+		t.Fatalf("expected inferred web->api dependency binding, got %+v", binding)
+	}
+}
+
+func TestApplyDiscoveryRejectsMeshOwnershipMismatch(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot:            "/tmp/repo",
+		Layout:              "single-service",
+		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	_, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		nil,
+		[]contracts.MeshNetwork{{ID: "mesh_demo", UserID: "usr_other", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
+		nil,
+		SelectionInput{
+			Project:     "acme-shop",
+			RuntimeMode: RuntimeModeDistributedMesh,
+			Target:      "prod-ap",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected ownership mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("expected ownership mismatch error, got %v", err)
+	}
+}
+
+func TestApplyDiscoveryRejectsOfflineMeshTarget(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot:            "/tmp/repo",
+		Layout:              "single-service",
+		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	_, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		nil,
+		[]contracts.MeshNetwork{{ID: "mesh_demo", UserID: "usr_demo", Name: "prod-ap", Status: "offline", Provider: "wireguard"}},
+		nil,
+		SelectionInput{
+			Project:     "acme-shop",
+			RuntimeMode: RuntimeModeDistributedMesh,
+			Target:      "prod-ap",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected offline mesh error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not currently online") {
+		t.Fatalf("expected offline mesh error, got %v", err)
+	}
+}
+
+func TestInitPlanValidateRejectsK3sLocalDependencyBypass(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot: "/tmp/repo",
+		Layout:   "monorepo",
+		Services: []ServiceCandidate{
+			{Name: "web", Path: "apps/web"},
+			{Name: "api", Path: "apps/api"},
+		},
+		RuntimeMode: RuntimeModeDistributedK3s,
+		DependencyBindings: []DependencyBindingDraft{
+			{
+				Service:       "web",
+				Alias:         "api",
+				TargetService: "api",
+				Protocol:      "http",
+				LocalEndpoint: "localhost:8080",
+			},
+		},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	err := plan.Validate()
+	if err == nil {
+		t.Fatal("expected distributed-k3s local endpoint rejection, got nil")
+	}
+	if !strings.Contains(err.Error(), "cluster-native") {
+		t.Fatalf("expected distributed-k3s boundary error, got %v", err)
+	}
+}
+
+func TestApplyDiscoveryRejectsClusterOwnershipMismatch(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot:            "/tmp/repo",
+		Layout:              "single-service",
+		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	_, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		nil,
+		nil,
+		[]contracts.Cluster{{ID: "cls_demo", UserID: "usr_other", Name: "prod-k3s-ap", Status: "registered", Provider: "k3s"}},
+		SelectionInput{
+			Project:     "acme-shop",
+			RuntimeMode: RuntimeModeDistributedK3s,
+			Target:      "prod-k3s-ap",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected cluster ownership mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("expected cluster ownership mismatch error, got %v", err)
+	}
+}
+
+func TestApplyDiscoveryRejectsUnavailableCluster(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot:            "/tmp/repo",
+		Layout:              "single-service",
+		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	_, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		nil,
+		nil,
+		[]contracts.Cluster{{ID: "cls_demo", UserID: "usr_demo", Name: "prod-k3s-ap", Status: "unavailable", Provider: "k3s"}},
+		SelectionInput{
+			Project:     "acme-shop",
+			RuntimeMode: RuntimeModeDistributedK3s,
+			Target:      "prod-k3s-ap",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected unavailable cluster error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not currently available") {
+		t.Fatalf("expected unavailable cluster error, got %v", err)
+	}
+}
+
 func TestApplyBindingsAutoSelectsCompatibleBinding(t *testing.T) {
 	plan := InitPlan{
 		RepoRoot: "/tmp/repo",
