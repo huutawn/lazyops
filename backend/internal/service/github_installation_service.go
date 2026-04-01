@@ -102,18 +102,69 @@ func (s *GitHubInstallationService) SyncInstallations(ctx context.Context, cmd S
 		return nil, err
 	}
 
-	installations, err := s.installations.ListByUser(cmd.UserID)
+	records, err := s.listInstallationRecords(cmd.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return &GitHubInstallationSyncResult{Items: records}, nil
+}
+
+func (s *GitHubInstallationService) ListRepos(userID string) (*GitHubRepositoryListResult, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	records, err := s.listInstallationRecords(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]GitHubRepositoryRecord, 0)
+	for _, installation := range records {
+		if installation.Status != "active" {
+			continue
+		}
+
+		for _, repository := range installation.Scope.Repositories {
+			items = append(items, GitHubRepositoryRecord{
+				GitHubInstallationID:     installation.GitHubInstallationID,
+				InstallationAccountLogin: installation.AccountLogin,
+				InstallationAccountType:  installation.AccountType,
+				GitHubRepoID:             repository.ID,
+				RepoOwner:                repository.OwnerLogin,
+				RepoName:                 repository.Name,
+				FullName:                 repository.FullName,
+				Private:                  repository.Private,
+				Permissions:              clonePermissions(installation.Scope.Permissions),
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].FullName != items[j].FullName {
+			return items[i].FullName < items[j].FullName
+		}
+		if items[i].GitHubInstallationID != items[j].GitHubInstallationID {
+			return items[i].GitHubInstallationID < items[j].GitHubInstallationID
+		}
+		return items[i].GitHubRepoID < items[j].GitHubRepoID
+	})
+
+	return &GitHubRepositoryListResult{Items: items}, nil
+}
+
+func (s *GitHubInstallationService) listInstallationRecords(userID string) ([]GitHubInstallationRecord, error) {
+	installations, err := s.installations.ListByUser(userID)
 	if err != nil {
 		return nil, err
 	}
 
 	records := make([]GitHubInstallationRecord, 0, len(installations))
 	for _, installation := range installations {
-		scope := GitHubInstallationScope{}
-		if strings.TrimSpace(installation.ScopeJSON) != "" {
-			if err := json.Unmarshal([]byte(installation.ScopeJSON), &scope); err != nil {
-				return nil, err
-			}
+		scope, err := parseGitHubInstallationScope(installation.ScopeJSON)
+		if err != nil {
+			return nil, err
 		}
 
 		status := "active"
@@ -143,5 +194,30 @@ func (s *GitHubInstallationService) SyncInstallations(ctx context.Context, cmd S
 		return records[i].GitHubInstallationID < records[j].GitHubInstallationID
 	})
 
-	return &GitHubInstallationSyncResult{Items: records}, nil
+	return records, nil
+}
+
+func parseGitHubInstallationScope(scopeJSON string) (GitHubInstallationScope, error) {
+	scope := GitHubInstallationScope{}
+	if strings.TrimSpace(scopeJSON) == "" {
+		return scope, nil
+	}
+	if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
+		return GitHubInstallationScope{}, err
+	}
+
+	return scope, nil
+}
+
+func clonePermissions(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return map[string]string{}
+	}
+
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+
+	return dst
 }

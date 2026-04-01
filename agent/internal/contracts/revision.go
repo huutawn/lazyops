@@ -6,6 +6,8 @@ type DesiredRevisionPayload struct {
 	BlueprintID          string                     `json:"blueprint_id"`
 	DeploymentBindingID  string                     `json:"deployment_binding_id"`
 	CommitSHA            string                     `json:"commit_sha"`
+	ArtifactRef          string                     `json:"artifact_ref,omitempty"`
+	ImageRef             string                     `json:"image_ref,omitempty"`
 	TriggerKind          string                     `json:"trigger_kind"`
 	RuntimeMode          RuntimeMode                `json:"runtime_mode"`
 	Services             []ServicePayload           `json:"services"`

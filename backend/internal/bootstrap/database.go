@@ -36,6 +36,8 @@ func Migrate(db *gorm.DB) error {
 		&models.OAuthIdentity{},
 		&models.PersonalAccessToken{},
 		&models.GitHubInstallation{},
+		&models.Project{},
+		&models.ProjectRepoLink{},
 		&models.Agent{},
 	)
 }

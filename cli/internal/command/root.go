@@ -2,13 +2,11 @@ package command
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"lazyops-cli/internal/credentials"
 	"lazyops-cli/internal/redact"
-	"lazyops-cli/internal/repo"
 	"lazyops-cli/internal/transport"
 )
 
@@ -36,13 +34,7 @@ func NewRootCommand() *Command {
 				"Day 2 scaffold: status uses a mock-only preview contract until the backend contract is locked.",
 				transport.Request{Method: "GET", Path: "/mock/v1/status", Query: map[string]string{"project": "prj_demo"}},
 			),
-			authFixtureCommand(
-				"bindings",
-				"List deployment bindings.",
-				"lazyops bindings",
-				"Day 2 scaffold: bindings is wired to the mock transport.",
-				transport.Request{Method: "GET", Path: "/api/v1/projects/prj_demo/deployment-bindings"},
-			),
+			bindingsCommand(),
 			logsCommand(),
 			tracesCommand(),
 			{
@@ -74,69 +66,9 @@ func initCommand() *Command {
 	return &Command{
 		Name:    "init",
 		Summary: "Initialize the repository into a valid LazyOps deploy contract.",
-		Usage:   "lazyops init",
-		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
-			scanResult, err := repo.Scan(".")
-			if err != nil {
-				if errors.Is(err, repo.ErrRepoRootNotFound) {
-					return fmt.Errorf("could not find the repository root. next: run `lazyops init` from inside a git repository")
-				}
-				return fmt.Errorf("could not scan the local repository. next: verify the working tree is readable and retry `lazyops init`: %w", err)
-			}
-
-			detectionResult, err := repo.DetectServices(scanResult)
-			if err != nil {
-				return fmt.Errorf("could not turn scan results into service candidates. next: fix the detected service layout and retry `lazyops init`: %w", err)
-			}
-
-			printRepoScanPreview(runtime, scanResult, detectionResult)
-
-			requests := []transport.Request{
-				{Method: "GET", Path: "/api/v1/projects"},
-				{Method: "GET", Path: "/api/v1/instances"},
-				{Method: "GET", Path: "/api/v1/mesh-networks"},
-				{Method: "GET", Path: "/api/v1/clusters"},
-			}
-
-			return runAuthorizedSequence(ctx, runtime, "Day 2 scaffold: init dependencies are wired to the transport abstraction.", credential, requests...)
-		}),
+		Usage:   "lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]]",
+		Run:     withAuth(runInit),
 	}
-}
-
-func printRepoScanPreview(runtime *Runtime, scanResult repo.RepoScanResult, detectionResult repo.DetectionResult) {
-	runtime.Output.Success("repo scan complete")
-	runtime.Output.Info("repo root: %s", scanResult.RepoRoot)
-	runtime.Output.Info("repo layout: %s", scanResult.LayoutLabel())
-
-	if len(detectionResult.Candidates) == 0 {
-		runtime.Output.Warn("no service markers found yet; expected one of package.json, go.mod, requirements.txt, or Dockerfile")
-		return
-	}
-
-	for _, service := range detectionResult.Candidates {
-		runtime.Output.Info("service %s -> %s (%s)", service.Name, service.Path, strings.Join(signalNames(service.Signals), ", "))
-		if strings.TrimSpace(service.StartHint) != "" {
-			runtime.Output.Info("start hint for %s: %s", service.Name, service.StartHint)
-		}
-		if strings.TrimSpace(service.Healthcheck.Path) != "" {
-			if service.Healthcheck.Port > 0 {
-				runtime.Output.Info("health hint for %s: %s on %d", service.Name, service.Healthcheck.Path, service.Healthcheck.Port)
-			} else {
-				runtime.Output.Info("health hint for %s: %s", service.Name, service.Healthcheck.Path)
-			}
-		}
-		for _, warning := range service.Warnings {
-			runtime.Output.Warn("service %s: %s", service.Name, warning)
-		}
-	}
-}
-
-func signalNames(signals []repo.ServiceSignal) []string {
-	names := make([]string, 0, len(signals))
-	for _, signal := range signals {
-		names = append(names, string(signal))
-	}
-	return names
 }
 
 func linkCommand() *Command {

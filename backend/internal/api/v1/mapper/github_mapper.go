@@ -45,3 +45,48 @@ func ToGitHubInstallationSyncResponse(result service.GitHubInstallationSyncResul
 
 	return responsedto.GitHubInstallationSyncResponse{Items: items}
 }
+
+func ToGitHubRepositoryListResponse(result service.GitHubRepositoryListResult) responsedto.GitHubRepositoryListResponse {
+	items := make([]responsedto.GitHubRepositoryResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, responsedto.GitHubRepositoryResponse{
+			GitHubInstallationID:     item.GitHubInstallationID,
+			InstallationAccountLogin: item.InstallationAccountLogin,
+			InstallationAccountType:  item.InstallationAccountType,
+			GitHubRepoID:             item.GitHubRepoID,
+			RepoOwner:                item.RepoOwner,
+			RepoName:                 item.RepoName,
+			FullName:                 item.FullName,
+			Private:                  item.Private,
+			Permissions:              item.Permissions,
+		})
+	}
+
+	return responsedto.GitHubRepositoryListResponse{Items: items}
+}
+
+func ToGitHubWebhookResponse(result service.GitHubWebhookResult) responsedto.GitHubWebhookResponse {
+	return responsedto.GitHubWebhookResponse{
+		DeliveryID:    result.DeliveryID,
+		EventType:     result.EventType,
+		Status:        result.Status,
+		IgnoredReason: result.IgnoredReason,
+		Event: responsedto.GitHubWebhookNormalizedEventResponse{
+			TriggerKind:          result.Event.TriggerKind,
+			Action:               result.Event.Action,
+			ProjectID:            result.Event.ProjectID,
+			ProjectRepoLinkID:    result.Event.ProjectRepoLinkID,
+			GitHubInstallationID: result.Event.GitHubInstallationID,
+			GitHubRepoID:         result.Event.GitHubRepoID,
+			RepoOwner:            result.Event.RepoOwner,
+			RepoName:             result.Event.RepoName,
+			RepoFullName:         result.Event.RepoFullName,
+			TrackedBranch:        result.Event.TrackedBranch,
+			CommitSHA:            result.Event.CommitSHA,
+			PullRequestNumber:    result.Event.PullRequestNumber,
+			PreviewEnabled:       result.Event.PreviewEnabled,
+			ShouldEnqueueBuild:   result.Event.ShouldEnqueueBuild,
+			ShouldDestroyPreview: result.Event.ShouldDestroyPreview,
+		},
+	}
+}

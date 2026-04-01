@@ -1,0 +1,244 @@
+package initplan
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"lazyops-cli/internal/contracts"
+	"lazyops-cli/internal/repo"
+)
+
+func TestBuildCreatesInitPlanWithCompatibilityDefaults(t *testing.T) {
+	scanResult := repo.RepoScanResult{
+		RepoRoot: "/tmp/repo",
+		Monorepo: true,
+		Services: []repo.DetectedService{
+			{Name: "api", Path: "apps/api", Signals: []repo.ServiceSignal{repo.SignalGoMod}},
+		},
+	}
+
+	detectionResult := repo.DetectionResult{
+		RepoRoot: "/tmp/repo",
+		Monorepo: true,
+		Candidates: []repo.ServiceCandidate{
+			{
+				Name:      "api",
+				Path:      "apps/api",
+				Signals:   []repo.ServiceSignal{repo.SignalGoMod},
+				StartHint: "go run ./cmd/server",
+				Healthcheck: repo.HealthcheckHint{
+					Path: "/health",
+					Port: 8080,
+				},
+				Warnings: []string{"review port inference"},
+			},
+		},
+	}
+
+	plan, err := Build(scanResult, detectionResult)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if plan.Layout != "monorepo" {
+		t.Fatalf("expected monorepo layout, got %q", plan.Layout)
+	}
+	if len(plan.Services) != 1 {
+		t.Fatalf("expected one service candidate, got %d", len(plan.Services))
+	}
+	if plan.Services[0].StartHint != "go run ./cmd/server" {
+		t.Fatalf("expected start hint to be copied, got %q", plan.Services[0].StartHint)
+	}
+	if !plan.CompatibilityPolicy.EnvInjection || !plan.CompatibilityPolicy.ManagedCredentials || !plan.CompatibilityPolicy.LocalhostRescue {
+		t.Fatalf("expected compatibility defaults to be enabled, got %+v", plan.CompatibilityPolicy)
+	}
+}
+
+func TestInitPlanValidateRejectsDuplicateServiceNames(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot: "/tmp/repo",
+		Layout:   "monorepo",
+		Services: []ServiceCandidate{
+			{Name: "api", Path: "apps/api"},
+			{Name: "api", Path: "services/api"},
+		},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	err := plan.Validate()
+	if err == nil {
+		t.Fatal("expected duplicate service name error, got nil")
+	}
+	if !strings.Contains(err.Error(), `duplicate service name "api"`) {
+		t.Fatalf("expected duplicate service name error, got %v", err)
+	}
+}
+
+func TestDependencyBindingDraftValidateRequiresFieldsOnceStarted(t *testing.T) {
+	binding := DependencyBindingDraft{
+		Service: "api",
+		Alias:   "postgres",
+	}
+
+	err := binding.Validate()
+	if err == nil {
+		t.Fatal("expected incomplete dependency binding error, got nil")
+	}
+	if !strings.Contains(err.Error(), "target_service") {
+		t.Fatalf("expected target_service validation error, got %v", err)
+	}
+}
+
+func TestApplyDiscoverySelectsProjectAndCompatibleTarget(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot:            "/tmp/repo",
+		Layout:              "single-service",
+		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	enriched, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", Slug: "acme-shop", Name: "Acme Shop", DefaultBranch: "main"}},
+		[]contracts.Instance{{ID: "inst_demo", Name: "prod-solo-1", PublicIP: "203.0.113.10", PrivateIP: "10.10.0.10", Status: "online"}},
+		[]contracts.MeshNetwork{{ID: "mesh_demo", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
+		[]contracts.Cluster{{ID: "cls_demo", Name: "prod-k3s-ap", Status: "registered", Provider: "k3s", KubeconfigSecretRef: "secret://clusters/cls_demo/kubeconfig"}},
+		SelectionInput{
+			Project:     "acme-shop",
+			RuntimeMode: RuntimeModeStandalone,
+			Target:      "prod-solo-1",
+		},
+	)
+	if err != nil {
+		t.Fatalf("ApplyDiscovery() error = %v", err)
+	}
+
+	if enriched.SelectedProject == nil || enriched.SelectedProject.Slug != "acme-shop" {
+		t.Fatalf("expected project selection, got %+v", enriched.SelectedProject)
+	}
+	if enriched.SelectedTarget == nil || enriched.SelectedTarget.Name != "prod-solo-1" {
+		t.Fatalf("expected target selection, got %+v", enriched.SelectedTarget)
+	}
+	if enriched.SelectedTarget.RuntimeMode != RuntimeModeStandalone {
+		t.Fatalf("expected standalone target mode, got %q", enriched.SelectedTarget.RuntimeMode)
+	}
+
+	payload, err := json.Marshal(enriched)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	rendered := string(payload)
+	for _, forbidden := range []string{"203.0.113.10", "10.10.0.10", "secret://clusters/cls_demo/kubeconfig"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("expected sanitized init plan, but found %q in %s", forbidden, rendered)
+		}
+	}
+}
+
+func TestApplyDiscoveryRejectsIncompatibleTargetForMode(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot:            "/tmp/repo",
+		Layout:              "single-service",
+		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	_, err := ApplyDiscovery(
+		plan,
+		[]contracts.Project{{ID: "prj_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		[]contracts.Instance{{ID: "inst_demo", Name: "prod-solo-1", Status: "online"}},
+		[]contracts.MeshNetwork{{ID: "mesh_demo", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
+		nil,
+		SelectionInput{
+			RuntimeMode: RuntimeModeStandalone,
+			Target:      "prod-ap",
+		},
+	)
+	if err == nil {
+		t.Fatal("expected incompatible target error, got nil")
+	}
+	if !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("expected incompatible target error, got %v", err)
+	}
+}
+
+func TestApplyBindingsAutoSelectsCompatibleBinding(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot: "/tmp/repo",
+		Layout:   "single-service",
+		Services: []ServiceCandidate{{Name: "api", Path: "."}},
+		SelectedProject: &ProjectSummary{
+			ID:   "prj_demo",
+			Name: "Acme Shop",
+			Slug: "acme-shop",
+		},
+		RuntimeMode: RuntimeModeDistributedMesh,
+		SelectedTarget: &TargetSummary{
+			ID:          "mesh_demo",
+			Name:        "prod-ap",
+			Kind:        "mesh",
+			Status:      "online",
+			RuntimeMode: RuntimeModeDistributedMesh,
+		},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	enriched, err := ApplyBindings(plan, []contracts.DeploymentBinding{
+		{
+			ID:          "bind_demo",
+			Name:        "prod-ap-mesh",
+			TargetRef:   "prod-ap",
+			RuntimeMode: string(RuntimeModeDistributedMesh),
+			TargetKind:  "mesh",
+			TargetID:    "mesh_demo",
+		},
+	}, BindingSelectionInput{})
+	if err != nil {
+		t.Fatalf("ApplyBindings() error = %v", err)
+	}
+
+	if enriched.SelectedBinding == nil || enriched.SelectedBinding.Name != "prod-ap-mesh" {
+		t.Fatalf("expected compatible binding to auto-select, got %+v", enriched.SelectedBinding)
+	}
+}
+
+func TestApplyBindingsCreatesPendingBindingSelection(t *testing.T) {
+	plan := InitPlan{
+		RepoRoot: "/tmp/repo",
+		Layout:   "single-service",
+		Services: []ServiceCandidate{{Name: "api", Path: "."}},
+		SelectedProject: &ProjectSummary{
+			ID:   "prj_demo",
+			Name: "Acme Shop",
+			Slug: "acme-shop",
+		},
+		RuntimeMode: RuntimeModeStandalone,
+		SelectedTarget: &TargetSummary{
+			ID:          "inst_demo",
+			Name:        "prod-solo-1",
+			Kind:        "instance",
+			Status:      "online",
+			RuntimeMode: RuntimeModeStandalone,
+		},
+		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
+	}
+
+	enriched, err := ApplyBindings(plan, nil, BindingSelectionInput{
+		Create:      true,
+		BindingName: "prod-solo-main",
+	})
+	if err != nil {
+		t.Fatalf("ApplyBindings() error = %v", err)
+	}
+
+	if enriched.SelectedBinding == nil {
+		t.Fatal("expected pending binding selection, got nil")
+	}
+	if enriched.SelectedBinding.Name != "prod-solo-main" {
+		t.Fatalf("expected provided binding name, got %+v", enriched.SelectedBinding)
+	}
+	if enriched.SelectedBinding.TargetRef != "prod-solo-1" {
+		t.Fatalf("expected target ref to come from selected target, got %+v", enriched.SelectedBinding)
+	}
+}

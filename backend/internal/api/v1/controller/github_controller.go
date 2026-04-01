@@ -46,3 +46,19 @@ func (ctl *GitHubController) SyncInstallations(c *gin.Context) {
 
 	response.JSON(c, http.StatusOK, "github installations synced", mapper.ToGitHubInstallationSyncResponse(*result))
 }
+
+func (ctl *GitHubController) ListRepos(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	result, err := ctl.installations.ListRepos(claims.UserID)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			response.Error(c, http.StatusBadRequest, "github repo discovery failed", "invalid_input", err.Error())
+			return
+		}
+
+		response.Error(c, http.StatusInternalServerError, "github repo discovery failed", "internal_error", err.Error())
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "github repos loaded", mapper.ToGitHubRepositoryListResponse(*result))
+}

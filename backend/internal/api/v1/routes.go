@@ -13,6 +13,8 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	healthController := controller.NewHealthController(app.Config)
 	authController := controller.NewAuthController(app.AuthService, app.GoogleOAuthService, app.GitHubOAuthService, app.Config)
 	githubController := controller.NewGitHubController(app.GitHubInstallSvc)
+	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
+	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
@@ -20,6 +22,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	v1 := router.Group("/api/v1")
 	{
 		v1.GET("/health", healthController.Health)
+		v1.POST("/integrations/github/webhook", integrationController.GitHubWebhook)
 
 		authGroup := v1.Group("/auth")
 		{
@@ -45,6 +48,10 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		{
 			protected.POST("/auth/pat/revoke", authController.RevokePAT)
 			protected.POST("/github/app/installations/sync", githubController.SyncInstallations)
+			protected.GET("/github/repos", githubController.ListRepos)
+			protected.POST("/projects", projectController.Create)
+			protected.GET("/projects", projectController.List)
+			protected.POST("/projects/:id/repo-link", projectController.LinkRepo)
 			protected.GET("/users/me", userController.Me)
 			protected.GET("/agents", agentController.List)
 			protected.POST("/agents",

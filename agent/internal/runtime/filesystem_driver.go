@@ -14,30 +14,43 @@ import (
 )
 
 type FilesystemDriver struct {
-	logger *slog.Logger
-	root   string
-	now    func() time.Time
+	logger  *slog.Logger
+	root    string
+	fetcher AssetFetcher
+	gateway *GatewayManager
+	now     func() time.Time
 }
 
 func NewFilesystemDriver(logger *slog.Logger, root string) *FilesystemDriver {
 	return &FilesystemDriver{
-		logger: logger,
-		root:   root,
+		logger:  logger,
+		root:    root,
+		fetcher: NewLocalCacheFetcher(filepath.Join(root, "cache", "assets")),
+		gateway: NewGatewayManager(logger, root),
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
 }
 
-func (d *FilesystemDriver) PrepareReleaseWorkspace(_ context.Context, runtimeCtx RuntimeContext) (PreparedWorkspace, error) {
+func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeCtx RuntimeContext) (_ PreparedWorkspace, err error) {
 	if runtimeCtx.Binding.RuntimeMode == contracts.RuntimeModeDistributedK3s {
 		return PreparedWorkspace{}, fmt.Errorf("filesystem runtime driver does not support %q", runtimeCtx.Binding.RuntimeMode)
 	}
 	if filepath.Clean(d.root) == "." {
 		return PreparedWorkspace{}, fmt.Errorf("runtime root must be configured")
 	}
+	if d.fetcher == nil {
+		return PreparedWorkspace{}, fmt.Errorf("artifact fetcher is required")
+	}
 
 	layout := workspaceLayout(d.root, runtimeCtx)
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(layout.Root)
+		}
+	}()
+
 	for _, path := range []string{
 		layout.Root,
 		layout.Artifacts,
@@ -51,16 +64,33 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(_ context.Context, runtimeCtx
 		}
 	}
 
+	artifact, err := d.fetcher.FetchRevisionAssets(ctx, runtimeCtx, layout)
+	if err != nil {
+		return PreparedWorkspace{}, err
+	}
+
 	serviceManifests := make(map[string]string, len(runtimeCtx.Services))
 	for _, service := range runtimeCtx.Services {
 		serviceDir := filepath.Join(layout.Services, service.Name)
 		if err := os.MkdirAll(serviceDir, 0o755); err != nil {
 			return PreparedWorkspace{}, err
 		}
+
 		serviceManifestPath := filepath.Join(serviceDir, "service.json")
 		if err := writeJSON(serviceManifestPath, service); err != nil {
 			return PreparedWorkspace{}, err
 		}
+
+		hydratedConfigPath := filepath.Join(serviceDir, "runtime.json")
+		if err := writeJSON(hydratedConfigPath, map[string]any{
+			"service":        service,
+			"artifact_ref":   artifact.ArtifactRef,
+			"image_ref":      artifact.ImageRef,
+			"workspace_root": layout.Root,
+		}); err != nil {
+			return PreparedWorkspace{}, err
+		}
+
 		serviceManifests[service.Name] = serviceManifestPath
 	}
 
@@ -75,8 +105,13 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(_ context.Context, runtimeCtx
 	}
 
 	artifactPlan := ArtifactPlan{
-		Status:     "pending_fetch",
-		RevisionID: runtimeCtx.Revision.RevisionID,
+		Status:        artifact.Status,
+		RevisionID:    runtimeCtx.Revision.RevisionID,
+		ArtifactRef:   artifact.ArtifactRef,
+		ImageRef:      artifact.ImageRef,
+		CacheKey:      artifact.CacheKey,
+		CachePath:     artifact.CachePath,
+		WorkspacePath: artifact.WorkspacePath,
 	}
 	if err := writeJSON(filepath.Join(layout.Artifacts, "manifest.json"), artifactPlan); err != nil {
 		return PreparedWorkspace{}, err
@@ -86,14 +121,36 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(_ context.Context, runtimeCtx
 		EnabledServices: serviceNames(runtimeCtx.Services),
 		Compatibility:   runtimeCtx.Revision.CompatibilityPolicy,
 	}
+	sidecarConfigPath := filepath.Join(layout.Sidecars, "config.json")
+	if err := writeJSON(sidecarConfigPath, map[string]any{
+		"services":             runtimeCtx.Services,
+		"compatibility_policy": sidecarPlan.Compatibility,
+		"dependencies":         runtimeCtx.Revision.DependencyBindings,
+	}); err != nil {
+		return PreparedWorkspace{}, err
+	}
 	if err := writeJSON(filepath.Join(layout.Sidecars, "plan.json"), sidecarPlan); err != nil {
 		return PreparedWorkspace{}, err
 	}
 
 	gatewayPlan := GatewayPlan{
-		Provider:       "caddy",
-		PublicServices: publicServiceNames(runtimeCtx.Services),
-		MagicDomain:    runtimeCtx.Revision.MagicDomainPolicy.Provider,
+		Provider:            "caddy",
+		PublicServices:      publicServiceNames(runtimeCtx.Services),
+		MagicDomain:         "sslip.io",
+		FallbackMagicDomain: "nip.io",
+		HostToken:           gatewayHostToken(runtimeCtx),
+	}
+	gatewayConfigPath := filepath.Join(layout.Gateway, "gateway.json")
+	if err := writeJSON(gatewayConfigPath, map[string]any{
+		"provider":              gatewayPlan.Provider,
+		"public_services":       gatewayPlan.PublicServices,
+		"magic_domain":          gatewayPlan.MagicDomain,
+		"fallback_magic_domain": gatewayPlan.FallbackMagicDomain,
+		"domain_policy":         runtimeCtx.Binding.DomainPolicy,
+		"revision_id":           runtimeCtx.Revision.RevisionID,
+		"deployment_binding":    runtimeCtx.Binding.BindingID,
+	}); err != nil {
+		return PreparedWorkspace{}, err
 	}
 	if err := writeJSON(filepath.Join(layout.Gateway, "plan.json"), gatewayPlan); err != nil {
 		return PreparedWorkspace{}, err
@@ -125,23 +182,70 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(_ context.Context, runtimeCtx
 			"binding_id", runtimeCtx.Binding.BindingID,
 			"revision_id", runtimeCtx.Revision.RevisionID,
 			"workspace_root", layout.Root,
+			"artifact_cache_key", artifact.CacheKey,
 			"services", len(runtimeCtx.Services),
 		)
 	}
 
 	return PreparedWorkspace{
-		Layout:           layout,
-		ManifestPath:     manifestPath,
-		ServiceManifests: serviceManifests,
+		Layout:            layout,
+		ManifestPath:      manifestPath,
+		ServiceManifests:  serviceManifests,
+		Artifact:          artifact,
+		SidecarConfigPath: sidecarConfigPath,
+		GatewayConfigPath: gatewayConfigPath,
 	}, nil
 }
 
-func (d *FilesystemDriver) StartReleaseCandidate(context.Context, RuntimeContext) error {
-	return ErrNotImplemented
+func (d *FilesystemDriver) RenderGatewayConfig(ctx context.Context, runtimeCtx RuntimeContext) (GatewayRenderResult, error) {
+	layout := workspaceLayout(d.root, runtimeCtx)
+	if d.gateway == nil {
+		d.gateway = NewGatewayManager(d.logger, d.root)
+	}
+	d.gateway.now = d.now
+	return d.gateway.RenderGatewayConfig(ctx, runtimeCtx, layout)
 }
 
-func (d *FilesystemDriver) RunHealthGate(context.Context, RuntimeContext) error {
-	return ErrNotImplemented
+func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx RuntimeContext) (CandidateRecord, error) {
+	layout := workspaceLayout(d.root, runtimeCtx)
+	manifest, err := loadWorkspaceManifest(layout)
+	if err != nil {
+		return CandidateRecord{}, fmt.Errorf("workspace manifest is missing for revision %q: %w", runtimeCtx.Revision.RevisionID, err)
+	}
+
+	candidatePath := candidateManifestPath(layout)
+	if _, err := os.Stat(candidatePath); err == nil {
+		existing, err := loadCandidateRecord(layout)
+		if err != nil {
+			return CandidateRecord{}, err
+		}
+		if existing.State == CandidateStatePrepared {
+			if err := transitionCandidateState(&existing, CandidateStateStarting, "candidate workload starting", d.now()); err != nil {
+				return CandidateRecord{}, err
+			}
+			if err := saveCandidateRecord(existing); err != nil {
+				return CandidateRecord{}, err
+			}
+		}
+		return existing, nil
+	}
+
+	candidate, err := seedCandidateFromWorkspace(layout, manifest, d.now())
+	if err != nil {
+		return CandidateRecord{}, err
+	}
+	if err := saveCandidateRecord(candidate); err != nil {
+		return CandidateRecord{}, err
+	}
+
+	if d.logger != nil {
+		d.logger.Info("recorded release candidate skeleton",
+			"revision_id", candidate.RevisionID,
+			"workspace_root", candidate.WorkspaceRoot,
+			"state", candidate.State,
+		)
+	}
+	return candidate, nil
 }
 
 func (d *FilesystemDriver) PromoteRelease(context.Context, RuntimeContext) error {

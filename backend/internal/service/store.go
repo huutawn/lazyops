@@ -35,6 +35,21 @@ type GitHubInstallationStore interface {
 	RevokeMissing(userID string, activeInstallationIDs []int64, at time.Time) error
 }
 
+type ProjectStore interface {
+	Create(project *models.Project) error
+	ListByUser(userID string) ([]models.Project, error)
+	GetBySlugForUser(userID, slug string) (*models.Project, error)
+	GetByIDForUser(userID, projectID string) (*models.Project, error)
+	GetByID(projectID string) (*models.Project, error)
+}
+
+type ProjectRepoLinkStore interface {
+	Upsert(link *models.ProjectRepoLink) error
+	GetByProjectID(projectID string) (*models.ProjectRepoLink, error)
+	GetByRepoBranch(githubInstallationID string, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error)
+	LookupWebhookRoute(githubInstallationID int64, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error)
+}
+
 type AgentStore interface {
 	Create(agent *models.Agent) error
 	ListByUser(userID string) ([]models.Agent, error)

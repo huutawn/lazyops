@@ -260,3 +260,46 @@ func TestGitHubInstallationServiceProviderError(t *testing.T) {
 		t.Fatalf("expected ErrGitHubProviderError, got %v", err)
 	}
 }
+
+func TestGitHubInstallationServiceListReposUsesActiveInstallationScope(t *testing.T) {
+	revokedAt := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	installStore := newFakeGitHubInstallationStore(
+		&models.GitHubInstallation{
+			ID:                   "ghi_active",
+			UserID:               "usr_test",
+			GitHubInstallationID: 200,
+			AccountLogin:         "lazyops",
+			AccountType:          "Organization",
+			InstalledAt:          time.Date(2026, 4, 1, 8, 0, 0, 0, time.UTC),
+			ScopeJSON:            `{"repository_selection":"selected","permissions":{"contents":"read"},"repositories":[{"id":2,"name":"web","full_name":"lazyops/web","owner_login":"lazyops","private":true},{"id":1,"name":"api","full_name":"lazyops/api","owner_login":"lazyops","private":true}]}`,
+		},
+		&models.GitHubInstallation{
+			ID:                   "ghi_revoked",
+			UserID:               "usr_test",
+			GitHubInstallationID: 100,
+			AccountLogin:         "legacy",
+			AccountType:          "Organization",
+			InstalledAt:          time.Date(2026, 3, 30, 8, 0, 0, 0, time.UTC),
+			RevokedAt:            &revokedAt,
+			ScopeJSON:            `{"repository_selection":"selected","permissions":{"contents":"read"},"repositories":[{"id":3,"name":"old","full_name":"legacy/old","owner_login":"legacy","private":true}]}`,
+		},
+	)
+	service := NewGitHubInstallationService(nil, installStore, nil)
+
+	result, err := service.ListRepos("usr_test")
+	if err != nil {
+		t.Fatalf("list repos: %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected two active repos, got %d", len(result.Items))
+	}
+	if result.Items[0].FullName != "lazyops/api" || result.Items[1].FullName != "lazyops/web" {
+		t.Fatalf("expected repos sorted by full name, got %+v", result.Items)
+	}
+	if result.Items[0].GitHubInstallationID != 200 {
+		t.Fatalf("expected active installation id 200, got %d", result.Items[0].GitHubInstallationID)
+	}
+	if result.Items[0].Permissions["contents"] != "read" {
+		t.Fatalf("expected permissions from installation scope, got %+v", result.Items[0].Permissions)
+	}
+}

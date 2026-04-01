@@ -6,6 +6,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,11 +72,23 @@ func TestFilesystemDriverPrepareReleaseWorkspaceCreatesLayout(t *testing.T) {
 	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
 		t.Fatalf("decode workspace manifest: %v", err)
 	}
-	if manifest.ArtifactPlan.Status != "pending_fetch" {
-		t.Fatalf("expected artifact plan status pending_fetch, got %q", manifest.ArtifactPlan.Status)
+	if manifest.ArtifactPlan.Status != "cached" {
+		t.Fatalf("expected artifact plan status cached, got %q", manifest.ArtifactPlan.Status)
 	}
 	if got := len(manifest.GatewayPlan.PublicServices); got != 1 {
 		t.Fatalf("expected 1 public service in gateway plan, got %d", got)
+	}
+	if manifest.ArtifactPlan.CacheKey == "" || manifest.ArtifactPlan.CachePath == "" {
+		t.Fatal("expected hydrated artifact plan to include cache metadata")
+	}
+	if _, err := os.Stat(filepath.Join(root, "cache", "assets", manifest.ArtifactPlan.CacheKey, "cache-manifest.json")); err != nil {
+		t.Fatalf("expected cache manifest to exist: %v", err)
+	}
+	if _, err := os.Stat(prepared.SidecarConfigPath); err != nil {
+		t.Fatalf("expected sidecar config to exist: %v", err)
+	}
+	if _, err := os.Stat(prepared.GatewayConfigPath); err != nil {
+		t.Fatalf("expected gateway config to exist: %v", err)
 	}
 }
 
@@ -116,13 +131,317 @@ func TestServicePrepareReleaseWorkspaceHandlerUpdatesRevisionCache(t *testing.T)
 	}
 }
 
+func TestFilesystemDriverStartReleaseCandidateWritesSkeleton(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	runtimeCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	candidate, err := driver.StartReleaseCandidate(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("start release candidate: %v", err)
+	}
+	if candidate.State != "starting" {
+		t.Fatalf("expected candidate state starting, got %q", candidate.State)
+	}
+	if len(candidate.History) != 2 {
+		t.Fatalf("expected prepared->starting history, got %d transitions", len(candidate.History))
+	}
+	if candidate.History[0].To != CandidateStatePrepared || candidate.History[1].To != CandidateStateStarting {
+		t.Fatalf("expected candidate history to include prepared and starting, got %#v", candidate.History)
+	}
+	if _, err := os.Stat(candidate.ManifestPath); err != nil {
+		t.Fatalf("expected candidate manifest to exist: %v", err)
+	}
+	if !strings.HasPrefix(candidate.WorkspaceRoot, root) {
+		t.Fatalf("expected candidate workspace root under %s, got %s", root, candidate.WorkspaceRoot)
+	}
+}
+
+func TestFilesystemDriverRenderGatewayConfigCreatesVersionedPlanAndLiveConfig(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	}
+	if driver.gateway != nil {
+		driver.gateway.now = driver.now
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderGatewayConfig(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render gateway config: %v", err)
+	}
+	if rendered.Version == "" {
+		t.Fatal("expected gateway version to be set")
+	}
+	if len(rendered.PublicURLs) != 2 {
+		t.Fatalf("expected 2 public urls for one public service, got %d", len(rendered.PublicURLs))
+	}
+	if !strings.Contains(rendered.PublicURLs[0], ".sslip.io") {
+		t.Fatalf("expected primary public url to use sslip.io, got %q", rendered.PublicURLs[0])
+	}
+	if !strings.Contains(rendered.PublicURLs[1], ".nip.io") {
+		t.Fatalf("expected fallback public url to use nip.io, got %q", rendered.PublicURLs[1])
+	}
+	if _, err := os.Stat(rendered.PlanPath); err != nil {
+		t.Fatalf("expected versioned gateway plan to exist: %v", err)
+	}
+	if _, err := os.Stat(rendered.ConfigPath); err != nil {
+		t.Fatalf("expected versioned Caddyfile to exist: %v", err)
+	}
+	if _, err := os.Stat(rendered.LiveConfigPath); err != nil {
+		t.Fatalf("expected live Caddyfile to exist: %v", err)
+	}
+
+	liveConfigRaw, err := os.ReadFile(rendered.LiveConfigPath)
+	if err != nil {
+		t.Fatalf("read live Caddyfile: %v", err)
+	}
+	if strings.Contains(string(liveConfigRaw), "127.0.0.1:8080") {
+		t.Fatal("expected internal api service port to remain private and absent from public gateway config")
+	}
+	if !strings.Contains(string(liveConfigRaw), "127.0.0.1:3000") {
+		t.Fatal("expected public web service upstream to be present in gateway config")
+	}
+
+	planRaw, err := os.ReadFile(rendered.LivePlanPath)
+	if err != nil {
+		t.Fatalf("read live gateway plan: %v", err)
+	}
+	var plan GatewayPlan
+	if err := json.Unmarshal(planRaw, &plan); err != nil {
+		t.Fatalf("decode live gateway plan: %v", err)
+	}
+	if plan.MagicDomain != "sslip.io" || plan.FallbackMagicDomain != "nip.io" {
+		t.Fatalf("expected sslip/nip magic domain order, got %q -> %q", plan.MagicDomain, plan.FallbackMagicDomain)
+	}
+	if len(plan.Routes) != 1 || plan.Routes[0].ServiceName != "web" {
+		t.Fatalf("expected exactly one public route for web, got %#v", plan.Routes)
+	}
+	if plan.Validation == nil || plan.Apply == nil || plan.Reload == nil {
+		t.Fatalf("expected validate/apply/reload hook results to be recorded, got %#v", plan)
+	}
+}
+
+func TestFilesystemDriverRenderGatewayConfigRollsBackOnReloadFailure(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	firstPayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	firstCtx, err := ContextFromPreparePayload(firstPayload)
+	if err != nil {
+		t.Fatalf("build first runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), firstCtx); err != nil {
+		t.Fatalf("prepare first release workspace: %v", err)
+	}
+	firstRendered, err := driver.RenderGatewayConfig(context.Background(), firstCtx)
+	if err != nil {
+		t.Fatalf("render first gateway config: %v", err)
+	}
+
+	secondPayload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	secondPayload.Revision.RevisionID = "rev_124"
+	secondCtx, err := ContextFromPreparePayload(secondPayload)
+	if err != nil {
+		t.Fatalf("build second runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), secondCtx); err != nil {
+		t.Fatalf("prepare second release workspace: %v", err)
+	}
+
+	driver.gateway.reloadHook = func(context.Context, GatewayPlan, gatewayRenderPaths, GatewayActivation) (GatewayHookResult, error) {
+		return GatewayHookResult{}, &OperationError{
+			Code:      "gateway_reload_timeout",
+			Message:   "gateway reload timed out",
+			Retryable: true,
+		}
+	}
+
+	_, err = driver.RenderGatewayConfig(context.Background(), secondCtx)
+	if err == nil {
+		t.Fatal("expected second gateway render to fail on reload")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "gateway_reload_failed" {
+		t.Fatalf("expected gateway_reload_failed code, got %q", opErr.Code)
+	}
+
+	active, err := loadGatewayActivation(filepath.Join(root, "projects", secondCtx.Project.ProjectID, "bindings", secondCtx.Binding.BindingID, "gateway", "live", "active.json"))
+	if err != nil {
+		t.Fatalf("load active gateway activation after rollback: %v", err)
+	}
+	if active.Version != firstRendered.Version {
+		t.Fatalf("expected rollback to restore first active version %q, got %q", firstRendered.Version, active.Version)
+	}
+	if _, err := os.Stat(filepath.Join(root, "projects", secondCtx.Project.ProjectID, "bindings", secondCtx.Binding.BindingID, "gateway", "live", "rollback.json")); err != nil {
+		t.Fatalf("expected rollback manifest to exist: %v", err)
+	}
+}
+
+func TestFilesystemDriverRunHealthGateMarksCandidatePromotable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 8, 0, 0, 0, time.UTC)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	payload.Revision.Services[0].HealthCheck.SuccessThreshold = 2
+	payload.Revision.Services[0].HealthCheck.Timeout = "400ms"
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.StartReleaseCandidate(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("start release candidate: %v", err)
+	}
+
+	report, err := driver.RunHealthGate(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("run health gate: %v", err)
+	}
+	if !report.Promotable {
+		t.Fatal("expected candidate to become promotable")
+	}
+	if report.CandidateState != CandidateStatePromotable {
+		t.Fatalf("expected promotable candidate state, got %q", report.CandidateState)
+	}
+	if report.PolicyAction != HealthGatePolicyPromoteCandidate {
+		t.Fatalf("expected promote policy action, got %q", report.PolicyAction)
+	}
+	apiHealth := findHealthResult(t, report.Services, "api")
+	if apiHealth.Attempts < 2 {
+		t.Fatalf("expected api health gate to require at least 2 attempts, got %d", apiHealth.Attempts)
+	}
+	if apiHealth.Successes != 2 {
+		t.Fatalf("expected api health successes to reach threshold 2, got %d", apiHealth.Successes)
+	}
+	if _, err := os.Stat(report.ReportPath); err != nil {
+		t.Fatalf("expected health gate report to exist: %v", err)
+	}
+	if _, err := os.Stat(report.RolloutSummaryPath); err != nil {
+		t.Fatalf("expected rollout summary to exist: %v", err)
+	}
+
+	candidate, err := loadCandidateRecord(workspaceLayout(root, runtimeCtx))
+	if err != nil {
+		t.Fatalf("load candidate record: %v", err)
+	}
+	if candidate.State != CandidateStatePromotable {
+		t.Fatalf("expected candidate manifest state promotable, got %q", candidate.State)
+	}
+	if len(candidate.History) < 4 {
+		t.Fatalf("expected candidate history to include health transitions, got %d transitions", len(candidate.History))
+	}
+}
+
+func TestFilesystemDriverRunHealthGateFailsWithRollbackPolicyAndDedupesIncident(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 1, 8, 30, 0, 0, time.UTC)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	payload.Revision.Services[0].HealthCheck.FailureThreshold = 1
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	runtimeCtx.Rollout.StableRevisionID = "rev_stable"
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.StartReleaseCandidate(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("start release candidate: %v", err)
+	}
+
+	report, err := driver.RunHealthGate(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("run health gate: %v", err)
+	}
+	if report.Promotable {
+		t.Fatal("expected candidate to fail health gate")
+	}
+	if report.CandidateState != CandidateStateFailed {
+		t.Fatalf("expected failed candidate state, got %q", report.CandidateState)
+	}
+	if report.PolicyAction != HealthGatePolicyRollbackRelease {
+		t.Fatalf("expected rollback policy action, got %q", report.PolicyAction)
+	}
+	if report.Incident == nil {
+		t.Fatal("expected first failing health gate to produce incident payload")
+	}
+
+	secondReport, err := driver.RunHealthGate(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("rerun health gate: %v", err)
+	}
+	if !secondReport.IncidentSuppressed {
+		t.Fatal("expected duplicate failing incident to be suppressed")
+	}
+
+	candidate, err := loadCandidateRecord(workspaceLayout(root, runtimeCtx))
+	if err != nil {
+		t.Fatalf("load candidate record: %v", err)
+	}
+	if candidate.State != CandidateStateFailed {
+		t.Fatalf("expected candidate manifest state failed, got %q", candidate.State)
+	}
+	if candidate.LatestIncident == nil {
+		t.Fatal("expected candidate manifest to retain latest incident payload")
+	}
+}
+
 func TestFilesystemDriverStubOperationsStayUnimplemented(t *testing.T) {
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
 	runtimeCtx := RuntimeContext{}
 
-	if err := driver.StartReleaseCandidate(context.Background(), runtimeCtx); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("expected start release candidate to remain unimplemented, got %v", err)
-	}
 	if err := driver.GarbageCollectRuntime(context.Background(), runtimeCtx); !errors.Is(err, ErrNotImplemented) {
 		t.Fatalf("expected garbage collect runtime to remain unimplemented, got %v", err)
 	}
@@ -155,6 +474,294 @@ func TestPrepareReleaseWorkspaceHandlerCanBeRegistered(t *testing.T) {
 
 	if _, ok := registry.Resolve(contracts.CommandPrepareReleaseWorkspace); !ok {
 		t.Fatal("expected runtime service to register prepare_release_workspace handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandRenderGatewayConfig); !ok {
+		t.Fatal("expected runtime service to register render_gateway_config handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandStartReleaseCandidate); !ok {
+		t.Fatal("expected runtime service to register start_release_candidate handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandRunHealthGate); !ok {
+		t.Fatal("expected runtime service to register run_health_gate handler")
+	}
+}
+
+func TestStartReleaseCandidateHandlerUpdatesCandidateState(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if result := service.handlePrepareReleaseWorkspace(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPrepareReleaseWorkspace,
+		RequestID:     "req_prepare",
+		CorrelationID: "corr_prepare",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}); result.Error != nil {
+		t.Fatalf("prepare workspace failed: %#v", result.Error)
+	}
+
+	result := service.handleStartReleaseCandidate(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandStartReleaseCandidate,
+		RequestID:     "req_start",
+		CorrelationID: "corr_start",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected start candidate to succeed, got %#v", result.Error)
+	}
+
+	local, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load updated state: %v", err)
+	}
+	if local.RevisionCache.CandidateRevisionID != payload.Revision.RevisionID {
+		t.Fatalf("expected candidate revision %q, got %q", payload.Revision.RevisionID, local.RevisionCache.CandidateRevisionID)
+	}
+	if local.RevisionCache.CandidateState != "starting" {
+		t.Fatalf("expected candidate state starting, got %q", local.RevisionCache.CandidateState)
+	}
+	if local.RevisionCache.CandidateWorkspaceRoot == "" {
+		t.Fatal("expected candidate workspace root to be persisted")
+	}
+}
+
+func TestPrepareReleaseWorkspaceCleansUpIncompleteWorkspaceOnFetchFailure(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(nil, root)
+	driver.fetcher = failingFetcher{err: errors.New("fetch failed")}
+
+	runtimeCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+
+	_, err = driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx)
+	if err == nil {
+		t.Fatal("expected prepare release workspace to fail when fetcher fails")
+	}
+
+	layout := workspaceLayout(root, runtimeCtx)
+	if _, statErr := os.Stat(layout.Root); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected incomplete workspace root to be removed, got %v", statErr)
+	}
+}
+
+func TestRenderGatewayConfigHandlerAppliesGatewayConfig(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if result := service.handlePrepareReleaseWorkspace(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPrepareReleaseWorkspace,
+		RequestID:     "req_prepare_gateway",
+		CorrelationID: "corr_prepare_gateway",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}); result.Error != nil {
+		t.Fatalf("prepare workspace failed: %#v", result.Error)
+	}
+
+	result := service.handleRenderGatewayConfig(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRenderGatewayConfig,
+		RequestID:     "req_gateway",
+		CorrelationID: "corr_gateway",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected render gateway config to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	active, err := loadGatewayActivation(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "gateway", "live", "active.json"))
+	if err != nil {
+		t.Fatalf("load active gateway activation: %v", err)
+	}
+	if active.Version == "" {
+		t.Fatal("expected live gateway activation to record a version")
+	}
+}
+
+func TestRenderGatewayConfigHandlerReturnsNonRetryableValidationError(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, NewFilesystemDriver(nil, filepath.Join(t.TempDir(), "runtime-root")))
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Revision.Services[1].HealthCheck.Port = 0
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if result := service.handlePrepareReleaseWorkspace(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandPrepareReleaseWorkspace,
+		RequestID:     "req_prepare_gateway_invalid",
+		CorrelationID: "corr_prepare_gateway_invalid",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}); result.Error != nil {
+		t.Fatalf("prepare workspace failed: %#v", result.Error)
+	}
+
+	result := service.handleRenderGatewayConfig(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRenderGatewayConfig,
+		RequestID:     "req_gateway_invalid",
+		CorrelationID: "corr_gateway_invalid",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected render gateway config to fail validation")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected invalid gateway config to be non-retryable")
+	}
+	if result.Error.Code != "gateway_invalid_route_port" {
+		t.Fatalf("expected gateway_invalid_route_port code, got %q", result.Error.Code)
+	}
+}
+
+func TestRunHealthGateHandlerUpdatesLocalStateOnSuccess(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	runRuntimeSetup(t, service, raw)
+
+	result := service.handleRunHealthGate(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRunHealthGate,
+		RequestID:     "req_health",
+		CorrelationID: "corr_health",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected health gate handler to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	local, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load updated state: %v", err)
+	}
+	if local.RevisionCache.CandidateState != string(CandidateStatePromotable) {
+		t.Fatalf("expected promotable candidate state, got %q", local.RevisionCache.CandidateState)
+	}
+	if local.RevisionCache.LastPolicyAction != string(HealthGatePolicyPromoteCandidate) {
+		t.Fatalf("expected promote policy action, got %q", local.RevisionCache.LastPolicyAction)
+	}
+	if local.RevisionCache.LastHealthGateSummary == "" {
+		t.Fatal("expected health gate summary to be stored")
+	}
+}
+
+func TestRunHealthGateHandlerReturnsRollbackDirectiveOnFailure(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	tcpListener, stopTCP := startTCPHealthListener(t)
+	defer stopTCP()
+
+	if _, err := store.Update(context.Background(), func(local *state.AgentLocalState) error {
+		local.RevisionCache.StableRevisionID = "rev_stable"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed stable revision: %v", err)
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	runRuntimeSetup(t, service, raw)
+
+	result := service.handleRunHealthGate(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandRunHealthGate,
+		RequestID:     "req_health_fail",
+		CorrelationID: "corr_health_fail",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected health gate handler to return failure directive")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected health gate failure to be non-retryable")
+	}
+	if result.Error.Code != "health_gate_failed" {
+		t.Fatalf("expected health_gate_failed code, got %q", result.Error.Code)
+	}
+	if result.Error.Details["policy_action"] != HealthGatePolicyRollbackRelease {
+		t.Fatalf("expected rollback_release policy action, got %#v", result.Error.Details["policy_action"])
+	}
+
+	local, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load updated state: %v", err)
+	}
+	if local.RevisionCache.CandidateState != string(CandidateStateFailed) {
+		t.Fatalf("expected failed candidate state, got %q", local.RevisionCache.CandidateState)
+	}
+	if local.RevisionCache.LastPolicyAction != string(HealthGatePolicyRollbackRelease) {
+		t.Fatalf("expected rollback_release policy action in state, got %q", local.RevisionCache.LastPolicyAction)
 	}
 }
 
@@ -195,6 +802,8 @@ func samplePreparePayload(mode contracts.RuntimeMode) contracts.PrepareReleaseWo
 			BlueprintID:         "bp_123",
 			DeploymentBindingID: "bind_123",
 			CommitSHA:           "abc123",
+			ArtifactRef:         "artifact://lazy-app/rev_123.tar.gz",
+			ImageRef:            "ghcr.io/lazyops/lazy-app:rev_123",
 			TriggerKind:         "git_push",
 			RuntimeMode:         mode,
 			Services: []contracts.ServicePayload{
@@ -249,4 +858,112 @@ func samplePreparePayload(mode contracts.RuntimeMode) contracts.PrepareReleaseWo
 			},
 		},
 	}
+}
+
+type failingFetcher struct {
+	err error
+}
+
+func (f failingFetcher) FetchRevisionAssets(context.Context, RuntimeContext, WorkspaceLayout) (ArtifactMaterialization, error) {
+	return ArtifactMaterialization{}, f.err
+}
+
+func configureServiceHealthChecks(t *testing.T, payload *contracts.PrepareReleaseWorkspacePayload, httpServer *httptest.Server, tcpListener net.Listener) {
+	t.Helper()
+
+	httpAddr, ok := httpServer.Listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatal("expected http test server to use TCP listener")
+	}
+	tcpAddr, ok := tcpListener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatal("expected tcp listener to use TCP addr")
+	}
+
+	payload.Revision.Services[0].HealthCheck.Protocol = "http"
+	payload.Revision.Services[0].HealthCheck.Port = httpAddr.Port
+	payload.Revision.Services[0].HealthCheck.Path = "/health"
+	payload.Revision.Services[0].HealthCheck.Timeout = "400ms"
+	payload.Revision.Services[0].HealthCheck.SuccessThreshold = 1
+	payload.Revision.Services[0].HealthCheck.FailureThreshold = 1
+
+	payload.Revision.Services[1].HealthCheck.Protocol = "tcp"
+	payload.Revision.Services[1].HealthCheck.Port = tcpAddr.Port
+	payload.Revision.Services[1].HealthCheck.Path = ""
+	payload.Revision.Services[1].HealthCheck.Timeout = "400ms"
+	payload.Revision.Services[1].HealthCheck.SuccessThreshold = 1
+	payload.Revision.Services[1].HealthCheck.FailureThreshold = 1
+}
+
+func startTCPHealthListener(t *testing.T) (net.Listener, func()) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on tcp health port: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	return listener, func() {
+		_ = listener.Close()
+		<-done
+	}
+}
+
+func runRuntimeSetup(t *testing.T, service *Service, raw []byte) {
+	t.Helper()
+
+	for _, envelope := range []contracts.CommandEnvelope{
+		{
+			Type:          contracts.CommandPrepareReleaseWorkspace,
+			RequestID:     "req_prepare",
+			CorrelationID: "corr_prepare",
+			AgentID:       "agt_local",
+			Source:        contracts.EnvelopeSourceBackend,
+			OccurredAt:    time.Now().UTC(),
+			Payload:       raw,
+		},
+		{
+			Type:          contracts.CommandStartReleaseCandidate,
+			RequestID:     "req_start",
+			CorrelationID: "corr_start",
+			AgentID:       "agt_local",
+			Source:        contracts.EnvelopeSourceBackend,
+			OccurredAt:    time.Now().UTC(),
+			Payload:       raw,
+		},
+	} {
+		var result dispatcher.Result
+		switch envelope.Type {
+		case contracts.CommandPrepareReleaseWorkspace:
+			result = service.handlePrepareReleaseWorkspace(context.Background(), envelope)
+		case contracts.CommandStartReleaseCandidate:
+			result = service.handleStartReleaseCandidate(context.Background(), envelope)
+		}
+		if result.Error != nil {
+			t.Fatalf("runtime setup command %s failed: %#v", envelope.Type, result.Error)
+		}
+	}
+}
+
+func findHealthResult(t *testing.T, results []ServiceHealthResult, serviceName string) ServiceHealthResult {
+	t.Helper()
+	for _, result := range results {
+		if result.ServiceName == serviceName {
+			return result
+		}
+	}
+	t.Fatalf("health result for service %q not found", serviceName)
+	return ServiceHealthResult{}
 }

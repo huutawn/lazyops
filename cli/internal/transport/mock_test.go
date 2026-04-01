@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -98,7 +99,17 @@ func TestDefaultFixturesCoverDaySixContracts(t *testing.T) {
 		},
 		{
 			name: "deployment_binding_create",
-			req:  Request{Method: "POST", Path: "/api/v1/projects/prj_demo/deployment-bindings"},
+			req: Request{
+				Method: "POST",
+				Path:   "/api/v1/projects/prj_demo/deployment-bindings",
+				Body: mustTestJSON(t, map[string]string{
+					"name":         "prod-solo-main",
+					"target_ref":   "prod-solo-1",
+					"runtime_mode": "standalone",
+					"target_kind":  "instance",
+					"target_id":    "inst_demo",
+				}),
+			},
 			decode: func(body []byte) error {
 				_, err := contracts.DecodeDeploymentBinding(body)
 				return err
@@ -134,4 +145,15 @@ func TestDefaultFixturesCoverDaySixContracts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustTestJSON(t *testing.T, value any) []byte {
+	t.Helper()
+
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	return payload
 }

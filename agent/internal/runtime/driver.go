@@ -17,8 +17,9 @@ var ErrNotImplemented = fmt.Errorf("runtime driver operation is not implemented 
 
 type Driver interface {
 	PrepareReleaseWorkspace(context.Context, RuntimeContext) (PreparedWorkspace, error)
-	StartReleaseCandidate(context.Context, RuntimeContext) error
-	RunHealthGate(context.Context, RuntimeContext) error
+	RenderGatewayConfig(context.Context, RuntimeContext) (GatewayRenderResult, error)
+	StartReleaseCandidate(context.Context, RuntimeContext) (CandidateRecord, error)
+	RunHealthGate(context.Context, RuntimeContext) (HealthGateResult, error)
 	PromoteRelease(context.Context, RuntimeContext) error
 	RollbackRelease(context.Context, RuntimeContext) error
 	SleepService(context.Context, RuntimeContext, string) error
@@ -31,6 +32,11 @@ type RuntimeContext struct {
 	Binding  contracts.DeploymentBindingPayload `json:"binding"`
 	Revision contracts.DesiredRevisionPayload   `json:"revision"`
 	Services []ServiceRuntimeContext            `json:"services"`
+	Rollout  RolloutContext                     `json:"-"`
+}
+
+type RolloutContext struct {
+	StableRevisionID string
 }
 
 type ProjectMetadata struct {
@@ -62,9 +68,12 @@ type WorkspaceLayout struct {
 }
 
 type PreparedWorkspace struct {
-	Layout           WorkspaceLayout   `json:"layout"`
-	ManifestPath     string            `json:"manifest_path"`
-	ServiceManifests map[string]string `json:"service_manifests"`
+	Layout            WorkspaceLayout         `json:"layout"`
+	ManifestPath      string                  `json:"manifest_path"`
+	ServiceManifests  map[string]string       `json:"service_manifests"`
+	Artifact          ArtifactMaterialization `json:"artifact"`
+	SidecarConfigPath string                  `json:"sidecar_config_path"`
+	GatewayConfigPath string                  `json:"gateway_config_path"`
 }
 
 type WorkspaceManifest struct {
@@ -80,19 +89,205 @@ type WorkspaceManifest struct {
 }
 
 type ArtifactPlan struct {
-	Status     string `json:"status"`
-	RevisionID string `json:"revision_id"`
+	Status        string `json:"status"`
+	RevisionID    string `json:"revision_id"`
+	ArtifactRef   string `json:"artifact_ref,omitempty"`
+	ImageRef      string `json:"image_ref,omitempty"`
+	CacheKey      string `json:"cache_key,omitempty"`
+	CachePath     string `json:"cache_path,omitempty"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
 }
 
 type GatewayPlan struct {
-	Provider       string   `json:"provider"`
-	PublicServices []string `json:"public_services"`
-	MagicDomain    string   `json:"magic_domain_provider,omitempty"`
+	Version             string             `json:"version,omitempty"`
+	GeneratedAt         time.Time          `json:"generated_at,omitempty"`
+	Provider            string             `json:"provider"`
+	PublicServices      []string           `json:"public_services"`
+	MagicDomain         string             `json:"magic_domain_provider,omitempty"`
+	FallbackMagicDomain string             `json:"fallback_magic_domain_provider,omitempty"`
+	HostToken           string             `json:"host_token,omitempty"`
+	Routes              []GatewayRoute     `json:"routes,omitempty"`
+	Validation          *GatewayHookResult `json:"validation,omitempty"`
+	Apply               *GatewayHookResult `json:"apply,omitempty"`
+	Reload              *GatewayHookResult `json:"reload,omitempty"`
+	Rollback            *GatewayHookResult `json:"rollback,omitempty"`
+}
+
+type GatewayRoute struct {
+	ServiceName  string `json:"service_name"`
+	Port         int    `json:"port"`
+	Upstream     string `json:"upstream"`
+	PrimaryHost  string `json:"primary_host"`
+	FallbackHost string `json:"fallback_host"`
+	PrimaryURL   string `json:"primary_url"`
+	FallbackURL  string `json:"fallback_url"`
+}
+
+type GatewayHookResult struct {
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Message    string    `json:"message,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type GatewayActivation struct {
+	Version    string    `json:"version"`
+	PlanPath   string    `json:"plan_path"`
+	ConfigPath string    `json:"config_path"`
+	AppliedAt  time.Time `json:"applied_at"`
+}
+
+type GatewayRenderResult struct {
+	Version               string            `json:"version"`
+	PlanPath              string            `json:"plan_path"`
+	ConfigPath            string            `json:"config_path"`
+	LivePlanPath          string            `json:"live_plan_path"`
+	LiveConfigPath        string            `json:"live_config_path"`
+	ActivationPath        string            `json:"activation_path"`
+	PreviousActiveVersion string            `json:"previous_active_version,omitempty"`
+	PublicURLs            []string          `json:"public_urls,omitempty"`
+	Plan                  GatewayPlan       `json:"plan"`
+	Activation            GatewayActivation `json:"activation"`
+	RolledBack            bool              `json:"rolled_back,omitempty"`
 }
 
 type SidecarPlan struct {
 	EnabledServices []string                      `json:"enabled_services"`
 	Compatibility   contracts.CompatibilityPolicy `json:"compatibility_policy"`
+}
+
+type ArtifactMaterialization struct {
+	Status        string    `json:"status"`
+	ArtifactRef   string    `json:"artifact_ref,omitempty"`
+	ImageRef      string    `json:"image_ref,omitempty"`
+	CacheKey      string    `json:"cache_key,omitempty"`
+	CachePath     string    `json:"cache_path,omitempty"`
+	WorkspacePath string    `json:"workspace_path,omitempty"`
+	ResolvedAt    time.Time `json:"resolved_at"`
+}
+
+type CandidateState string
+
+const (
+	CandidateStatePrepared   CandidateState = "prepared"
+	CandidateStateStarting   CandidateState = "starting"
+	CandidateStateHealthy    CandidateState = "healthy"
+	CandidateStateUnhealthy  CandidateState = "unhealthy"
+	CandidateStatePromotable CandidateState = "promotable"
+	CandidateStateFailed     CandidateState = "failed"
+)
+
+type CandidateTransition struct {
+	From       CandidateState `json:"from,omitempty"`
+	To         CandidateState `json:"to"`
+	Reason     string         `json:"reason,omitempty"`
+	OccurredAt time.Time      `json:"occurred_at"`
+}
+
+type HealthGatePolicyAction string
+
+const (
+	HealthGatePolicyPromoteCandidate HealthGatePolicyAction = "promote_candidate"
+	HealthGatePolicyStopRollout      HealthGatePolicyAction = "stop_rollout"
+	HealthGatePolicyRollbackRelease  HealthGatePolicyAction = "rollback_release"
+)
+
+type ServiceHealthResult struct {
+	ServiceName string    `json:"service_name"`
+	Protocol    string    `json:"protocol"`
+	Address     string    `json:"address,omitempty"`
+	Path        string    `json:"path,omitempty"`
+	Attempts    int       `json:"attempts"`
+	Successes   int       `json:"successes"`
+	Failures    int       `json:"failures"`
+	Passed      bool      `json:"passed"`
+	StatusCode  int       `json:"status_code,omitempty"`
+	LatencyMS   float64   `json:"latency_ms,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	CheckedAt   time.Time `json:"checked_at"`
+}
+
+type RolloutSummary struct {
+	RevisionID        string                 `json:"revision_id"`
+	CandidateState    CandidateState         `json:"candidate_state"`
+	PolicyAction      HealthGatePolicyAction `json:"policy_action"`
+	Summary           string                 `json:"summary"`
+	HealthyServices   int                    `json:"healthy_services"`
+	UnhealthyServices int                    `json:"unhealthy_services"`
+	CheckedAt         time.Time              `json:"checked_at"`
+}
+
+type CandidateHealthSnapshot struct {
+	CheckedAt          time.Time                  `json:"checked_at"`
+	CandidateState     CandidateState             `json:"candidate_state"`
+	Promotable         bool                       `json:"promotable"`
+	PolicyAction       HealthGatePolicyAction     `json:"policy_action"`
+	Summary            string                     `json:"summary"`
+	Services           []ServiceHealthResult      `json:"services"`
+	Incident           *contracts.IncidentPayload `json:"incident,omitempty"`
+	IncidentSuppressed bool                       `json:"incident_suppressed,omitempty"`
+}
+
+type CandidateRecord struct {
+	RevisionID       string                     `json:"revision_id"`
+	WorkspaceRoot    string                     `json:"workspace_root"`
+	State            CandidateState             `json:"state"`
+	StartedAt        time.Time                  `json:"started_at"`
+	ManifestPath     string                     `json:"manifest_path"`
+	LastTransitionAt time.Time                  `json:"last_transition_at,omitempty"`
+	History          []CandidateTransition      `json:"history,omitempty"`
+	HealthGate       *CandidateHealthSnapshot   `json:"health_gate,omitempty"`
+	RolloutSummary   *RolloutSummary            `json:"rollout_summary,omitempty"`
+	LatestIncident   *contracts.IncidentPayload `json:"latest_incident,omitempty"`
+	LastIncidentKey  string                     `json:"last_incident_key,omitempty"`
+	LastIncidentAt   time.Time                  `json:"last_incident_at,omitempty"`
+}
+
+type AssetFetcher interface {
+	FetchRevisionAssets(context.Context, RuntimeContext, WorkspaceLayout) (ArtifactMaterialization, error)
+}
+
+type HealthGateResult struct {
+	RevisionID         string                     `json:"revision_id"`
+	CandidateState     CandidateState             `json:"candidate_state"`
+	Promotable         bool                       `json:"promotable"`
+	PolicyAction       HealthGatePolicyAction     `json:"policy_action"`
+	Summary            string                     `json:"summary"`
+	CheckedAt          time.Time                  `json:"checked_at"`
+	Services           []ServiceHealthResult      `json:"services"`
+	Incident           *contracts.IncidentPayload `json:"incident,omitempty"`
+	IncidentSuppressed bool                       `json:"incident_suppressed,omitempty"`
+	ReportPath         string                     `json:"report_path,omitempty"`
+	RolloutSummaryPath string                     `json:"rollout_summary_path,omitempty"`
+}
+
+type OperationError struct {
+	Code      string
+	Message   string
+	Retryable bool
+	Details   map[string]any
+	Err       error
+}
+
+func (e *OperationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "runtime operation failed"
+}
+
+func (e *OperationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload) (RuntimeContext, error) {

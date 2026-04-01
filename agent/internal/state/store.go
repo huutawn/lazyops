@@ -109,10 +109,17 @@ type EnrollmentState struct {
 }
 
 type RevisionCache struct {
-	CurrentRevisionID string    `json:"current_revision_id,omitempty"`
-	StableRevisionID  string    `json:"stable_revision_id,omitempty"`
-	PendingRevisionID string    `json:"pending_revision_id,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at,omitempty"`
+	CurrentRevisionID      string    `json:"current_revision_id,omitempty"`
+	StableRevisionID       string    `json:"stable_revision_id,omitempty"`
+	PendingRevisionID      string    `json:"pending_revision_id,omitempty"`
+	CandidateRevisionID    string    `json:"candidate_revision_id,omitempty"`
+	CandidateState         string    `json:"candidate_state,omitempty"`
+	CandidateWorkspaceRoot string    `json:"candidate_workspace_root,omitempty"`
+	LastHealthGateAt       time.Time `json:"last_health_gate_at,omitempty"`
+	LastHealthGateState    string    `json:"last_health_gate_state,omitempty"`
+	LastHealthGateSummary  string    `json:"last_health_gate_summary,omitempty"`
+	LastPolicyAction       string    `json:"last_policy_action,omitempty"`
+	UpdatedAt              time.Time `json:"updated_at,omitempty"`
 }
 
 type HealthSnapshotState struct {

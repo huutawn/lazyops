@@ -13,21 +13,26 @@ import (
 )
 
 type Application struct {
-	Config             config.Config
-	DB                 *gorm.DB
-	Hub                *hub.Hub
-	AI                 *ai.GeminiClient
-	UserRepo           *repository.UserRepository
-	OAuthIdentityRepo  *repository.OAuthIdentityRepository
-	GitHubInstallRepo  *repository.GitHubInstallationRepository
-	PATRepo            *repository.PersonalAccessTokenRepository
-	AgentRepo          *repository.AgentRepository
-	AuthService        *service.AuthService
-	GoogleOAuthService *service.GoogleOAuthService
-	GitHubOAuthService *service.GitHubOAuthService
-	GitHubInstallSvc   *service.GitHubInstallationService
-	UserService        *service.UserService
-	AgentService       *service.AgentService
+	Config              config.Config
+	DB                  *gorm.DB
+	Hub                 *hub.Hub
+	AI                  *ai.GeminiClient
+	UserRepo            *repository.UserRepository
+	OAuthIdentityRepo   *repository.OAuthIdentityRepository
+	GitHubInstallRepo   *repository.GitHubInstallationRepository
+	ProjectRepo         *repository.ProjectRepository
+	ProjectRepoLinkRepo *repository.ProjectRepoLinkRepository
+	PATRepo             *repository.PersonalAccessTokenRepository
+	AgentRepo           *repository.AgentRepository
+	AuthService         *service.AuthService
+	GoogleOAuthService  *service.GoogleOAuthService
+	GitHubOAuthService  *service.GitHubOAuthService
+	GitHubInstallSvc    *service.GitHubInstallationService
+	GitHubWebhookSvc    *service.GitHubWebhookService
+	ProjectService      *service.ProjectService
+	ProjectRepoLinkSvc  *service.ProjectRepoLinkService
+	UserService         *service.UserService
+	AgentService        *service.AgentService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -46,6 +51,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	userRepo := repository.NewUserRepository(db)
 	oauthIdentityRepo := repository.NewOAuthIdentityRepository(db)
 	githubInstallRepo := repository.NewGitHubInstallationRepository(db)
+	projectRepo := repository.NewProjectRepository(db)
+	projectRepoLinkRepo := repository.NewProjectRepoLinkRepository(db)
 	patRepo := repository.NewPersonalAccessTokenRepository(db)
 	agentRepo := repository.NewAgentRepository(db)
 	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT)
@@ -73,26 +80,34 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		githubInstallRepo,
 		githubInstallProvider,
 	)
+	projectService := service.NewProjectService(projectRepo)
+	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
+	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
 	wsHub.Start()
 
 	return &Application{
-		Config:             cfg,
-		DB:                 db,
-		Hub:                wsHub,
-		AI:                 ai.NewGeminiClient(""),
-		UserRepo:           userRepo,
-		OAuthIdentityRepo:  oauthIdentityRepo,
-		GitHubInstallRepo:  githubInstallRepo,
-		PATRepo:            patRepo,
-		AgentRepo:          agentRepo,
-		AuthService:        authService,
-		GoogleOAuthService: googleOAuthService,
-		GitHubOAuthService: githubOAuthService,
-		GitHubInstallSvc:   githubInstallSvc,
-		UserService:        userService,
-		AgentService:       agentService,
+		Config:              cfg,
+		DB:                  db,
+		Hub:                 wsHub,
+		AI:                  ai.NewGeminiClient(""),
+		UserRepo:            userRepo,
+		OAuthIdentityRepo:   oauthIdentityRepo,
+		GitHubInstallRepo:   githubInstallRepo,
+		ProjectRepo:         projectRepo,
+		ProjectRepoLinkRepo: projectRepoLinkRepo,
+		PATRepo:             patRepo,
+		AgentRepo:           agentRepo,
+		AuthService:         authService,
+		GoogleOAuthService:  googleOAuthService,
+		GitHubOAuthService:  githubOAuthService,
+		GitHubInstallSvc:    githubInstallSvc,
+		GitHubWebhookSvc:    githubWebhookSvc,
+		ProjectService:      projectService,
+		ProjectRepoLinkSvc:  projectRepoLinkSvc,
+		UserService:         userService,
+		AgentService:        agentService,
 	}, nil
 }

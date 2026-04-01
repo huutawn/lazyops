@@ -220,17 +220,43 @@ func TestInitPrintsRepoScanPreviewUsingServiceAbstraction(t *testing.T) {
 	}
 
 	output := stdout.String()
-	if !strings.Contains(output, "repo scan complete") {
-		t.Fatalf("expected init scan header, got %q", output)
+	if !strings.Contains(output, "init plan review ready") {
+		t.Fatalf("expected init review header, got %q", output)
 	}
 	if !strings.Contains(output, "repo layout: monorepo") {
 		t.Fatalf("expected monorepo label, got %q", output)
+	}
+	if !strings.Contains(output, "compatibility policy: env_injection=true managed_credentials=true localhost_rescue=true") {
+		t.Fatalf("expected compatibility policy review, got %q", output)
+	}
+	if !strings.Contains(output, "selected project: Acme Shop (acme-shop)") {
+		t.Fatalf("expected selected project in review, got %q", output)
+	}
+	if !strings.Contains(output, "runtime mode option: standalone") {
+		t.Fatalf("expected runtime mode options in review, got %q", output)
+	}
+	if !strings.Contains(output, "target option for standalone: instance prod-solo-1 [online]") {
+		t.Fatalf("expected standalone target summary, got %q", output)
+	}
+	if !strings.Contains(output, "target option for distributed-mesh: mesh prod-ap [online]") {
+		t.Fatalf("expected mesh target summary, got %q", output)
+	}
+	if !strings.Contains(output, "target option for distributed-k3s: cluster prod-k3s-ap [registered]") {
+		t.Fatalf("expected k3s target summary, got %q", output)
+	}
+	for _, forbidden := range []string{"203.0.113.10", "10.10.0.10", "secret://clusters/cls_demo/kubeconfig"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("expected sanitized review output, but found %q in %q", forbidden, output)
+		}
 	}
 	if !strings.Contains(output, "service api -> apps/api (go.mod)") {
 		t.Fatalf("expected api service preview, got %q", output)
 	}
 	if !strings.Contains(output, "service web -> apps/web (package.json)") {
 		t.Fatalf("expected web service preview, got %q", output)
+	}
+	if !strings.Contains(output, "dependency bindings: none inferred yet") {
+		t.Fatalf("expected dependency bindings review, got %q", output)
 	}
 	lowerOutput := strings.ToLower(output)
 	if strings.Contains(lowerOutput, "frontend") || strings.Contains(lowerOutput, "backend") {
@@ -293,8 +319,198 @@ func TestInitPrintsServiceHintsAndAmbiguityWarnings(t *testing.T) {
 	if !strings.Contains(stdout.String(), "start hint for jobs: python app.py") {
 		t.Fatalf("expected Python start hint in init output, got %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "selected project: Acme Shop (acme-shop)") {
+		t.Fatalf("expected selected project in init output, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "dependency bindings: none inferred yet") {
+		t.Fatalf("expected dependency binding review state, got %q", stdout.String())
+	}
 	if !strings.Contains(stderr.String(), "service jobs: no health hint inferred yet") {
 		t.Fatalf("expected ambiguity warning in stderr, got %q", stderr.String())
+	}
+}
+
+func TestInitFiltersTargetsWhenRuntimeModeIsSelected(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-mesh"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "selected runtime mode: distributed-mesh") {
+		t.Fatalf("expected selected runtime mode, got %q", output)
+	}
+	if !strings.Contains(output, "target option for distributed-mesh: mesh prod-ap [online]") {
+		t.Fatalf("expected compatible mesh target, got %q", output)
+	}
+	if !strings.Contains(output, "selected target: mesh prod-ap [online]") {
+		t.Fatalf("expected auto-selected mesh target, got %q", output)
+	}
+	if strings.Contains(output, "target option for standalone") || strings.Contains(output, "target option for distributed-k3s") {
+		t.Fatalf("expected target review to be filtered by runtime mode, got %q", output)
+	}
+}
+
+func TestInitRejectsIncompatibleTargetSelection(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--runtime-mode", "standalone", "--target", "prod-ap"})
+	if err == nil {
+		t.Fatal("expected incompatible target selection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("expected incompatible target error, got %v", err)
+	}
+}
+
+func TestInitAutoSelectsCompatibleBinding(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "distributed-mesh"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "binding option: prod-ap-mesh -> prod-ap (distributed-mesh, mesh)") {
+		t.Fatalf("expected binding option in init review, got %q", output)
+	}
+	if !strings.Contains(output, "selected binding: prod-ap-mesh -> prod-ap (distributed-mesh, mesh)") {
+		t.Fatalf("expected compatible binding to auto-select, got %q", output)
+	}
+}
+
+func TestInitCreatesBindingWhenRequested(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--target", "prod-solo-1", "--create-binding", "--binding-name", "prod-solo-main"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "selected binding: prod-solo-main -> prod-solo-1 (standalone, instance)") {
+		t.Fatalf("expected created binding to be selected, got %q", output)
+	}
+}
+
+func TestInitRejectsIncompatibleBindingSelection(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--binding", "prod-ap-mesh"})
+	if err == nil {
+		t.Fatal("expected incompatible binding selection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("expected incompatible binding error, got %v", err)
+	}
+}
+
+func TestBindingsCommandRendersTypedBindingList(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"bindings"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "deployment bindings loaded") {
+		t.Fatalf("expected bindings header, got %q", output)
+	}
+	if !strings.Contains(output, "binding prod-ap-mesh -> prod-ap (distributed-mesh, mesh)") {
+		t.Fatalf("expected typed mesh binding output, got %q", output)
+	}
+	if !strings.Contains(output, "binding prod-solo-binding -> prod-solo-1 (standalone, instance)") {
+		t.Fatalf("expected typed standalone binding output, got %q", output)
 	}
 }
 

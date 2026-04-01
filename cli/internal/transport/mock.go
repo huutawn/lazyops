@@ -43,6 +43,9 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	if strings.EqualFold(req.Method, "POST") && req.Path == "/api/v1/auth/pat/revoke" {
 		return mockPATRevoke(req)
 	}
+	if strings.EqualFold(req.Method, "POST") && isProjectBindingsPath(req.Path) {
+		return mockCreateDeploymentBinding(req)
+	}
 
 	response, ok := t.fixtures[req.Key()]
 	if !ok {
@@ -179,6 +182,124 @@ func mockPATRevoke(req Request) (Response, error) {
 	}, nil
 }
 
+func mockCreateDeploymentBinding(req Request) (Response, error) {
+	projectID, ok := projectIDFromBindingsPath(req.Path)
+	if !ok {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "deployment-binding-invalid-path",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_path",
+				"message":   "Deployment binding path is invalid.",
+				"next_step": "retry the command with a valid project id",
+			}),
+		}, nil
+	}
+
+	var payload struct {
+		Name        string `json:"name"`
+		TargetRef   string `json:"target_ref"`
+		RuntimeMode string `json:"runtime_mode"`
+		TargetKind  string `json:"target_kind"`
+		TargetID    string `json:"target_id"`
+	}
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "deployment-binding-bad-json",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_request",
+				"message":   "Deployment binding payload is invalid.",
+				"next_step": "retry the init command with valid binding arguments",
+			}),
+		}, nil
+	}
+
+	mode := strings.TrimSpace(payload.RuntimeMode)
+	kind := strings.TrimSpace(payload.TargetKind)
+	if !bindingModeMatchesKind(mode, kind) {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "deployment-binding-incompatible-mode",
+			Body: mustJSON(map[string]any{
+				"error":     "incompatible_mode",
+				"message":   "Deployment binding runtime mode is incompatible with the selected target kind.",
+				"next_step": "choose a target that matches the runtime mode or change `--runtime-mode`",
+			}),
+		}, nil
+	}
+
+	binding := contracts.DeploymentBinding{
+		ID:          "bind_" + sanitizeBindingID(payload.Name),
+		ProjectID:   projectID,
+		Name:        strings.TrimSpace(payload.Name),
+		TargetRef:   strings.TrimSpace(payload.TargetRef),
+		RuntimeMode: mode,
+		TargetKind:  kind,
+		TargetID:    strings.TrimSpace(payload.TargetID),
+		PlacementPolicyJSON: map[string]any{
+			"strategy": "balanced",
+		},
+		DomainPolicyJSON: map[string]any{
+			"provider": "sslip.io",
+		},
+		CompatibilityPolicyJSON: map[string]any{
+			"env_injection":       true,
+			"managed_credentials": true,
+			"localhost_rescue":    true,
+		},
+		ScaleToZeroPolicyJSON: map[string]any{
+			"enabled": false,
+		},
+		CreatedAt: time.Date(2026, time.April, 1, 9, 0, 0, 0, time.UTC),
+	}
+
+	return Response{
+		StatusCode:  201,
+		FixtureName: "deployment-binding-created",
+		Body:        mustJSON(binding),
+	}, nil
+}
+
+func isProjectBindingsPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/projects/") && strings.HasSuffix(path, "/deployment-bindings")
+}
+
+func projectIDFromBindingsPath(path string) (string, bool) {
+	trimmed := strings.Trim(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 5 {
+		return "", false
+	}
+	if parts[0] != "api" || parts[1] != "v1" || parts[2] != "projects" || parts[4] != "deployment-bindings" {
+		return "", false
+	}
+	return parts[3], true
+}
+
+func bindingModeMatchesKind(mode string, kind string) bool {
+	switch mode {
+	case "standalone":
+		return kind == "instance"
+	case "distributed-mesh":
+		return kind == "mesh"
+	case "distributed-k3s":
+		return kind == "cluster"
+	default:
+		return false
+	}
+}
+
+func sanitizeBindingID(name string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.ReplaceAll(normalized, " ", "-")
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if normalized == "" {
+		return "generated"
+	}
+	return normalized
+}
+
 func DefaultFixtures() map[string]Response {
 	projectCreatedAt := time.Date(2026, time.March, 31, 12, 0, 0, 0, time.UTC)
 	installationInstalledAt := projectCreatedAt.Add(-24 * time.Hour)
@@ -301,8 +422,33 @@ func DefaultFixtures() map[string]Response {
 		CreatedAt: bindingCreatedAt,
 	}
 
+	standaloneBinding := contracts.DeploymentBinding{
+		ID:          "bind_standalone_demo",
+		ProjectID:   "prj_demo",
+		Name:        "prod-solo-binding",
+		TargetRef:   "prod-solo-1",
+		RuntimeMode: "standalone",
+		TargetKind:  "instance",
+		TargetID:    "inst_demo",
+		PlacementPolicyJSON: map[string]any{
+			"strategy": "balanced",
+		},
+		DomainPolicyJSON: map[string]any{
+			"provider": "sslip.io",
+		},
+		CompatibilityPolicyJSON: map[string]any{
+			"env_injection":       true,
+			"managed_credentials": true,
+			"localhost_rescue":    true,
+		},
+		ScaleToZeroPolicyJSON: map[string]any{
+			"enabled": false,
+		},
+		CreatedAt: bindingCreatedAt.Add(-30 * time.Minute),
+	}
+
 	bindingList := contracts.DeploymentBindingsResponse{
-		Bindings: []contracts.DeploymentBinding{binding},
+		Bindings: []contracts.DeploymentBinding{binding, standaloneBinding},
 	}
 
 	traceSummary := contracts.TraceSummary{
