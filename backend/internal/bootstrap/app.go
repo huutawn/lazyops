@@ -7,6 +7,7 @@ import (
 	"lazyops-server/internal/hub"
 	"lazyops-server/internal/oauth"
 	"lazyops-server/internal/repository"
+	"lazyops-server/internal/runtime"
 	"lazyops-server/internal/service"
 
 	"gorm.io/gorm"
@@ -54,6 +55,13 @@ type Application struct {
 	AgentEnrollmentSvc    *service.AgentEnrollmentService
 	UserService           *service.UserService
 	AgentService          *service.AgentService
+	ControlHub            *service.ControlHub
+	OperatorStreamHub     *service.OperatorStreamHub
+	RuntimeRegistry       *runtime.Registry
+	RolloutPlanner        *service.RolloutPlanner
+	IncidentRepo          *repository.RuntimeIncidentRepository
+	PreviewRepo           *repository.PreviewEnvironmentRepository
+	PreviewService        *service.PreviewEnvironmentService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -87,6 +95,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	agentTokenRepo := repository.NewAgentTokenRepository(db)
 	patRepo := repository.NewPersonalAccessTokenRepository(db)
 	agentRepo := repository.NewAgentRepository(db)
+	incidentRepo := repository.NewRuntimeIncidentRepository(db)
+	previewRepo := repository.NewPreviewEnvironmentRepository(db)
 	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT).WithAgentTokens(agentTokenRepo)
 	googleProvider := oauth.NewGoogleProvider(cfg.GoogleOAuth, nil)
 	googleOAuthService := service.NewGoogleOAuthService(
@@ -129,6 +139,35 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	wsHub := hub.New()
 	wsHub.Start()
 	buildCallbackSvc := service.NewBuildCallbackService(projectRepo, blueprintRepo, revisionRepo, buildJobRepo, wsHub)
+	controlHub := service.NewControlHub()
+	controlHub.Start()
+	operatorStreamHub := service.NewOperatorStreamHub()
+	operatorStreamHub.Start()
+
+	rtRegistry := runtime.NewRegistry()
+	rtRegistry.Register(runtime.NewStandaloneDriver())
+	rtRegistry.Register(runtime.NewDistributedMeshDriver())
+	rtRegistry.Register(runtime.NewDistributedK3sDriver())
+
+	rolloutPlanner := service.NewRolloutPlanner(
+		rtRegistry,
+		revisionRepo,
+		deploymentRepo,
+		incidentRepo,
+		deploymentBindingRepo,
+		operatorStreamHub,
+	)
+
+	previewService := service.NewPreviewEnvironmentService(
+		projectRepo,
+		projectRepoLinkRepo,
+		revisionRepo,
+		deploymentRepo,
+		blueprintRepo,
+		previewRepo,
+		nil,
+		operatorStreamHub,
+	)
 
 	return &Application{
 		Config:                cfg,
@@ -172,5 +211,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		AgentEnrollmentSvc:    agentEnrollmentSvc,
 		UserService:           userService,
 		AgentService:          agentService,
+		ControlHub:            controlHub,
+		OperatorStreamHub:     operatorStreamHub,
+		RuntimeRegistry:       rtRegistry,
+		RolloutPlanner:        rolloutPlanner,
+		IncidentRepo:          incidentRepo,
+		PreviewRepo:           previewRepo,
+		PreviewService:        previewService,
 	}, nil
 }

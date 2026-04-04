@@ -41,3 +41,11 @@ func (r *DesiredStateRevisionRepository) UpdateStatus(revisionID, status string,
 			"updated_at": at,
 		}).Error
 }
+
+func (r *DesiredStateRevisionRepository) ListByProject(projectID string) ([]models.DesiredStateRevision, error) {
+	var revisions []models.DesiredStateRevision
+	if err := r.db.Where("project_id = ?", projectID).Order("created_at ASC").Find(&revisions).Error; err != nil {
+		return nil, err
+	}
+	return revisions, nil
+}

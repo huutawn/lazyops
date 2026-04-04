@@ -26,6 +26,8 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
+	agentControlController := controller.NewAgentControlController(app.ControlHub, app.Config)
+	operatorStreamController := controller.NewOperatorStreamController(app.OperatorStreamHub, app.Config)
 
 	v1 := router.Group("/api/v1")
 	{
@@ -104,6 +106,20 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		agentProtected.Use(middleware.RequireAuthKinds(service.AuthKindAgentToken))
 		{
 			agentProtected.POST("/agents/heartbeat", agentRuntimeController.Heartbeat)
+		}
+
+		agentProtected.GET("/ws/agents/control", agentControlController.ControlStream)
+		agentProtected.POST("/agents/:agent_id/dispatch",
+			middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+			agentControlController.DispatchCommand,
+		)
+
+		operatorProtected := v1.Group("/")
+		operatorProtected.Use(middleware.Authenticate(app.AuthService))
+		operatorProtected.Use(middleware.RequireAuthKinds(service.AuthKindWebSession, service.AuthKindCLIPAT))
+		operatorProtected.Use(middleware.RequireRoles(service.RoleAdmin, service.RoleOperator))
+		{
+			operatorProtected.GET("/ws/operators/stream", operatorStreamController.OperatorStream)
 		}
 	}
 }

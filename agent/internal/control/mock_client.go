@@ -71,6 +71,26 @@ func (c *MockClient) SendHeartbeat(_ context.Context, payload contracts.Heartbea
 	return c.recordEnvelope(heartbeatEnvelopeType, payload.AgentID, payload)
 }
 
+func (c *MockClient) SendTraceSummary(_ context.Context, payload contracts.TraceSummaryPayload) error {
+	return c.recordEnvelope(traceSummaryEnvelopeType, payload.ProjectID, payload)
+}
+
+func (c *MockClient) SendLogBatch(_ context.Context, payload contracts.LogBatchPayload) error {
+	return c.recordEnvelope(logBatchEnvelopeType, payload.ProjectID, payload)
+}
+
+func (c *MockClient) SendMetricRollup(_ context.Context, payload contracts.MetricRollupPayload) error {
+	return c.recordEnvelope(metricRollupEnvelopeType, payload.ProjectID, payload)
+}
+
+func (c *MockClient) SendTopology(_ context.Context, payload contracts.TopologyPayload) error {
+	return c.recordEnvelope(topologyEnvelopeType, payload.ProjectID, payload)
+}
+
+func (c *MockClient) SendIncident(_ context.Context, payload contracts.IncidentPayload) error {
+	return c.recordEnvelope(incidentEnvelopeType, payload.ProjectID, payload)
+}
+
 func (c *MockClient) SendCommandAck(_ context.Context, envelope contracts.CommandAckEnvelope) error {
 	c.logger.Info("mock command ack sent",
 		"request_id", envelope.RequestID,

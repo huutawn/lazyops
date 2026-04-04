@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -25,6 +27,10 @@ func WriteFile(repoRoot string, payload []byte, overwrite bool) (WriteResult, er
 func writeFileWithClock(repoRoot string, payload []byte, overwrite bool, now func() time.Time) (WriteResult, error) {
 	if repoRoot == "" {
 		return WriteResult{}, fmt.Errorf("repo root is required to write lazyops.yaml")
+	}
+
+	if err := validatePayloadSecurity(payload); err != nil {
+		return WriteResult{}, err
 	}
 
 	configPath := DefaultPath(repoRoot)
@@ -61,4 +67,41 @@ func writeFileWithClock(repoRoot string, payload []byte, overwrite bool, now fun
 	default:
 		return WriteResult{}, fmt.Errorf("could not inspect lazyops.yaml path: %w", err)
 	}
+}
+
+var (
+	secretFieldPattern      = regexp.MustCompile(`(?mi)^\s*(ssh_key|ssh|private_key|password|pat|token|agent_token|github_token|secret|kubeconfig|public_ip|private_ip|server_ip|project_id|deployment_binding_id|target_id|target_kind|instance_id|mesh_network_id|cluster_id|deploy_command)\s*:`)
+	forbiddenContentMarkers = []string{
+		"secret://",
+		"-----begin private key-----",
+		"-----begin rsa private key-----",
+		"-----begin openssh private key-----",
+		"ssh-rsa ",
+		"github_pat_",
+		"ghp_",
+		"glpat-",
+		"bearer ",
+	}
+	writeIPv4Pattern = regexp.MustCompile(`\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b`)
+)
+
+func validatePayloadSecurity(payload []byte) error {
+	content := string(payload)
+	lowerContent := strings.ToLower(content)
+
+	for _, marker := range forbiddenContentMarkers {
+		if strings.Contains(lowerContent, strings.ToLower(marker)) {
+			return fmt.Errorf("lazyops.yaml must not contain secrets, kubeconfig material, or raw credentials. next: verify the deploy contract stays logical and retry `lazyops init --write`")
+		}
+	}
+
+	if secretFieldPattern.MatchString(content) {
+		return fmt.Errorf("lazyops.yaml contains forbidden field names. next: remove SSH keys, passwords, tokens, IPs, or backend IDs from the deploy contract and retry `lazyops init --write`")
+	}
+
+	if writeIPv4Pattern.MatchString(content) {
+		return fmt.Errorf("lazyops.yaml must not contain raw infrastructure IP addresses. next: use logical target references instead of server IPs and retry `lazyops init --write`")
+	}
+
+	return nil
 }

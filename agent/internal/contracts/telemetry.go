@@ -61,3 +61,21 @@ type TopologyEdge struct {
 	Status        string          `json:"status"`
 	Latency       MetricAggregate `json:"latency,omitempty"`
 }
+
+type LogEntry struct {
+	Timestamp time.Time         `json:"timestamp"`
+	Severity  Severity          `json:"severity"`
+	Source    string            `json:"source"`
+	Message   string            `json:"message"`
+	Excerpt   string            `json:"excerpt,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
+type LogBatchPayload struct {
+	ProjectID   string     `json:"project_id"`
+	BindingID   string     `json:"binding_id"`
+	RevisionID  string     `json:"revision_id,omitempty"`
+	ServiceName string     `json:"service_name,omitempty"`
+	Entries     []LogEntry `json:"entries"`
+	CollectedAt time.Time  `json:"collected_at"`
+}

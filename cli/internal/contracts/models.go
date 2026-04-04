@@ -7,96 +7,102 @@ import (
 	"time"
 )
 
+type Envelope struct {
+	Success bool            `json:"success"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
 type Project struct {
 	ID            string    `json:"id"`
-	UserID        string    `json:"user_id,omitempty"`
 	Name          string    `json:"name"`
 	Slug          string    `json:"slug"`
-	DefaultBranch string    `json:"default_branch,omitempty"`
-	CreatedAt     time.Time `json:"created_at,omitempty"`
+	DefaultBranch string    `json:"default_branch"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type GitHubInstallation struct {
 	ID                   string         `json:"id"`
-	UserID               string         `json:"user_id,omitempty"`
-	GitHubInstallationID int64          `json:"github_installation_id,omitempty"`
+	GitHubInstallationID int64          `json:"github_installation_id"`
 	AccountLogin         string         `json:"account_login"`
 	AccountType          string         `json:"account_type"`
-	ScopeJSON            map[string]any `json:"scope_json,omitempty"`
-	InstalledAt          time.Time      `json:"installed_at,omitempty"`
-	RevokedAt            *time.Time     `json:"revoked_at,omitempty"`
+	ScopeJSON            map[string]any `json:"scope"`
+	InstalledAt          time.Time      `json:"installed_at"`
+	RevokedAt            *time.Time     `json:"revoked_at"`
 }
 
 type Instance struct {
-	ID                      string         `json:"id"`
-	UserID                  string         `json:"user_id,omitempty"`
-	Name                    string         `json:"name"`
-	PublicIP                string         `json:"public_ip,omitempty"`
-	PrivateIP               string         `json:"private_ip,omitempty"`
-	AgentID                 string         `json:"agent_id,omitempty"`
-	Status                  string         `json:"status"`
-	LabelsJSON              map[string]any `json:"labels_json,omitempty"`
-	RuntimeCapabilitiesJSON map[string]any `json:"runtime_capabilities_json,omitempty"`
-	CreatedAt               time.Time      `json:"created_at,omitempty"`
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	PublicIP            string         `json:"public_ip"`
+	PrivateIP           string         `json:"private_ip"`
+	AgentID             string         `json:"agent_id"`
+	Status              string         `json:"status"`
+	Labels              map[string]any `json:"labels"`
+	RuntimeCapabilities map[string]any `json:"runtime_capabilities"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }
 
 type MeshNetwork struct {
 	ID        string    `json:"id"`
-	UserID    string    `json:"user_id,omitempty"`
 	Name      string    `json:"name"`
 	Provider  string    `json:"provider"`
-	CIDR      string    `json:"cidr,omitempty"`
+	CIDR      string    `json:"cidr"`
 	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Cluster struct {
 	ID                  string    `json:"id"`
-	UserID              string    `json:"user_id,omitempty"`
 	Name                string    `json:"name"`
 	Provider            string    `json:"provider"`
-	KubeconfigSecretRef string    `json:"kubeconfig_secret_ref,omitempty"`
+	KubeconfigSecretRef string    `json:"kubeconfig_secret_ref"`
 	Status              string    `json:"status"`
-	CreatedAt           time.Time `json:"created_at,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type DeploymentBinding struct {
-	ID                      string         `json:"id"`
-	ProjectID               string         `json:"project_id"`
-	Name                    string         `json:"name"`
-	TargetRef               string         `json:"target_ref"`
-	RuntimeMode             string         `json:"runtime_mode"`
-	TargetKind              string         `json:"target_kind"`
-	TargetID                string         `json:"target_id"`
-	PlacementPolicyJSON     map[string]any `json:"placement_policy_json,omitempty"`
-	DomainPolicyJSON        map[string]any `json:"domain_policy_json,omitempty"`
-	CompatibilityPolicyJSON map[string]any `json:"compatibility_policy_json,omitempty"`
-	ScaleToZeroPolicyJSON   map[string]any `json:"scale_to_zero_policy_json,omitempty"`
-	CreatedAt               time.Time      `json:"created_at,omitempty"`
+	ID                  string         `json:"id"`
+	ProjectID           string         `json:"project_id"`
+	Name                string         `json:"name"`
+	TargetRef           string         `json:"target_ref"`
+	RuntimeMode         string         `json:"runtime_mode"`
+	TargetKind          string         `json:"target_kind"`
+	TargetID            string         `json:"target_id"`
+	PlacementPolicy     map[string]any `json:"placement_policy"`
+	DomainPolicy        map[string]any `json:"domain_policy"`
+	CompatibilityPolicy map[string]any `json:"compatibility_policy"`
+	ScaleToZeroPolicy   map[string]any `json:"scale_to_zero_policy"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }
 
 type ProjectsResponse struct {
-	Projects []Project `json:"projects"`
+	Projects []Project `json:"items"`
 }
 
 type GitHubInstallationsResponse struct {
-	Installations []GitHubInstallation `json:"installations"`
+	Installations []GitHubInstallation `json:"items"`
 }
 
 type InstancesResponse struct {
-	Instances []Instance `json:"instances"`
+	Instances []Instance `json:"items"`
 }
 
 type MeshNetworksResponse struct {
-	MeshNetworks []MeshNetwork `json:"mesh_networks"`
+	MeshNetworks []MeshNetwork `json:"items"`
 }
 
 type ClustersResponse struct {
-	Clusters []Cluster `json:"clusters"`
+	Clusters []Cluster `json:"items"`
 }
 
 type DeploymentBindingsResponse struct {
-	Bindings []DeploymentBinding `json:"bindings"`
+	Bindings []DeploymentBinding `json:"items"`
 }
 
 type ProjectRepoLink struct {
@@ -106,119 +112,208 @@ type ProjectRepoLink struct {
 	GitHubRepoID         int64     `json:"github_repo_id"`
 	RepoOwner            string    `json:"repo_owner"`
 	RepoName             string    `json:"repo_name"`
+	RepoFullName         string    `json:"repo_full_name"`
 	TrackedBranch        string    `json:"tracked_branch"`
-	PreviewEnabled       bool      `json:"preview_enabled,omitempty"`
-	CreatedAt            time.Time `json:"created_at,omitempty"`
+	PreviewEnabled       bool      `json:"preview_enabled"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type TraceSummary struct {
 	CorrelationID  string   `json:"correlation_id"`
 	ServicePath    []string `json:"service_path"`
-	NodeHops       []string `json:"node_hops,omitempty"`
-	LatencyHotspot string   `json:"latency_hotspot,omitempty"`
-	TotalLatencyMS int      `json:"total_latency_ms,omitempty"`
+	NodeHops       []string `json:"node_hops"`
+	LatencyHotspot string   `json:"latency_hotspot"`
+	TotalLatencyMS int      `json:"total_latency_ms"`
 }
 
 type LogLine struct {
 	Timestamp time.Time `json:"timestamp"`
 	Level     string    `json:"level"`
 	Message   string    `json:"message"`
-	Node      string    `json:"node,omitempty"`
+	Node      string    `json:"node"`
 }
 
 type LogsStreamPreview struct {
 	Service string    `json:"service"`
-	Cursor  string    `json:"cursor,omitempty"`
+	Cursor  string    `json:"cursor"`
 	Lines   []LogLine `json:"lines"`
+}
+
+type TunnelSession struct {
+	SessionID string `json:"session_id"`
+	LocalPort int    `json:"local_port"`
+	Remote    string `json:"remote"`
+	Status    string `json:"status"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type CLILoginResponse struct {
+	Token     string `json:"token"`
+	TokenType string `json:"token_type"`
+	TokenID   string `json:"token_id"`
+	ExpiresAt string `json:"expires_at"`
+	User      struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Role        string `json:"role"`
+		Status      string `json:"status"`
+	} `json:"user"`
+}
+
+type PATRevokeResponse struct {
+	TokenID string `json:"token_id"`
+	Revoked bool   `json:"revoked"`
+}
+
+func DecodeEnvelope(payload []byte) (Envelope, error) {
+	var env Envelope
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return Envelope{}, fmt.Errorf("decode envelope: %w", err)
+	}
+	return env, nil
+}
+
+func DecodeFromEnvelope[T any](payload []byte, target *T) error {
+	env, err := DecodeEnvelope(payload)
+	if err != nil {
+		return err
+	}
+	if !env.Success {
+		type errorDetail struct {
+			Code    string            `json:"code"`
+			Details string            `json:"details"`
+			Fields  map[string]string `json:"fields"`
+		}
+		var envErr struct {
+			Error errorDetail `json:"error"`
+		}
+		if err := json.Unmarshal(payload, &envErr); err == nil && envErr.Error.Code != "" {
+			return fmt.Errorf("api error (%s): %s", envErr.Error.Code, envErr.Error.Details)
+		}
+		return fmt.Errorf("api error: %s", env.Message)
+	}
+	if len(env.Data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(env.Data, target)
+}
+
+func DecodeTunnelSession(payload []byte) (TunnelSession, error) {
+	var session TunnelSession
+	if err := DecodeFromEnvelope(payload, &session); err != nil {
+		return TunnelSession{}, err
+	}
+	return session, session.Validate()
+}
+
+func (session TunnelSession) Validate() error {
+	if err := requireValue("tunnel_session.session_id", session.SessionID); err != nil {
+		return err
+	}
+	if session.LocalPort <= 0 {
+		return fmt.Errorf("tunnel_session.local_port must be greater than zero")
+	}
+	if err := requireValue("tunnel_session.status", session.Status); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DecodeCLILoginResponse(payload []byte) (CLILoginResponse, error) {
+	var resp CLILoginResponse
+	if err := DecodeFromEnvelope(payload, &resp); err != nil {
+		return CLILoginResponse{}, err
+	}
+	return resp, nil
+}
+
+func DecodePATRevokeResponse(payload []byte) (PATRevokeResponse, error) {
+	var resp PATRevokeResponse
+	if err := DecodeFromEnvelope(payload, &resp); err != nil {
+		return PATRevokeResponse{}, err
+	}
+	return resp, nil
 }
 
 func DecodeProjectsResponse(payload []byte) (ProjectsResponse, error) {
 	var response ProjectsResponse
-	if err := decode(payload, &response); err != nil {
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
 		return ProjectsResponse{}, err
 	}
-
 	return response, response.Validate()
 }
 
 func DecodeGitHubInstallationsResponse(payload []byte) (GitHubInstallationsResponse, error) {
 	var response GitHubInstallationsResponse
-	if err := decode(payload, &response); err != nil {
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
 		return GitHubInstallationsResponse{}, err
 	}
-
 	return response, response.Validate()
 }
 
 func DecodeInstancesResponse(payload []byte) (InstancesResponse, error) {
 	var response InstancesResponse
-	if err := decode(payload, &response); err != nil {
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
 		return InstancesResponse{}, err
 	}
-
 	return response, response.Validate()
 }
 
 func DecodeMeshNetworksResponse(payload []byte) (MeshNetworksResponse, error) {
 	var response MeshNetworksResponse
-	if err := decode(payload, &response); err != nil {
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
 		return MeshNetworksResponse{}, err
 	}
-
 	return response, response.Validate()
 }
 
 func DecodeClustersResponse(payload []byte) (ClustersResponse, error) {
 	var response ClustersResponse
-	if err := decode(payload, &response); err != nil {
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
 		return ClustersResponse{}, err
 	}
-
 	return response, response.Validate()
 }
 
 func DecodeDeploymentBindingsResponse(payload []byte) (DeploymentBindingsResponse, error) {
 	var response DeploymentBindingsResponse
-	if err := decode(payload, &response); err != nil {
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
 		return DeploymentBindingsResponse{}, err
 	}
-
 	return response, response.Validate()
 }
 
 func DecodeDeploymentBinding(payload []byte) (DeploymentBinding, error) {
 	var binding DeploymentBinding
-	if err := decode(payload, &binding); err != nil {
+	if err := DecodeFromEnvelope(payload, &binding); err != nil {
 		return DeploymentBinding{}, err
 	}
-
 	return binding, binding.Validate()
 }
 
 func DecodeProjectRepoLink(payload []byte) (ProjectRepoLink, error) {
 	var link ProjectRepoLink
-	if err := decode(payload, &link); err != nil {
+	if err := DecodeFromEnvelope(payload, &link); err != nil {
 		return ProjectRepoLink{}, err
 	}
-
 	return link, link.Validate()
 }
 
 func DecodeTraceSummary(payload []byte) (TraceSummary, error) {
 	var trace TraceSummary
-	if err := decode(payload, &trace); err != nil {
+	if err := DecodeFromEnvelope(payload, &trace); err != nil {
 		return TraceSummary{}, err
 	}
-
 	return trace, trace.Validate()
 }
 
 func DecodeLogsStreamPreview(payload []byte) (LogsStreamPreview, error) {
 	var preview LogsStreamPreview
-	if err := decode(payload, &preview); err != nil {
+	if err := DecodeFromEnvelope(payload, &preview); err != nil {
 		return LogsStreamPreview{}, err
 	}
-
 	return preview, preview.Validate()
 }
 

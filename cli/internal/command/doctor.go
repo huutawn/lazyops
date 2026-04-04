@@ -323,9 +323,6 @@ func checkDoctorBinding(
 	if !ok {
 		return failDoctorCheck("binding", fmt.Sprintf("deployment binding %s points to a target that no longer exists", binding.Name), "rerun `lazyops init` and choose a valid target before deploying")
 	}
-	if strings.TrimSpace(projects.selected.UserID) != "" && strings.TrimSpace(target.Owner) != "" && projects.selected.UserID != target.Owner {
-		return failDoctorCheck("binding", fmt.Sprintf("%s target %s is not owned by project %s", target.Kind, target.Name, projects.selected.Slug), "choose a target owned by the project or rerun `lazyops init` to recreate the binding")
-	}
 	if !isLinkableTargetStatus(target.Status) {
 		return warnDoctorCheck("binding", fmt.Sprintf("deployment binding %s targets %s %s, but the target status is %s", binding.Name, target.Kind, target.Name, target.Status), "bring the target back online or choose a different target before the next deploy")
 	}
@@ -498,7 +495,7 @@ func fetchDoctorPreview(ctx context.Context, runtime *Runtime, credential creden
 
 	var preview doctorPreviewResponse
 	if err := json.Unmarshal(response.Body, &preview); err != nil {
-		return doctorPreviewResponse{}, fmt.Errorf("decode doctor preview: %w", err)
+		return doctorPreviewResponse{}, fmt.Errorf("could not decode doctor preview response. next: verify the backend doctor preview contract returns valid JSON: %w", err)
 	}
 	return preview, nil
 }

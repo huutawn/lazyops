@@ -2,8 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"lazyops-cli/internal/credentials"
 	"lazyops-cli/internal/redact"
@@ -25,27 +23,8 @@ func NewRootCommand() *Command {
 			bindingsCommand(),
 			logsCommand(),
 			tracesCommand(),
-			{
-				Name:    "tunnel",
-				Summary: "Open an optional debug tunnel.",
-				Usage:   "lazyops tunnel <db|tcp>",
-				Subcommands: []*Command{
-					authFixtureCommand(
-						"db",
-						"Open a debug database tunnel.",
-						"lazyops tunnel db",
-						"Day 2 scaffold: tunnel db is wired to the mock transport.",
-						transport.Request{Method: "POST", Path: "/api/v1/tunnels/db/sessions"},
-					),
-					authFixtureCommand(
-						"tcp",
-						"Open a debug TCP tunnel.",
-						"lazyops tunnel tcp",
-						"Day 2 scaffold: tunnel tcp is wired to the mock transport.",
-						transport.Request{Method: "POST", Path: "/api/v1/tunnels/tcp/sessions"},
-					),
-				},
-			},
+			tunnelCommand(),
+			completionCommand(),
 		},
 	}
 }
@@ -56,29 +35,6 @@ func initCommand() *Command {
 		Summary: "Initialize the repository into a valid LazyOps deploy contract.",
 		Usage:   "lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]] [--magic-domain-provider <sslip.io|nip.io>] [--scale-to-zero] [--write [--overwrite]]",
 		Run:     withAuth(runInit),
-	}
-}
-
-func tracesCommand() *Command {
-	return &Command{
-		Name:    "traces",
-		Summary: "Inspect distributed request flow.",
-		Usage:   "lazyops traces <correlation-id>",
-		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
-			if len(args) < 1 {
-				return fmt.Errorf("usage: lazyops traces <correlation-id>")
-			}
-
-			correlationID := strings.TrimSpace(args[0])
-			if correlationID == "" {
-				return fmt.Errorf("correlation id is required")
-			}
-
-			return renderAuthorizedRequest(ctx, runtime, "Day 2 scaffold: traces is wired to the transport abstraction.", credential, transport.Request{
-				Method: "GET",
-				Path:   "/api/v1/traces/" + correlationID,
-			})
-		}),
 	}
 }
 

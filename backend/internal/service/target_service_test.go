@@ -203,6 +203,14 @@ func (f *fakeClusterStore) GetByID(clusterID string) (*models.Cluster, error) {
 	return item, nil
 }
 
+func (f *fakeClusterStore) UpdateStatus(clusterID, status string, at time.Time) error {
+	if item, ok := f.byID[clusterID]; ok {
+		item.Status = status
+		item.UpdatedAt = at
+	}
+	return nil
+}
+
 func TestMeshNetworkServiceCreateAndList(t *testing.T) {
 	store := newFakeMeshNetworkStore()
 	service := NewMeshNetworkService(store)

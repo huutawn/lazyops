@@ -76,11 +76,10 @@ func runStatus(ctx context.Context, runtime *Runtime, args []string, credential 
 		}
 		if target, ok := resolveTargetForBinding(*selectedBinding, discovery); ok {
 			targetSnapshot = &lazystatus.TargetSnapshot{
-				ID:          target.ID,
-				Kind:        target.Kind,
-				Name:        target.Name,
-				Status:      target.Status,
-				OwnerUserID: target.Owner,
+				ID:     target.ID,
+				Kind:   target.Kind,
+				Name:   target.Name,
+				Status: target.Status,
 			}
 		}
 	}

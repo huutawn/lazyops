@@ -18,6 +18,7 @@ const (
 	CommandReportTopologyState     CommandType = "report_topology_state"
 	CommandReportTraceSummary      CommandType = "report_trace_summary"
 	CommandReportMetricRollup      CommandType = "report_metric_rollup"
+	CommandReportLogBatch          CommandType = "report_log_batch"
 	CommandGarbageCollectRuntime   CommandType = "garbage_collect_runtime"
 )
 
@@ -37,6 +38,7 @@ var MinimumCommandSet = []CommandType{
 	CommandReportTopologyState,
 	CommandReportTraceSummary,
 	CommandReportMetricRollup,
+	CommandReportLogBatch,
 	CommandGarbageCollectRuntime,
 }
 
@@ -137,6 +139,12 @@ var CommandHandlerBindings = map[CommandType]CommandHandlerSpec{
 		Module:      "telemetry/metrics",
 		HandlerKey:  "metrics.report_metric_rollup",
 		Description: "Report edge-downsampled metric windows to the backend.",
+	},
+	CommandReportLogBatch: {
+		Command:     CommandReportLogBatch,
+		Module:      "telemetry/logs",
+		HandlerKey:  "logs.report_log_batch",
+		Description: "Report filtered log excerpts and incident-relevant log snippets.",
 	},
 	CommandGarbageCollectRuntime: {
 		Command:     CommandGarbageCollectRuntime,

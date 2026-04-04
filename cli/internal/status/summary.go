@@ -50,11 +50,10 @@ type DeploymentState struct {
 }
 
 type TargetSnapshot struct {
-	ID          string
-	Kind        string
-	Name        string
-	Status      string
-	OwnerUserID string
+	ID     string
+	Kind   string
+	Name   string
+	Status string
 }
 
 type Input struct {
@@ -131,14 +130,6 @@ func buildTopologyState(mode initplan.RuntimeMode, project contracts.Project, bi
 			State: "missing",
 			Kind:  binding.TargetKind,
 			Name:  binding.TargetRef,
-		}
-	}
-	if strings.TrimSpace(project.UserID) != "" && strings.TrimSpace(target.OwnerUserID) != "" && project.UserID != target.OwnerUserID {
-		return TopologyState{
-			State:  "ownership-mismatch",
-			Kind:   target.Kind,
-			Name:   target.Name,
-			Status: target.Status,
 		}
 	}
 	if targetHealthy(mode, target.Status) {

@@ -184,9 +184,9 @@ func TestApplyDiscoveryInfersMeshDependencyBindings(t *testing.T) {
 
 	enriched, err := ApplyDiscovery(
 		plan,
-		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		[]contracts.Project{{ID: "prj_demo", Slug: "acme-shop", Name: "Acme Shop"}},
 		nil,
-		[]contracts.MeshNetwork{{ID: "mesh_demo", UserID: "usr_demo", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
+		[]contracts.MeshNetwork{{ID: "mesh_demo", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
 		nil,
 		SelectionInput{
 			Project:     "acme-shop",
@@ -206,34 +206,6 @@ func TestApplyDiscoveryInfersMeshDependencyBindings(t *testing.T) {
 	}
 }
 
-func TestApplyDiscoveryRejectsMeshOwnershipMismatch(t *testing.T) {
-	plan := InitPlan{
-		RepoRoot:            "/tmp/repo",
-		Layout:              "single-service",
-		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
-		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
-	}
-
-	_, err := ApplyDiscovery(
-		plan,
-		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
-		nil,
-		[]contracts.MeshNetwork{{ID: "mesh_demo", UserID: "usr_other", Name: "prod-ap", Status: "online", Provider: "wireguard"}},
-		nil,
-		SelectionInput{
-			Project:     "acme-shop",
-			RuntimeMode: RuntimeModeDistributedMesh,
-			Target:      "prod-ap",
-		},
-	)
-	if err == nil {
-		t.Fatal("expected ownership mismatch error, got nil")
-	}
-	if !strings.Contains(err.Error(), "not owned") {
-		t.Fatalf("expected ownership mismatch error, got %v", err)
-	}
-}
-
 func TestApplyDiscoveryRejectsOfflineMeshTarget(t *testing.T) {
 	plan := InitPlan{
 		RepoRoot:            "/tmp/repo",
@@ -244,9 +216,9 @@ func TestApplyDiscoveryRejectsOfflineMeshTarget(t *testing.T) {
 
 	_, err := ApplyDiscovery(
 		plan,
-		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		[]contracts.Project{{ID: "prj_demo", Slug: "acme-shop", Name: "Acme Shop"}},
 		nil,
-		[]contracts.MeshNetwork{{ID: "mesh_demo", UserID: "usr_demo", Name: "prod-ap", Status: "offline", Provider: "wireguard"}},
+		[]contracts.MeshNetwork{{ID: "mesh_demo", Name: "prod-ap", Status: "offline", Provider: "wireguard"}},
 		nil,
 		SelectionInput{
 			Project:     "acme-shop",
@@ -292,34 +264,6 @@ func TestInitPlanValidateRejectsK3sLocalDependencyBypass(t *testing.T) {
 	}
 }
 
-func TestApplyDiscoveryRejectsClusterOwnershipMismatch(t *testing.T) {
-	plan := InitPlan{
-		RepoRoot:            "/tmp/repo",
-		Layout:              "single-service",
-		Services:            []ServiceCandidate{{Name: "api", Path: "."}},
-		CompatibilityPolicy: DefaultCompatibilityPolicyDraft(),
-	}
-
-	_, err := ApplyDiscovery(
-		plan,
-		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
-		nil,
-		nil,
-		[]contracts.Cluster{{ID: "cls_demo", UserID: "usr_other", Name: "prod-k3s-ap", Status: "registered", Provider: "k3s"}},
-		SelectionInput{
-			Project:     "acme-shop",
-			RuntimeMode: RuntimeModeDistributedK3s,
-			Target:      "prod-k3s-ap",
-		},
-	)
-	if err == nil {
-		t.Fatal("expected cluster ownership mismatch error, got nil")
-	}
-	if !strings.Contains(err.Error(), "not owned") {
-		t.Fatalf("expected cluster ownership mismatch error, got %v", err)
-	}
-}
-
 func TestApplyDiscoveryRejectsUnavailableCluster(t *testing.T) {
 	plan := InitPlan{
 		RepoRoot:            "/tmp/repo",
@@ -330,10 +274,10 @@ func TestApplyDiscoveryRejectsUnavailableCluster(t *testing.T) {
 
 	_, err := ApplyDiscovery(
 		plan,
-		[]contracts.Project{{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}},
+		[]contracts.Project{{ID: "prj_demo", Slug: "acme-shop", Name: "Acme Shop"}},
 		nil,
 		nil,
-		[]contracts.Cluster{{ID: "cls_demo", UserID: "usr_demo", Name: "prod-k3s-ap", Status: "unavailable", Provider: "k3s"}},
+		[]contracts.Cluster{{ID: "cls_demo", Name: "prod-k3s-ap", Status: "unavailable", Provider: "k3s"}},
 		SelectionInput{
 			Project:     "acme-shop",
 			RuntimeMode: RuntimeModeDistributedK3s,
@@ -368,10 +312,10 @@ func TestAnnotateBindingsWithTargetsMarksReusableStatus(t *testing.T) {
 		},
 	}
 	targets := []TargetSummary{
-		{ID: "inst_demo", Name: "prod-solo-1", Kind: "instance", Status: "online", OwnerUserID: "usr_demo", RuntimeMode: RuntimeModeStandalone},
-		{ID: "mesh_demo", Name: "prod-ap", Kind: "mesh", Status: "offline", OwnerUserID: "usr_demo", RuntimeMode: RuntimeModeDistributedMesh},
+		{ID: "inst_demo", Name: "prod-solo-1", Kind: "instance", Status: "online", RuntimeMode: RuntimeModeStandalone},
+		{ID: "mesh_demo", Name: "prod-ap", Kind: "mesh", Status: "offline", RuntimeMode: RuntimeModeDistributedMesh},
 	}
-	project := &ProjectSummary{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}
+	project := &ProjectSummary{ID: "prj_demo", Slug: "acme-shop", Name: "Acme Shop"}
 
 	annotated := AnnotateBindingsWithTargets(bindings, targets, project)
 	if len(annotated) != 2 {

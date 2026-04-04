@@ -33,7 +33,6 @@ type InitPlan struct {
 
 type ProjectSummary struct {
 	ID            string `json:"id"`
-	UserID        string `json:"-"`
 	Slug          string `json:"slug"`
 	Name          string `json:"name"`
 	DefaultBranch string `json:"default_branch,omitempty"`
@@ -44,7 +43,6 @@ type TargetSummary struct {
 	Name        string      `json:"name"`
 	Kind        string      `json:"kind"`
 	Status      string      `json:"status"`
-	OwnerUserID string      `json:"-"`
 	RuntimeMode RuntimeMode `json:"runtime_mode"`
 }
 
@@ -471,7 +469,6 @@ func summarizeProjects(projects []contracts.Project) []ProjectSummary {
 	for _, project := range projects {
 		summaries = append(summaries, ProjectSummary{
 			ID:            project.ID,
-			UserID:        project.UserID,
 			Slug:          project.Slug,
 			Name:          project.Name,
 			DefaultBranch: project.DefaultBranch,
@@ -489,7 +486,6 @@ func SummarizeTargets(instances []contracts.Instance, meshNetworks []contracts.M
 			Name:        instance.Name,
 			Kind:        "instance",
 			Status:      instance.Status,
-			OwnerUserID: instance.UserID,
 			RuntimeMode: RuntimeModeStandalone,
 		})
 	}
@@ -499,7 +495,6 @@ func SummarizeTargets(instances []contracts.Instance, meshNetworks []contracts.M
 			Name:        network.Name,
 			Kind:        "mesh",
 			Status:      network.Status,
-			OwnerUserID: network.UserID,
 			RuntimeMode: RuntimeModeDistributedMesh,
 		})
 	}
@@ -509,7 +504,6 @@ func SummarizeTargets(instances []contracts.Instance, meshNetworks []contracts.M
 			Name:        cluster.Name,
 			Kind:        "cluster",
 			Status:      cluster.Status,
-			OwnerUserID: cluster.UserID,
 			RuntimeMode: RuntimeModeDistributedK3s,
 		})
 	}
@@ -693,10 +687,6 @@ func eligibleTargetsForMode(targets []TargetSummary, mode RuntimeMode, project *
 }
 
 func targetSelectableForProject(target TargetSummary, project *ProjectSummary) (bool, string) {
-	if project != nil && strings.TrimSpace(project.UserID) != "" && strings.TrimSpace(target.OwnerUserID) != "" && project.UserID != target.OwnerUserID {
-		return false, "ownership"
-	}
-
 	switch target.RuntimeMode {
 	case RuntimeModeStandalone, RuntimeModeDistributedMesh:
 		if !strings.EqualFold(target.Status, "online") {

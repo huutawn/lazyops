@@ -50,5 +50,12 @@ func Migrate(db *gorm.DB) error {
 		&models.BootstrapToken{},
 		&models.Agent{},
 		&models.AgentToken{},
+		&models.RuntimeIncident{},
+		&models.PublicRoute{},
+		&models.GatewayConfigIntent{},
+		&models.ReleaseHistory{},
+		&models.PreviewEnvironment{},
+		&models.TunnelSession{},
+		&models.TopologyState{},
 	)
 }

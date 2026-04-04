@@ -73,6 +73,18 @@ func (f *fakeDesiredStateRevisionStore) UpdateStatus(revisionID, status string, 
 	return nil
 }
 
+func (f *fakeDesiredStateRevisionStore) ListByProject(projectID string) ([]models.DesiredStateRevision, error) {
+	projectItems := f.byProjectID[projectID]
+	if projectItems == nil {
+		return nil, nil
+	}
+	out := make([]models.DesiredStateRevision, 0, len(projectItems))
+	for _, item := range projectItems {
+		out = append(out, *item)
+	}
+	return out, nil
+}
+
 func (f *fakeDesiredStateRevisionStore) put(item *models.DesiredStateRevision) {
 	projectItems := f.byProjectID[item.ProjectID]
 	if projectItems == nil {

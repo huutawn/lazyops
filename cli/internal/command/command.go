@@ -59,7 +59,7 @@ func (c *Command) Execute(ctx context.Context, runtime *Runtime, args []string) 
 	}
 
 	c.printHelp(runtime)
-	return fmt.Errorf("unknown command %q", args[0])
+	return fmt.Errorf("unknown command %q. next: run `lazyops help` to see available commands", args[0])
 }
 
 func (c *Command) lookup(name string) *Command {

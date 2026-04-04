@@ -40,3 +40,15 @@ func (r *DeploymentBindingRepository) GetByTargetRefForProject(projectID, target
 
 	return &binding, nil
 }
+
+func (r *DeploymentBindingRepository) GetByIDForProject(projectID, bindingID string) (*models.DeploymentBinding, error) {
+	var binding models.DeploymentBinding
+	if err := r.db.Where("project_id = ? AND id = ?", projectID, bindingID).First(&binding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &binding, nil
+}

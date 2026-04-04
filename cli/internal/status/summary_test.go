@@ -19,10 +19,10 @@ func TestBuildAdapterSummaryHealthyStandalone(t *testing.T) {
 			},
 		},
 		Project: contracts.Project{
-			ID:     "prj_demo",
-			UserID: "usr_demo",
-			Name:   "Acme Shop",
-			Slug:   "acme-shop",
+			ID: "prj_demo",
+
+			Name: "Acme Shop",
+			Slug: "acme-shop",
 		},
 		Binding: &contracts.DeploymentBinding{
 			ID:          "bind_standalone_demo",
@@ -34,11 +34,10 @@ func TestBuildAdapterSummaryHealthyStandalone(t *testing.T) {
 			TargetID:    "inst_demo",
 		},
 		Target: &TargetSnapshot{
-			ID:          "inst_demo",
-			Kind:        "instance",
-			Name:        "prod-solo-1",
-			Status:      "online",
-			OwnerUserID: "usr_demo",
+			ID:     "inst_demo",
+			Kind:   "instance",
+			Name:   "prod-solo-1",
+			Status: "online",
 		},
 	})
 	if err != nil {
@@ -102,10 +101,10 @@ func TestBuildAdapterSummaryOfflineTargetDegradesDeployment(t *testing.T) {
 			},
 		},
 		Project: contracts.Project{
-			ID:     "prj_demo",
-			UserID: "usr_demo",
-			Name:   "Acme Shop",
-			Slug:   "acme-shop",
+			ID: "prj_demo",
+
+			Name: "Acme Shop",
+			Slug: "acme-shop",
 		},
 		Binding: &contracts.DeploymentBinding{
 			ID:          "bind_demo",
@@ -117,11 +116,10 @@ func TestBuildAdapterSummaryOfflineTargetDegradesDeployment(t *testing.T) {
 			TargetID:    "mesh_demo",
 		},
 		Target: &TargetSnapshot{
-			ID:          "mesh_demo",
-			Kind:        "mesh",
-			Name:        "prod-ap",
-			Status:      "offline",
-			OwnerUserID: "usr_demo",
+			ID:     "mesh_demo",
+			Kind:   "mesh",
+			Name:   "prod-ap",
+			Status: "offline",
 		},
 	})
 	if err != nil {

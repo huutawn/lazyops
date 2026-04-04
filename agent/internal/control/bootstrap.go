@@ -10,8 +10,13 @@ import (
 )
 
 const (
-	handshakeEnvelopeType = contracts.CommandType("agent.handshake")
-	heartbeatEnvelopeType = contracts.CommandType("agent.heartbeat")
+	handshakeEnvelopeType    = contracts.CommandType("agent.handshake")
+	heartbeatEnvelopeType    = contracts.CommandType("agent.heartbeat")
+	traceSummaryEnvelopeType = contracts.CommandType("agent.trace_summary")
+	logBatchEnvelopeType     = contracts.CommandType("agent.log_batch")
+	metricRollupEnvelopeType = contracts.CommandType("agent.metric_rollup")
+	topologyEnvelopeType     = contracts.CommandType("agent.topology")
+	incidentEnvelopeType     = contracts.CommandType("agent.incident")
 )
 
 type BootstrapTokenRecord struct {

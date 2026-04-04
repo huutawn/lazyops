@@ -20,9 +20,10 @@ func logoutCommand() *Command {
 	return &Command{
 		Name:    "logout",
 		Summary: "Revoke or clear the local CLI session.",
-		Usage:   "lazyops logout",
+		Usage:   "lazyops logout [--yes]",
 		Run: func(ctx context.Context, runtime *Runtime, args []string) error {
-			if err := parseLogoutArgs(args); err != nil {
+			confirmed, err := parseLogoutArgs(args)
+			if err != nil {
 				return err
 			}
 
@@ -37,6 +38,10 @@ func logoutCommand() *Command {
 				return nil
 			case err != nil:
 				return fmt.Errorf("could not load local CLI session. next: verify local credential storage and retry `lazyops logout`: %w", err)
+			}
+
+			if !confirmed {
+				return errors.New("logout will revoke the remote PAT and clear local credentials. next: confirm with `lazyops logout --yes`")
 			}
 
 			revoked, warning, err := revokePATIfAvailable(ctx, runtime, record)
@@ -63,19 +68,21 @@ func logoutCommand() *Command {
 	}
 }
 
-func parseLogoutArgs(args []string) error {
+func parseLogoutArgs(args []string) (bool, error) {
 	flagSet := flag.NewFlagSet("logout", flag.ContinueOnError)
 	flagSet.SetOutput(io.Discard)
 
+	yes := flagSet.Bool("yes", false, "confirm logout without interactive prompt")
+
 	if err := flagSet.Parse(args); err != nil {
-		return errors.New("invalid logout flags. next: run `lazyops logout` without extra arguments")
+		return false, errors.New("invalid logout flags. next: run `lazyops logout --yes`")
 	}
 
 	if flagSet.NArg() > 0 {
-		return fmt.Errorf("unexpected logout arguments: %s. next: run `lazyops logout` without extra arguments", strings.Join(flagSet.Args(), " "))
+		return false, fmt.Errorf("unexpected logout arguments: %s. next: run `lazyops logout --yes`", strings.Join(flagSet.Args(), " "))
 	}
 
-	return nil
+	return *yes, nil
 }
 
 func revokePATIfAvailable(ctx context.Context, runtime *Runtime, record credentials.Record) (bool, string, error) {

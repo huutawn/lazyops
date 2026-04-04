@@ -80,6 +80,18 @@ func (f *fakeDeploymentBindingStore) GetByTargetRefForProject(projectID, targetR
 	return nil, nil
 }
 
+func (f *fakeDeploymentBindingStore) GetByIDForProject(projectID, bindingID string) (*models.DeploymentBinding, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	for _, binding := range f.byProjectTargetRef {
+		if binding.ProjectID == projectID && binding.ID == bindingID {
+			return binding, nil
+		}
+	}
+	return nil, nil
+}
+
 func TestDeploymentBindingServiceCreateSuccess(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",

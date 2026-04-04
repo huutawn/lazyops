@@ -10,8 +10,10 @@ import (
 const maskedValue = "[redacted]"
 
 var (
-	bearerPattern = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
-	kvPattern     = regexp.MustCompile(`(?i)(\b(?:token|access_token|refresh_token|pat|password|secret|api_key|credential|authorization|private_key|kubeconfig)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,]+)`)
+	bearerPattern  = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	kvPattern      = regexp.MustCompile(`(?i)(\b(?:token|access_token|refresh_token|pat|password|secret|api_key|credential|authorization|private_key|kubeconfig|ssh_key|ssh_private_key)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,]+)`)
+	sshKeyPattern  = regexp.MustCompile(`(?i)(-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----)[\s\S]*?(-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----)`)
+	sshCertPattern = regexp.MustCompile(`(?i)(ssh-(?:rsa|ed25519|dss)\s+)[A-Za-z0-9+/=]+`)
 )
 
 func Text(input string) string {
@@ -25,6 +27,8 @@ func Text(input string) string {
 	})
 
 	output = kvPattern.ReplaceAllString(output, "${1}"+maskedValue)
+	output = sshKeyPattern.ReplaceAllString(output, "${1} "+maskedValue+" ${2}")
+	output = sshCertPattern.ReplaceAllString(output, "${1}"+maskedValue)
 	return output
 }
 
@@ -105,6 +109,8 @@ func isSensitiveKey(key string) bool {
 		return true
 	case normalized == "kubeconfig":
 		return true
+	case normalized == "sshkey":
+		return true
 	case strings.HasSuffix(normalized, "token"):
 		return true
 	case strings.HasSuffix(normalized, "password"):
@@ -114,6 +120,10 @@ func isSensitiveKey(key string) bool {
 	case strings.HasSuffix(normalized, "credential"):
 		return true
 	case strings.HasSuffix(normalized, "apikey"):
+		return true
+	case strings.HasSuffix(normalized, "privatekey"):
+		return true
+	case strings.HasSuffix(normalized, "kubeconfig"):
 		return true
 	default:
 		return false

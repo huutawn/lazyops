@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -3355,4 +3356,623 @@ func findHealthResult(t *testing.T, results []ServiceHealthResult, serviceName s
 	}
 	t.Fatalf("health result for service %q not found", serviceName)
 	return ServiceHealthResult{}
+}
+
+type fakeTraceSender struct {
+	mu      sync.Mutex
+	sent    []contracts.TraceSummaryPayload
+	sendErr error
+}
+
+func (f *fakeTraceSender) SendTraceSummary(_ context.Context, payload contracts.TraceSummaryPayload) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, payload)
+	return f.sendErr
+}
+
+func TestReportTraceSummaryHandlerReturnsDone(t *testing.T) {
+	collector := NewTraceCollector(slog.New(slog.NewTextHandler(io.Discard, nil)), TraceCollectorConfig{
+		SampleRate:        1.0,
+		MaxHopsPerTrace:   16,
+		ReportingInterval: 1 * time.Second,
+		MaxWindowAge:      2 * time.Second,
+	})
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC)
+	}
+	collector.RecordHop("corr_trace_1", "gateway", "sidecar:web", "http", 10.0, "ok", true)
+	collector.CompleteTrace("prj_123", "corr_trace_1")
+
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 9, 0, 5, 0, time.UTC)
+	}
+
+	sender := &fakeTraceSender{}
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithTraceCollector(collector)
+	service.traceSender = sender
+
+	payload := ReportTraceSummaryPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		WorkspaceRoot: filepath.Join(t.TempDir(), "runtime-root"),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportTraceSummary(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportTraceSummary,
+		RequestID:     "req_trace",
+		CorrelationID: "corr_trace",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected handler to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 trace summary sent to backend, got %d", len(sender.sent))
+	}
+	if sender.sent[0].CorrelationID != "corr_trace_1" {
+		t.Fatalf("expected correlation_id corr_trace_1, got %q", sender.sent[0].CorrelationID)
+	}
+	if len(sender.sent[0].Hops) != 1 {
+		t.Fatalf("expected 1 hop in sent summary, got %d", len(sender.sent[0].Hops))
+	}
+}
+
+func TestReportTraceSummaryHandlerRejectsBadPayload(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	result := service.handleReportTraceSummary(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportTraceSummary,
+		RequestID:     "req_trace_bad",
+		CorrelationID: "corr_trace_bad",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       json.RawMessage(`{}`),
+	})
+	if result.Error == nil {
+		t.Fatal("expected handler to fail with empty payload")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected invalid payload to be non-retryable")
+	}
+}
+
+func TestReportTraceSummaryHandlerRejectsMissingCollector(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	payload := ReportTraceSummaryPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		WorkspaceRoot: t.TempDir(),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportTraceSummary(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportTraceSummary,
+		RequestID:     "req_trace_no_collector",
+		CorrelationID: "corr_trace_no_collector",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected handler to fail without trace collector")
+	}
+	if result.Error.Code != "trace_collector_not_configured" {
+		t.Fatalf("expected trace_collector_not_configured code, got %q", result.Error.Code)
+	}
+}
+
+func TestReportTraceSummaryHandlerCanBeRegistered(t *testing.T) {
+	registry := dispatcher.NewDefaultRegistry()
+	service := NewService(nil, nil, nil)
+	service.Register(registry)
+
+	if _, ok := registry.Resolve(contracts.CommandReportTraceSummary); !ok {
+		t.Fatal("expected runtime service to register report_trace_summary handler")
+	}
+}
+
+func TestReportTraceSummaryHandlerPersistsTraceFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	collector := NewTraceCollector(slog.New(slog.NewTextHandler(io.Discard, nil)), TraceCollectorConfig{
+		SampleRate:        1.0,
+		MaxHopsPerTrace:   16,
+		ReportingInterval: 1 * time.Second,
+		MaxWindowAge:      2 * time.Second,
+	})
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC)
+	}
+	collector.RecordHop("corr_persist", "gateway", "sidecar:web", "http", 15.0, "ok", true)
+	collector.RecordHop("corr_persist", "sidecar:web", "api", "http", 8.0, "ok", true)
+	collector.CompleteTrace("prj_123", "corr_persist")
+
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 9, 0, 5, 0, time.UTC)
+	}
+
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithTraceCollector(collector)
+
+	payload := ReportTraceSummaryPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		WorkspaceRoot: root,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportTraceSummary(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportTraceSummary,
+		RequestID:     "req_trace_persist",
+		CorrelationID: "corr_trace_persist",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected handler to succeed, got %#v", result.Error)
+	}
+
+	tracePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "traces", "corr_persist.json")
+	if _, err := os.Stat(tracePath); err != nil {
+		t.Fatalf("expected trace file at %s: %v", tracePath, err)
+	}
+
+	var loaded TraceWindow
+	traceRaw, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("read trace file: %v", err)
+	}
+	if err := json.Unmarshal(traceRaw, &loaded); err != nil {
+		t.Fatalf("decode trace file: %v", err)
+	}
+	if len(loaded.Hops) != 2 {
+		t.Fatalf("expected 2 hops in persisted trace, got %d", len(loaded.Hops))
+	}
+}
+
+type fakeLogSender struct {
+	mu      sync.Mutex
+	sent    []contracts.LogBatchPayload
+	sendErr error
+}
+
+func (f *fakeLogSender) SendLogBatch(_ context.Context, payload contracts.LogBatchPayload) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, payload)
+	return f.sendErr
+}
+
+func TestReportLogBatchHandlerReturnsDone(t *testing.T) {
+	collector := NewLogCollector(slog.New(slog.NewTextHandler(io.Discard, nil)), LogCollectorConfig{
+		MaxEntriesPerBatch: 5,
+		ReportingInterval:  1 * time.Second,
+		MaxBufferAge:       2 * time.Second,
+		MaxBufferSize:      50,
+		ExcerptMaxLength:   256,
+		CooldownDuration:   1 * time.Second,
+	})
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
+	}
+	collector.Ingest(contracts.LogEntry{
+		Timestamp: collector.now(),
+		Severity:  contracts.SeverityCritical,
+		Source:    "api",
+		Message:   "panic: nil pointer",
+	})
+
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 10, 0, 5, 0, time.UTC)
+	}
+
+	sender := &fakeLogSender{}
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithLogCollector(collector)
+	service.logSender = sender
+
+	payload := ReportLogBatchPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		WorkspaceRoot: filepath.Join(t.TempDir(), "runtime-root"),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportLogBatch(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportLogBatch,
+		RequestID:     "req_log",
+		CorrelationID: "corr_log",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected handler to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 log batch sent to backend, got %d", len(sender.sent))
+	}
+	if len(sender.sent[0].Entries) != 1 {
+		t.Fatalf("expected 1 entry in sent batch, got %d", len(sender.sent[0].Entries))
+	}
+	if sender.sent[0].Entries[0].Severity != contracts.SeverityCritical {
+		t.Fatalf("expected critical severity, got %q", sender.sent[0].Entries[0].Severity)
+	}
+}
+
+func TestReportLogBatchHandlerRejectsBadPayload(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	result := service.handleReportLogBatch(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportLogBatch,
+		RequestID:     "req_log_bad",
+		CorrelationID: "corr_log_bad",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       json.RawMessage(`{}`),
+	})
+	if result.Error == nil {
+		t.Fatal("expected handler to fail with empty payload")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected invalid payload to be non-retryable")
+	}
+}
+
+func TestReportLogBatchHandlerRejectsMissingCollector(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	payload := ReportLogBatchPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		WorkspaceRoot: t.TempDir(),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportLogBatch(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportLogBatch,
+		RequestID:     "req_log_no_collector",
+		CorrelationID: "corr_log_no_collector",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected handler to fail without log collector")
+	}
+	if result.Error.Code != "log_collector_not_configured" {
+		t.Fatalf("expected log_collector_not_configured code, got %q", result.Error.Code)
+	}
+}
+
+func TestReportLogBatchHandlerCanBeRegistered(t *testing.T) {
+	registry := dispatcher.NewDefaultRegistry()
+	service := NewService(nil, nil, nil)
+	service.Register(registry)
+
+	if _, ok := registry.Resolve(contracts.CommandReportLogBatch); !ok {
+		t.Fatal("expected runtime service to register report_log_batch handler")
+	}
+}
+
+func TestReportLogBatchHandlerPersistsLogFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	collector := NewLogCollector(slog.New(slog.NewTextHandler(io.Discard, nil)), LogCollectorConfig{
+		MaxEntriesPerBatch: 5,
+		ReportingInterval:  1 * time.Second,
+		MaxBufferAge:       2 * time.Second,
+		MaxBufferSize:      50,
+		ExcerptMaxLength:   256,
+		CooldownDuration:   0,
+	})
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
+	}
+	collector.Ingest(contracts.LogEntry{
+		Timestamp: collector.now(),
+		Severity:  contracts.SeverityInfo,
+		Source:    "api",
+		Message:   "server started",
+	})
+	collector.Ingest(contracts.LogEntry{
+		Timestamp: collector.now(),
+		Severity:  contracts.SeverityWarning,
+		Source:    "api",
+		Message:   "slow query detected",
+	})
+
+	collector.now = func() time.Time {
+		return time.Date(2026, 4, 4, 10, 0, 5, 0, time.UTC)
+	}
+
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithLogCollector(collector)
+
+	payload := ReportLogBatchPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		WorkspaceRoot: root,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportLogBatch(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportLogBatch,
+		RequestID:     "req_log_persist",
+		CorrelationID: "corr_log_persist",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected handler to succeed, got %#v", result.Error)
+	}
+
+	logPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "logs", "api_20260404T100005Z.json")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected log file at %s: %v", logPath, err)
+	}
+
+	var loaded contracts.LogBatchPayload
+	logRaw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	if err := json.Unmarshal(logRaw, &loaded); err != nil {
+		t.Fatalf("decode log file: %v", err)
+	}
+	if len(loaded.Entries) != 2 {
+		t.Fatalf("expected 2 entries in persisted log, got %d", len(loaded.Entries))
+	}
+}
+
+func TestReportMetricRollupHandlerReturnsDone(t *testing.T) {
+	agg := NewMetricAggregator(slog.New(slog.NewTextHandler(io.Discard, nil)), MetricAggregatorConfig{
+		WindowDuration:    1 * time.Second,
+		ReportingInterval: 1 * time.Second,
+		MaxSamplesPerSlot: 100,
+	})
+	agg.now = func() time.Time {
+		return time.Date(2026, 4, 4, 11, 0, 0, 0, time.UTC)
+	}
+	agg.Record("cpu", 50.0)
+	agg.Record("ram", 2048.0)
+
+	agg.now = func() time.Time {
+		return time.Date(2026, 4, 4, 11, 0, 5, 0, time.UTC)
+	}
+
+	sender := &fakeMetricSender{}
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithMetricAggregator(agg)
+	service.metricSender = sender
+
+	payload := ReportMetricRollupPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		TargetKind:    contracts.TargetKindInstance,
+		TargetID:      "inst_123",
+		WorkspaceRoot: filepath.Join(t.TempDir(), "runtime-root"),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportMetricRollup(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportMetricRollup,
+		RequestID:     "req_metric",
+		CorrelationID: "corr_metric",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected handler to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 rollup sent to backend, got %d", len(sender.sent))
+	}
+	if sender.sent[0].CPU.Count != 1 {
+		t.Fatalf("expected cpu count 1, got %d", sender.sent[0].CPU.Count)
+	}
+}
+
+func TestReportMetricRollupHandlerRejectsBadPayload(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	result := service.handleReportMetricRollup(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportMetricRollup,
+		RequestID:     "req_metric_bad",
+		CorrelationID: "corr_metric_bad",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       json.RawMessage(`{}`),
+	})
+	if result.Error == nil {
+		t.Fatal("expected handler to fail with empty payload")
+	}
+	if result.Error.Retryable {
+		t.Fatal("expected invalid payload to be non-retryable")
+	}
+}
+
+func TestReportMetricRollupHandlerRejectsMissingAggregator(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	payload := ReportMetricRollupPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		TargetKind:    contracts.TargetKindInstance,
+		TargetID:      "inst_123",
+		WorkspaceRoot: t.TempDir(),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportMetricRollup(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportMetricRollup,
+		RequestID:     "req_metric_no_agg",
+		CorrelationID: "corr_metric_no_agg",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error == nil {
+		t.Fatal("expected handler to fail without metric aggregator")
+	}
+	if result.Error.Code != "metric_aggregator_not_configured" {
+		t.Fatalf("expected metric_aggregator_not_configured code, got %q", result.Error.Code)
+	}
+}
+
+func TestReportMetricRollupHandlerCanBeRegistered(t *testing.T) {
+	registry := dispatcher.NewDefaultRegistry()
+	service := NewService(nil, nil, nil)
+	service.Register(registry)
+
+	if _, ok := registry.Resolve(contracts.CommandReportMetricRollup); !ok {
+		t.Fatal("expected runtime service to register report_metric_rollup handler")
+	}
+}
+
+func TestReportMetricRollupHandlerWithNodeMetrics(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	agg := NewMetricAggregator(slog.New(slog.NewTextHandler(io.Discard, nil)), MetricAggregatorConfig{
+		WindowDuration:    1 * time.Second,
+		ReportingInterval: 1 * time.Second,
+		MaxSamplesPerSlot: 100,
+	})
+
+	nodeMetrics := NewNodeMetricsCollector(nil, NodeMetricsConfig{
+		CollectionInterval: 1 * time.Second,
+	})
+
+	collectTime := time.Date(2026, 4, 4, 11, 0, 0, 0, time.UTC)
+	nodeMetrics.now = func() time.Time {
+		return collectTime
+	}
+
+	agg.now = func() time.Time {
+		return collectTime
+	}
+
+	snapshot := nodeMetrics.Collect()
+	nodeMetrics.FeedToAggregator(agg, snapshot)
+
+	agg.now = func() time.Time {
+		return time.Date(2026, 4, 4, 11, 0, 5, 0, time.UTC)
+	}
+
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithMetricAggregator(agg)
+	service.WithNodeMetrics(nodeMetrics)
+
+	payload := ReportMetricRollupPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		TargetKind:    contracts.TargetKindInstance,
+		TargetID:      "inst_123",
+		WorkspaceRoot: root,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := service.handleReportMetricRollup(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandReportMetricRollup,
+		RequestID:     "req_metric_node",
+		CorrelationID: "corr_metric_node",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected handler to succeed, got %#v", result.Error)
+	}
+
+	metricPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "metrics", "rollup_20260404T110005Z.json")
+	if _, err := os.Stat(metricPath); err != nil {
+		t.Fatalf("expected metric file at %s: %v", metricPath, err)
+	}
+
+	var loaded contracts.MetricRollupPayload
+	metricRaw, err := os.ReadFile(metricPath)
+	if err != nil {
+		t.Fatalf("read metric file: %v", err)
+	}
+	if err := json.Unmarshal(metricRaw, &loaded); err != nil {
+		t.Fatalf("decode metric file: %v", err)
+	}
+	if loaded.CPU.Count < 1 {
+		t.Fatalf("expected cpu count >= 1 from node metrics, got %d", loaded.CPU.Count)
+	}
+	if loaded.RAM.Count < 1 {
+		t.Fatalf("expected ram count >= 1 from node metrics, got %d", loaded.RAM.Count)
+	}
 }

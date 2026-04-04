@@ -38,7 +38,6 @@ type githubRepoAccess struct {
 
 type verifiedLinkTarget struct {
 	ID     string
-	Owner  string
 	Name   string
 	Kind   string
 	Status string
@@ -233,9 +232,6 @@ func selectProjectForLink(projects []contracts.Project, selector string, credent
 		if selector != project.ID && selector != project.Slug && selector != project.Name {
 			continue
 		}
-		if strings.TrimSpace(project.UserID) != "" && strings.TrimSpace(credential.UserID) != "" && project.UserID != credential.UserID {
-			return contracts.Project{}, fmt.Errorf("project %q is not owned by the current CLI user. next: choose a project you own or rerun `lazyops login` with the correct account", project.Slug)
-		}
 		return project, nil
 	}
 
@@ -261,10 +257,6 @@ func verifyLinkTarget(project contracts.Project, binding contracts.DeploymentBin
 	if !ok {
 		return verifiedLinkTarget{}, fmt.Errorf("deployment binding %q points to a target that no longer exists. next: rerun `lazyops init` and choose a valid target", binding.Name)
 	}
-
-	if strings.TrimSpace(project.UserID) != "" && strings.TrimSpace(target.Owner) != "" && project.UserID != target.Owner {
-		return verifiedLinkTarget{}, fmt.Errorf("%s target %q is not owned by the selected project user. next: choose a target owned by the project or rerun `lazyops init`", target.Kind, target.Name)
-	}
 	if !isLinkableTargetStatus(target.Status) {
 		return verifiedLinkTarget{}, fmt.Errorf("%s target %q is not online or registered. next: bring the target online, wait for registration, or choose a different binding", target.Kind, target.Name)
 	}
@@ -279,7 +271,6 @@ func resolveTargetForBinding(binding contracts.DeploymentBinding, discovery init
 			if instance.ID == binding.TargetID {
 				return verifiedLinkTarget{
 					ID:     instance.ID,
-					Owner:  instance.UserID,
 					Name:   instance.Name,
 					Kind:   "instance",
 					Status: instance.Status,
@@ -291,7 +282,6 @@ func resolveTargetForBinding(binding contracts.DeploymentBinding, discovery init
 			if network.ID == binding.TargetID {
 				return verifiedLinkTarget{
 					ID:     network.ID,
-					Owner:  network.UserID,
 					Name:   network.Name,
 					Kind:   "mesh",
 					Status: network.Status,
@@ -303,7 +293,6 @@ func resolveTargetForBinding(binding contracts.DeploymentBinding, discovery init
 			if cluster.ID == binding.TargetID {
 				return verifiedLinkTarget{
 					ID:     cluster.ID,
-					Owner:  cluster.UserID,
 					Name:   cluster.Name,
 					Kind:   "cluster",
 					Status: cluster.Status,
@@ -399,7 +388,7 @@ func repoAccessForInstallation(installation contracts.GitHubInstallation, repoOw
 func repositoriesFromInstallationScope(scope map[string]any) ([]githubRepoAccess, error) {
 	rawRepositories, ok := scope["repositories"]
 	if !ok {
-		return nil, errors.New("scope_json.repositories is missing")
+		return nil, errors.New("scope_json.repositories is missing. next: verify the GitHub App installation includes repository scope")
 	}
 
 	items, ok := rawRepositories.([]any)
@@ -410,7 +399,7 @@ func repositoriesFromInstallationScope(scope map[string]any) ([]githubRepoAccess
 				items = append(items, item)
 			}
 		} else {
-			return nil, errors.New("scope_json.repositories must be an array")
+			return nil, errors.New("scope_json.repositories must be an array. next: verify the GitHub App installation scope_json.repositories is a list")
 		}
 	}
 
@@ -418,7 +407,7 @@ func repositoriesFromInstallationScope(scope map[string]any) ([]githubRepoAccess
 	for _, item := range items {
 		entry, ok := item.(map[string]any)
 		if !ok {
-			return nil, errors.New("scope_json.repositories entries must be objects")
+			return nil, errors.New("scope_json.repositories entries must be objects. next: verify the GitHub App installation scope_json.repositories contains valid repo objects")
 		}
 
 		repoID, err := coerceInt64(entry["id"])
@@ -430,7 +419,7 @@ func repositoriesFromInstallationScope(scope map[string]any) ([]githubRepoAccess
 		owner, _ := entry["owner"].(string)
 		defaultBranch, _ := entry["default_branch"].(string)
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(owner) == "" {
-			return nil, errors.New("scope_json.repositories entries must include owner and name")
+			return nil, errors.New("scope_json.repositories entries must include owner and name. next: verify the GitHub App installation scope includes full repository objects")
 		}
 
 		repositories = append(repositories, githubRepoAccess{

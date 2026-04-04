@@ -34,3 +34,54 @@ func TestPrettyJSONRedactsSensitiveKeys(t *testing.T) {
 		t.Fatalf("expected safe value to remain visible, got %q", output)
 	}
 }
+
+func TestTextRedactsSSHKeys(t *testing.T) {
+	input := "config: -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"
+	output := Text(input)
+
+	if strings.Contains(output, "MIIEowIBAAKCAQEA") {
+		t.Fatalf("expected SSH key material to be redacted, got %q", output)
+	}
+	if !strings.Contains(output, "BEGIN RSA PRIVATE KEY") {
+		t.Fatalf("expected BEGIN marker to remain, got %q", output)
+	}
+	if !strings.Contains(output, maskedValue) {
+		t.Fatalf("expected masked value, got %q", output)
+	}
+}
+
+func TestTextRedactsSSHCertificates(t *testing.T) {
+	input := "pub: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ user@host"
+	output := Text(input)
+
+	if strings.Contains(output, "AAAAB3NzaC1yc2EAAAADAQABAAABAQ") {
+		t.Fatalf("expected SSH cert content to be redacted, got %q", output)
+	}
+	if !strings.Contains(output, "ssh-rsa ") {
+		t.Fatalf("expected ssh-rsa prefix to remain, got %q", output)
+	}
+	if !strings.Contains(output, maskedValue) {
+		t.Fatalf("expected masked value, got %q", output)
+	}
+}
+
+func TestTextRedactsKubeconfigValues(t *testing.T) {
+	input := "kubeconfig: /home/user/.kube/config password=mysecret123"
+	output := Text(input)
+
+	if strings.Contains(output, "/home/user/.kube/config") {
+		t.Fatalf("expected kubeconfig path to be redacted, got %q", output)
+	}
+	if strings.Contains(output, "mysecret123") {
+		t.Fatalf("expected password to be redacted, got %q", output)
+	}
+}
+
+func TestTextRedactsSSHCredentials(t *testing.T) {
+	input := "ssh_key: sk_live_abc123"
+	output := Text(input)
+
+	if strings.Contains(output, "sk_live_abc123") {
+		t.Fatalf("expected ssh_key value to be redacted, got %q", output)
+	}
+}

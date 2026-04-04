@@ -144,6 +144,51 @@ func (c *WebSocketClient) SendHeartbeat(ctx context.Context, payload contracts.H
 	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
 }
 
+func (c *WebSocketClient) SendTraceSummary(ctx context.Context, payload contracts.TraceSummaryPayload) error {
+	envelope, raw, err := buildEnvelope(traceSummaryEnvelopeType, payload.ProjectID, payload)
+	if err != nil {
+		return err
+	}
+
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
+}
+
+func (c *WebSocketClient) SendLogBatch(ctx context.Context, payload contracts.LogBatchPayload) error {
+	envelope, raw, err := buildEnvelope(logBatchEnvelopeType, payload.ProjectID, payload)
+	if err != nil {
+		return err
+	}
+
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
+}
+
+func (c *WebSocketClient) SendMetricRollup(ctx context.Context, payload contracts.MetricRollupPayload) error {
+	envelope, raw, err := buildEnvelope(metricRollupEnvelopeType, payload.ProjectID, payload)
+	if err != nil {
+		return err
+	}
+
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
+}
+
+func (c *WebSocketClient) SendTopology(ctx context.Context, payload contracts.TopologyPayload) error {
+	envelope, raw, err := buildEnvelope(topologyEnvelopeType, payload.ProjectID, payload)
+	if err != nil {
+		return err
+	}
+
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
+}
+
+func (c *WebSocketClient) SendIncident(ctx context.Context, payload contracts.IncidentPayload) error {
+	envelope, raw, err := buildEnvelope(incidentEnvelopeType, payload.ProjectID, payload)
+	if err != nil {
+		return err
+	}
+
+	return c.enqueue(ctx, queuedMessage{transcript: &envelope, raw: raw})
+}
+
 func (c *WebSocketClient) SendCommandAck(ctx context.Context, envelope contracts.CommandAckEnvelope) error {
 	raw, err := json.Marshal(envelope)
 	if err != nil {

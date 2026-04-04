@@ -2,6 +2,7 @@ package contracts
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,8 @@ func TestDecodeCoreContracts(t *testing.T) {
 			name: "projects",
 			body: mustMarshal(t, ProjectsResponse{
 				Projects: []Project{{
-					ID:            "prj_demo",
-					UserID:        "usr_demo",
+					ID: "prj_demo",
+
 					Name:          "Acme Shop",
 					Slug:          "acme-shop",
 					DefaultBranch: "main",
@@ -37,8 +38,8 @@ func TestDecodeCoreContracts(t *testing.T) {
 			name: "github_installations",
 			body: mustMarshal(t, GitHubInstallationsResponse{
 				Installations: []GitHubInstallation{{
-					ID:                   "ghi_demo",
-					UserID:               "usr_demo",
+					ID: "ghi_demo",
+
 					GitHubInstallationID: 48151623,
 					AccountLogin:         "lazyops",
 					AccountType:          "Organization",
@@ -58,8 +59,8 @@ func TestDecodeCoreContracts(t *testing.T) {
 			name: "instances",
 			body: mustMarshal(t, InstancesResponse{
 				Instances: []Instance{{
-					ID:        "inst_demo",
-					UserID:    "usr_demo",
+					ID: "inst_demo",
+
 					Name:      "prod-solo-1",
 					PublicIP:  "203.0.113.10",
 					PrivateIP: "10.10.0.10",
@@ -77,8 +78,8 @@ func TestDecodeCoreContracts(t *testing.T) {
 			name: "mesh_networks",
 			body: mustMarshal(t, MeshNetworksResponse{
 				MeshNetworks: []MeshNetwork{{
-					ID:        "mesh_demo",
-					UserID:    "usr_demo",
+					ID: "mesh_demo",
+
 					Name:      "prod-ap",
 					Provider:  "wireguard",
 					CIDR:      "10.42.0.0/16",
@@ -95,8 +96,8 @@ func TestDecodeCoreContracts(t *testing.T) {
 			name: "clusters",
 			body: mustMarshal(t, ClustersResponse{
 				Clusters: []Cluster{{
-					ID:                  "cls_demo",
-					UserID:              "usr_demo",
+					ID: "cls_demo",
+
 					Name:                "prod-k3s-ap",
 					Provider:            "k3s",
 					KubeconfigSecretRef: "secret://clusters/cls_demo/kubeconfig",
@@ -198,7 +199,8 @@ func TestDecodeCoreContracts(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.decode(tc.body); err != nil {
+			envelopeBody := []byte(fmt.Sprintf(`{"success":true,"data":%s}`, string(tc.body)))
+			if err := tc.decode(envelopeBody); err != nil {
 				t.Fatalf("decode error = %v", err)
 			}
 		})
@@ -229,8 +231,9 @@ func TestDecodeTraceSummaryRejectsMissingServicePath(t *testing.T) {
 	payload := mustMarshal(t, TraceSummary{
 		CorrelationID: "corr-demo",
 	})
+	envelopeBody := []byte(fmt.Sprintf(`{"success":true,"data":%s}`, string(payload)))
 
-	_, err := DecodeTraceSummary(payload)
+	_, err := DecodeTraceSummary(envelopeBody)
 	if err == nil {
 		t.Fatal("expected missing service path error, got nil")
 	}

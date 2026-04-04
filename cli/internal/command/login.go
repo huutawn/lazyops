@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"lazyops-cli/internal/contracts"
 	"lazyops-cli/internal/credentials"
 	"lazyops-cli/internal/transport"
 )
@@ -21,19 +22,6 @@ type cliLoginRequest struct {
 	Email    string `json:"email,omitempty"`
 	Password string `json:"password,omitempty"`
 	Provider string `json:"provider,omitempty"`
-}
-
-type cliLoginResponse struct {
-	Token string `json:"token"`
-	User  struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"display_name"`
-	} `json:"user"`
-	Meta struct {
-		StorageHint string `json:"storage_hint"`
-		Provider    string `json:"provider,omitempty"`
-		AuthMethod  string `json:"auth_method,omitempty"`
-	} `json:"meta"`
 }
 
 type apiErrorResponse struct {
@@ -75,7 +63,7 @@ func loginCommand() *Command {
 			}
 
 			if runtime.Credentials == nil {
-				return errors.New("credential store is not configured")
+				return errors.New("credential store is not configured. next: verify the CLI was built with keychain or file credential support and retry `lazyops login`")
 			}
 
 			saveResult, err := runtime.Credentials.Save(ctx, credentials.Record{
@@ -84,7 +72,7 @@ func loginCommand() *Command {
 				DisplayName: loginResponse.User.DisplayName,
 			})
 			if err != nil {
-				return fmt.Errorf("login succeeded but storing credentials failed: %w", err)
+				return fmt.Errorf("login succeeded but storing credentials failed. next: retry `lazyops login` and check credential store permissions: %w", err)
 			}
 
 			displayName := strings.TrimSpace(loginResponse.User.DisplayName)
@@ -99,10 +87,6 @@ func loginCommand() *Command {
 
 			runtime.Output.Success("logged in as %s via %s", displayName, modeDescription)
 			runtime.Output.Info("credentials stored in %s", saveResult.Backend)
-
-			if strings.TrimSpace(loginResponse.Meta.StorageHint) != "" && saveResult.Backend != loginResponse.Meta.StorageHint {
-				runtime.Output.Warn("backend suggested %s storage, using %s instead", loginResponse.Meta.StorageHint, saveResult.Backend)
-			}
 
 			return nil
 		},
@@ -150,18 +134,18 @@ func parseLoginArgs(args []string) (cliLoginRequest, error) {
 	}
 }
 
-func parseLoginResponse(response transport.Response) (cliLoginResponse, error) {
+func parseLoginResponse(response transport.Response) (contracts.CLILoginResponse, error) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return cliLoginResponse{}, parseAPIError(response)
+		return contracts.CLILoginResponse{}, parseAPIError(response)
 	}
 
-	var payload cliLoginResponse
-	if err := json.Unmarshal(response.Body, &payload); err != nil {
-		return cliLoginResponse{}, fmt.Errorf("could not decode login response: %w", err)
+	payload, err := contracts.DecodeCLILoginResponse(response.Body)
+	if err != nil {
+		return contracts.CLILoginResponse{}, fmt.Errorf("could not decode login response. next: verify the backend returns valid JSON from `POST /api/v1/auth/cli-login`: %w", err)
 	}
 
 	if strings.TrimSpace(payload.Token) == "" {
-		return cliLoginResponse{}, errors.New("login response is missing a PAT. next: verify the backend returns `token` for `POST /api/v1/auth/cli-login`")
+		return contracts.CLILoginResponse{}, errors.New("login response is missing a PAT. next: verify the backend returns `token` for `POST /api/v1/auth/cli-login`")
 	}
 
 	return payload, nil

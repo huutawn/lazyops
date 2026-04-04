@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #08111f;
+    --bg-accent: #10233a;
+    --card: rgba(10, 22, 39, 0.82);
+    --border: rgba(137, 179, 255, 0.18);
+    --text: #eef4ff;
+    --muted: #a6b7d4;
+    --primary: #7dd3fc;
+    --success: #8de1b5;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --shadow: 0 30px 80px rgba(0, 0, 0, 0.34);
+    --health-healthy: #8de1b5;
+    --health-degraded: #fbbf24;
+    --health-unhealthy: #f87171;
+    --health-offline: #6366f1;
+    --health-unknown: #94a3b8;
+    --rollout-progress: #7dd3fc;
+    --rollout-paused: #fbbf24;
+    --rollout-failed: #f87171;
+    --rollout-completed: #8de1b5;
+    --incident-critical: #f87171;
+    --incident-warning: #fbbf24;
+    --incident-resolved: #8de1b5;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    min-height: 100%;
+    padding: 0;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(125, 211, 252, 0.15), transparent 30%),
+      radial-gradient(circle at top right, rgba(141, 225, 181, 0.12), transparent 28%),
+      linear-gradient(180deg, #08111f 0%, #0d1729 100%);
+    color: var(--text);
+    font-family:
+      'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  }
+
+  a {
+    color: inherit;
+  }
+}
+
+@layer components {
+  .auth-layout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 32px;
+  }
+
+  .auth-page {
+    width: min(440px, 100%);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    padding: 32px;
+    text-align: center;
+    backdrop-filter: blur(18px);
+  }
+
+  .auth-page h1 {
+    font-size: 1.8rem;
+    margin-bottom: 12px;
+  }
+
+  .auth-page p {
+    color: var(--muted);
+  }
+
+  .app-layout {
+    min-height: 100vh;
+  }
+}

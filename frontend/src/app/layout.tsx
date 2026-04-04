@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
-import './globals.css';
+import { AppProviders } from '@/lib/providers/app-providers';
+import '@/styles/globals.css';
 
 export const metadata: Metadata = {
   title: 'LazyOps Console',
@@ -15,7 +16,9 @@ type RootLayoutProps = {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

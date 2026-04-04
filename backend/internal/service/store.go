@@ -61,6 +61,7 @@ type DeploymentBindingStore interface {
 	Create(binding *models.DeploymentBinding) error
 	ListByProject(projectID string) ([]models.DeploymentBinding, error)
 	GetByTargetRefForProject(projectID, targetRef string) (*models.DeploymentBinding, error)
+	GetByIDForProject(projectID, bindingID string) (*models.DeploymentBinding, error)
 }
 
 type ProjectServiceStore interface {
@@ -77,6 +78,7 @@ type BlueprintStore interface {
 type DesiredStateRevisionStore interface {
 	Create(revision *models.DesiredStateRevision) error
 	GetByIDForProject(projectID, revisionID string) (*models.DesiredStateRevision, error)
+	ListByProject(projectID string) ([]models.DesiredStateRevision, error)
 	UpdateStatus(revisionID, status string, at time.Time) error
 }
 
@@ -109,6 +111,7 @@ type ClusterStore interface {
 	GetByNameForUser(userID, name string) (*models.Cluster, error)
 	GetByIDForUser(userID, clusterID string) (*models.Cluster, error)
 	GetByID(clusterID string) (*models.Cluster, error)
+	UpdateStatus(clusterID, status string, at time.Time) error
 }
 
 type BootstrapTokenStore interface {
@@ -129,4 +132,11 @@ type AgentStore interface {
 	ListByUser(userID string) ([]models.Agent, error)
 	GetByAgentIDForUser(userID, agentID string) (*models.Agent, error)
 	UpdateStatusForUser(userID, agentID, name, status string, at time.Time) (*models.Agent, error)
+}
+
+type RuntimeIncidentStore interface {
+	Create(incident *models.RuntimeIncident) error
+	ListByProject(projectID string) ([]models.RuntimeIncident, error)
+	ListByDeployment(projectID, deploymentID string) ([]models.RuntimeIncident, error)
+	UpdateStatus(incidentID, status string, at time.Time) error
 }

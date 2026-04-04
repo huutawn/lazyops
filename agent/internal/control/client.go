@@ -17,6 +17,11 @@ type Client interface {
 	SendCommandAck(context.Context, contracts.CommandAckEnvelope) error
 	SendCommandNack(context.Context, contracts.CommandNackEnvelope) error
 	SendCommandError(context.Context, contracts.CommandErrorEnvelope) error
+	SendTraceSummary(context.Context, contracts.TraceSummaryPayload) error
+	SendLogBatch(context.Context, contracts.LogBatchPayload) error
+	SendMetricRollup(context.Context, contracts.MetricRollupPayload) error
+	SendTopology(context.Context, contracts.TopologyPayload) error
+	SendIncident(context.Context, contracts.IncidentPayload) error
 	Close(context.Context) error
 	Transcript() []contracts.CommandEnvelope
 }

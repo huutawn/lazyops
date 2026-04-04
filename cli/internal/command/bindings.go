@@ -72,7 +72,6 @@ func bindingsCommand() *Command {
 			targets := initplan.SummarizeTargets(instancesResponse.Instances, meshNetworksResponse.MeshNetworks, clustersResponse.Clusters)
 			projectSummary := initplan.ProjectSummary{
 				ID:            project.ID,
-				UserID:        project.UserID,
 				Slug:          project.Slug,
 				Name:          project.Name,
 				DefaultBranch: project.DefaultBranch,

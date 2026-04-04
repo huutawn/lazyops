@@ -55,10 +55,14 @@ func runInit(ctx context.Context, runtime *Runtime, args []string, credential cr
 		return fmt.Errorf("could not build the init plan review. next: fix the detected service layout and retry `lazyops init`: %w", err)
 	}
 
+	spinner := runtime.SpinnerFactory.New()
+	spinner.Start("fetching projects and targets")
 	discovery, err := fetchInitDiscovery(ctx, runtime, credential)
 	if err != nil {
+		spinner.Stop("")
 		return err
 	}
+	spinner.Stop("")
 
 	plan, err = initplan.ApplyDiscovery(plan, discovery.projects, discovery.instances, discovery.meshNetworks, discovery.clusters, initplan.SelectionInput{
 		Project:     initArgs.Project,
@@ -70,10 +74,13 @@ func runInit(ctx context.Context, runtime *Runtime, args []string, credential cr
 	}
 
 	if plan.SelectedProject != nil {
+		spinner.Update("fetching deployment bindings")
 		bindingsResponse, err := fetchBindings(ctx, runtime, credential, plan.SelectedProject.ID)
 		if err != nil {
+			spinner.Stop("")
 			return err
 		}
+		spinner.Stop("")
 
 		plan, err = initplan.ApplyBindings(plan, bindingsResponse.Bindings, initplan.BindingSelectionInput{
 			Binding:     initArgs.Binding,

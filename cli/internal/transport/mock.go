@@ -56,6 +56,15 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	if strings.EqualFold(req.Method, "GET") && req.Path == "/ws/logs/stream" {
 		return mockLogsStream(req)
 	}
+	if strings.EqualFold(req.Method, "GET") && isTracePath(req.Path) {
+		return mockTrace(req)
+	}
+	if strings.EqualFold(req.Method, "POST") && isTunnelSessionPath(req.Path) {
+		return mockCreateTunnelSession(req)
+	}
+	if strings.EqualFold(req.Method, "DELETE") && isTunnelStopPath(req.Path) {
+		return mockStopTunnelSession(req)
+	}
 
 	response, ok := t.fixtures[req.Key()]
 	if !ok {
@@ -140,7 +149,7 @@ func mockCLILogin(req Request) (Response, error) {
 			return Response{
 				StatusCode:  200,
 				FixtureName: "cli-login-password",
-				Body: mustJSON(map[string]any{
+				Body: envelope(map[string]any{
 					"token": "lazyops_pat_mock_secret_value",
 					"user": map[string]any{
 						"id":           "usr_demo",
@@ -169,7 +178,7 @@ func mockCLILogin(req Request) (Response, error) {
 			return Response{
 				StatusCode:  200,
 				FixtureName: "cli-login-browser-" + provider,
-				Body: mustJSON(map[string]any{
+				Body: envelope(map[string]any{
 					"token": "lazyops_pat_mock_secret_value",
 					"user": map[string]any{
 						"id":           "usr_demo",
@@ -235,7 +244,7 @@ func mockPATRevoke(req Request) (Response, error) {
 	return Response{
 		StatusCode:  200,
 		FixtureName: "pat-revoke",
-		Body: mustJSON(map[string]any{
+		Body: envelope(map[string]any{
 			"revoked": true,
 		}),
 	}, nil
@@ -296,18 +305,18 @@ func mockCreateDeploymentBinding(req Request) (Response, error) {
 		RuntimeMode: mode,
 		TargetKind:  kind,
 		TargetID:    strings.TrimSpace(payload.TargetID),
-		PlacementPolicyJSON: map[string]any{
+		PlacementPolicy: map[string]any{
 			"strategy": "balanced",
 		},
-		DomainPolicyJSON: map[string]any{
+		DomainPolicy: map[string]any{
 			"provider": "sslip.io",
 		},
-		CompatibilityPolicyJSON: map[string]any{
+		CompatibilityPolicy: map[string]any{
 			"env_injection":       true,
 			"managed_credentials": true,
 			"localhost_rescue":    true,
 		},
-		ScaleToZeroPolicyJSON: map[string]any{
+		ScaleToZeroPolicy: map[string]any{
 			"enabled": false,
 		},
 		CreatedAt: time.Date(2026, time.April, 1, 9, 0, 0, 0, time.UTC),
@@ -316,7 +325,7 @@ func mockCreateDeploymentBinding(req Request) (Response, error) {
 	return Response{
 		StatusCode:  201,
 		FixtureName: "deployment-binding-created",
-		Body:        mustJSON(binding),
+		Body:        envelope(binding),
 	}, nil
 }
 
@@ -422,7 +431,7 @@ func mockLinkRepository(req Request) (Response, error) {
 	return Response{
 		StatusCode:  201,
 		FixtureName: "repo-link",
-		Body:        mustJSON(link),
+		Body:        envelope(link),
 	}, nil
 }
 
@@ -446,6 +455,182 @@ func sanitizeBindingID(name string) string {
 		return "generated"
 	}
 	return normalized
+}
+
+func isTracePath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/traces/")
+}
+
+func mockTrace(req Request) (Response, error) {
+	parts := strings.Split(strings.TrimPrefix(req.Path, "/api/v1/traces/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "trace-missing-correlation-id",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_correlation_id",
+				"message":   "Correlation id is required for trace lookup.",
+				"next_step": "rerun `lazyops traces <correlation-id>` with a valid correlation id",
+			}),
+		}, nil
+	}
+
+	correlationID := parts[0]
+
+	datasets := map[string]contracts.TraceSummary{
+		"corr-demo": {
+			CorrelationID:  "corr-demo",
+			ServicePath:    []string{"gateway", "web", "api", "postgres"},
+			NodeHops:       []string{"edge-ap-1", "mesh-ap-2", "db-ap-1"},
+			LatencyHotspot: "api -> postgres",
+			TotalLatencyMS: 182,
+		},
+		"corr-error-demo": {
+			CorrelationID:  "corr-error-demo",
+			ServicePath:    []string{"gateway", "api", "external-service"},
+			NodeHops:       []string{"edge-ap-1", "mesh-ap-2"},
+			LatencyHotspot: "api -> external-service",
+			TotalLatencyMS: 5230,
+		},
+	}
+
+	summary, ok := datasets[correlationID]
+	if !ok {
+		summary = contracts.TraceSummary{
+			CorrelationID:  correlationID,
+			ServicePath:    []string{"gateway", "web", "api"},
+			NodeHops:       []string{"edge-ap-1", "mesh-ap-1"},
+			LatencyHotspot: "unknown",
+			TotalLatencyMS: 95,
+		}
+	}
+
+	return Response{
+		StatusCode:  200,
+		FixtureName: "trace-summary",
+		Body:        envelope(summary),
+	}, nil
+}
+
+func isTunnelSessionPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/tunnels/db/sessions") || strings.HasPrefix(path, "/api/v1/tunnels/tcp/sessions")
+}
+
+func isTunnelStopPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/tunnels/sessions/")
+}
+
+func mockCreateTunnelSession(req Request) (Response, error) {
+	var payload struct {
+		ProjectID string `json:"project_id"`
+		LocalPort int    `json:"local_port"`
+		Remote    string `json:"remote"`
+		Timeout   string `json:"timeout"`
+		TargetRef string `json:"target_ref"`
+	}
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "tunnel-bad-json",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_request",
+				"message":   "Tunnel session payload is invalid.",
+				"next_step": "retry the tunnel command with valid arguments",
+			}),
+		}, nil
+	}
+
+	if payload.ProjectID == "" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "tunnel-missing-project",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_project",
+				"message":   "Project id is required to create a tunnel session.",
+				"next_step": "run `lazyops init` before opening a debug tunnel",
+			}),
+		}, nil
+	}
+
+	if payload.ProjectID != "prj_demo" {
+		return Response{
+			StatusCode:  404,
+			FixtureName: "tunnel-project-not-found",
+			Body: mustJSON(map[string]any{
+				"error":     "project_not_found",
+				"message":   fmt.Sprintf("Project %q does not have tunnel support enabled.", payload.ProjectID),
+				"next_step": "verify the project has an online target and retry",
+			}),
+		}, nil
+	}
+
+	if payload.LocalPort == 99999 {
+		return Response{
+			StatusCode:  409,
+			FixtureName: "tunnel-port-conflict",
+			Body: mustJSON(map[string]any{
+				"error":     "port_conflict",
+				"message":   fmt.Sprintf("Local port %d is already in use by another process.", payload.LocalPort),
+				"next_step": "choose a different port with `--port` or stop the process using that port",
+			}),
+		}, nil
+	}
+
+	sessionID := "tun_demo_" + fmt.Sprintf("%d", payload.LocalPort)
+	tunnelType := "db"
+	if strings.Contains(req.Path, "/tcp/") {
+		tunnelType = "tcp"
+	}
+
+	return Response{
+		StatusCode:  201,
+		FixtureName: "tunnel-session-created",
+		Body: envelope(map[string]any{
+			"session_id": sessionID,
+			"local_port": payload.LocalPort,
+			"remote":     payload.Remote,
+			"status":     "ready",
+			"expires_at": time.Now().Add(30 * time.Minute).Format(time.RFC3339),
+			"type":       tunnelType,
+		}),
+	}, nil
+}
+
+func mockStopTunnelSession(req Request) (Response, error) {
+	parts := strings.Split(strings.TrimPrefix(req.Path, "/api/v1/tunnels/sessions/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "tunnel-stop-missing-id",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_session_id",
+				"message":   "Session id is required to stop a tunnel.",
+				"next_step": "rerun `lazyops tunnel stop <session-id>`",
+			}),
+		}, nil
+	}
+
+	sessionID := parts[0]
+	if sessionID == "tun_nonexistent" {
+		return Response{
+			StatusCode:  404,
+			FixtureName: "tunnel-stop-not-found",
+			Body: mustJSON(map[string]any{
+				"error":     "session_not_found",
+				"message":   fmt.Sprintf("Tunnel session %q was not found.", sessionID),
+				"next_step": "list active sessions with `lazyops tunnel list` or start a new tunnel",
+			}),
+		}, nil
+	}
+
+	return Response{
+		StatusCode:  200,
+		FixtureName: "tunnel-session-stopped",
+		Body: envelope(map[string]any{
+			"session_id": sessionID,
+			"status":     "stopped",
+		}),
+	}, nil
 }
 
 func mockLogsStream(req Request) (Response, error) {
@@ -599,7 +784,7 @@ func mockLogsStream(req Request) (Response, error) {
 	return Response{
 		StatusCode:  200,
 		FixtureName: "logs-stream",
-		Body:        mustJSON(preview),
+		Body:        envelope(preview),
 	}, nil
 }
 
@@ -613,7 +798,6 @@ func DefaultFixtures() map[string]Response {
 		Projects: []contracts.Project{
 			{
 				ID:            "prj_demo",
-				UserID:        "usr_demo",
 				Name:          "Acme Shop",
 				Slug:          "acme-shop",
 				DefaultBranch: "main",
@@ -626,7 +810,6 @@ func DefaultFixtures() map[string]Response {
 		Installations: []contracts.GitHubInstallation{
 			{
 				ID:                   "ghi_demo",
-				UserID:               "usr_demo",
 				GitHubInstallationID: 48151623,
 				AccountLogin:         "lazyops",
 				AccountType:          "Organization",
@@ -653,17 +836,16 @@ func DefaultFixtures() map[string]Response {
 		Instances: []contracts.Instance{
 			{
 				ID:        "inst_demo",
-				UserID:    "usr_demo",
 				Name:      "prod-solo-1",
 				PublicIP:  "203.0.113.10",
 				PrivateIP: "10.10.0.10",
 				AgentID:   "agt_inst_demo",
 				Status:    "online",
-				LabelsJSON: map[string]any{
+				Labels: map[string]any{
 					"region": "ap-southeast-1",
 					"tier":   "prod",
 				},
-				RuntimeCapabilitiesJSON: map[string]any{
+				RuntimeCapabilities: map[string]any{
 					"docker":     true,
 					"scale_zero": true,
 				},
@@ -676,7 +858,6 @@ func DefaultFixtures() map[string]Response {
 		MeshNetworks: []contracts.MeshNetwork{
 			{
 				ID:        "mesh_demo",
-				UserID:    "usr_demo",
 				Name:      "prod-ap",
 				Provider:  "wireguard",
 				CIDR:      "10.42.0.0/16",
@@ -690,7 +871,6 @@ func DefaultFixtures() map[string]Response {
 		Clusters: []contracts.Cluster{
 			{
 				ID:                  "cls_demo",
-				UserID:              "usr_demo",
 				Name:                "prod-k3s-ap",
 				Provider:            "k3s",
 				KubeconfigSecretRef: "secret://clusters/cls_demo/kubeconfig",
@@ -708,17 +888,17 @@ func DefaultFixtures() map[string]Response {
 		RuntimeMode: "distributed-mesh",
 		TargetKind:  "mesh",
 		TargetID:    "mesh_demo",
-		PlacementPolicyJSON: map[string]any{
+		PlacementPolicy: map[string]any{
 			"strategy": "balanced",
 		},
-		DomainPolicyJSON: map[string]any{
+		DomainPolicy: map[string]any{
 			"provider": "sslip.io",
 		},
-		CompatibilityPolicyJSON: map[string]any{
+		CompatibilityPolicy: map[string]any{
 			"env_injection":    true,
 			"localhost_rescue": true,
 		},
-		ScaleToZeroPolicyJSON: map[string]any{
+		ScaleToZeroPolicy: map[string]any{
 			"enabled": false,
 		},
 		CreatedAt: bindingCreatedAt,
@@ -732,18 +912,18 @@ func DefaultFixtures() map[string]Response {
 		RuntimeMode: "standalone",
 		TargetKind:  "instance",
 		TargetID:    "inst_demo",
-		PlacementPolicyJSON: map[string]any{
+		PlacementPolicy: map[string]any{
 			"strategy": "balanced",
 		},
-		DomainPolicyJSON: map[string]any{
+		DomainPolicy: map[string]any{
 			"provider": "sslip.io",
 		},
-		CompatibilityPolicyJSON: map[string]any{
+		CompatibilityPolicy: map[string]any{
 			"env_injection":       true,
 			"managed_credentials": true,
 			"localhost_rescue":    true,
 		},
-		ScaleToZeroPolicyJSON: map[string]any{
+		ScaleToZeroPolicy: map[string]any{
 			"enabled": false,
 		},
 		CreatedAt: bindingCreatedAt.Add(-30 * time.Minute),
@@ -757,18 +937,18 @@ func DefaultFixtures() map[string]Response {
 		RuntimeMode: "distributed-k3s",
 		TargetKind:  "cluster",
 		TargetID:    "cls_demo",
-		PlacementPolicyJSON: map[string]any{
+		PlacementPolicy: map[string]any{
 			"strategy": "cluster-native",
 		},
-		DomainPolicyJSON: map[string]any{
+		DomainPolicy: map[string]any{
 			"provider": "sslip.io",
 		},
-		CompatibilityPolicyJSON: map[string]any{
+		CompatibilityPolicy: map[string]any{
 			"env_injection":       true,
 			"managed_credentials": true,
 			"localhost_rescue":    true,
 		},
-		ScaleToZeroPolicyJSON: map[string]any{
+		ScaleToZeroPolicy: map[string]any{
 			"enabled": false,
 		},
 		CreatedAt: bindingCreatedAt.Add(-15 * time.Minute),
@@ -790,32 +970,32 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "GET", Path: "/api/v1/projects"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "projects-list",
-			Body:        mustJSON(projectList),
+			Body:        envelope(projectList),
 		},
 		Request{Method: "POST", Path: "/api/v1/github/app/installations/sync"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "github-installations",
-			Body:        mustJSON(installations),
+			Body:        envelope(installations),
 		},
 		Request{Method: "GET", Path: "/api/v1/instances"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "instances-list",
-			Body:        mustJSON(instances),
+			Body:        envelope(instances),
 		},
 		Request{Method: "GET", Path: "/api/v1/mesh-networks"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "mesh-list",
-			Body:        mustJSON(meshNetworks),
+			Body:        envelope(meshNetworks),
 		},
 		Request{Method: "GET", Path: "/api/v1/clusters"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "clusters-list",
-			Body:        mustJSON(clusters),
+			Body:        envelope(clusters),
 		},
 		Request{Method: "POST", Path: "/api/v1/projects/prj_demo/repo-link"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "repo-link",
-			Body: mustJSON(map[string]any{
+			Body: envelope(map[string]any{
 				"project_id": "prj_demo",
 				"repo_owner": "lazyops",
 				"repo_name":  "acme-shop",
@@ -825,17 +1005,17 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "GET", Path: "/api/v1/projects/prj_demo/deployment-bindings"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "deployment-bindings",
-			Body:        mustJSON(bindingList),
+			Body:        envelope(bindingList),
 		},
 		Request{Method: "POST", Path: "/api/v1/projects/prj_demo/deployment-bindings"}.Key(): {
 			StatusCode:  201,
 			FixtureName: "deployment-binding-created",
-			Body:        mustJSON(binding),
+			Body:        envelope(binding),
 		},
 		Request{Method: "GET", Path: "/mock/v1/doctor", Query: map[string]string{"project": "prj_demo"}}.Key(): {
 			StatusCode:  200,
 			FixtureName: "doctor-preview",
-			Body: mustJSON(map[string]any{
+			Body: envelope(map[string]any{
 				"checks": []map[string]any{
 					{
 						"name":      "auth",
@@ -861,7 +1041,7 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "GET", Path: "/mock/v1/status", Query: map[string]string{"project": "prj_demo"}}.Key(): {
 			StatusCode:  200,
 			FixtureName: "status-preview",
-			Body: mustJSON(map[string]any{
+			Body: envelope(map[string]any{
 				"project_id": "prj_demo",
 				"rollout":    "idle",
 				"topology":   "mock-preview",
@@ -870,12 +1050,12 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "GET", Path: "/api/v1/traces/corr-demo"}.Key(): {
 			StatusCode:  200,
 			FixtureName: "trace-summary",
-			Body:        mustJSON(traceSummary),
+			Body:        envelope(traceSummary),
 		},
 		Request{Method: "POST", Path: "/api/v1/tunnels/db/sessions"}.Key(): {
 			StatusCode:  201,
 			FixtureName: "db-tunnel",
-			Body: mustJSON(map[string]any{
+			Body: envelope(map[string]any{
 				"session_id": "tun_db_demo",
 				"local_port": 15432,
 				"status":     "ready",
@@ -884,7 +1064,7 @@ func DefaultFixtures() map[string]Response {
 		Request{Method: "POST", Path: "/api/v1/tunnels/tcp/sessions"}.Key(): {
 			StatusCode:  201,
 			FixtureName: "tcp-tunnel",
-			Body: mustJSON(map[string]any{
+			Body: envelope(map[string]any{
 				"session_id": "tun_tcp_demo",
 				"local_port": 19090,
 				"status":     "ready",
@@ -894,10 +1074,16 @@ func DefaultFixtures() map[string]Response {
 }
 
 func mustJSON(v any) []byte {
-	data, err := json.MarshalIndent(v, "", "  ")
+	data, err := json.Marshal(v)
 	if err != nil {
 		panic(err)
 	}
-
 	return data
+}
+
+func envelope(data any) []byte {
+	return mustJSON(map[string]any{
+		"success": true,
+		"data":    data,
+	})
 }

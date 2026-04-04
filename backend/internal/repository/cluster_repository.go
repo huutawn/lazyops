@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -66,4 +67,13 @@ func (r *ClusterRepository) GetByID(clusterID string) (*models.Cluster, error) {
 	}
 
 	return &cluster, nil
+}
+
+func (r *ClusterRepository) UpdateStatus(clusterID, status string, at time.Time) error {
+	return r.db.Model(&models.Cluster{}).
+		Where("id = ?", clusterID).
+		Updates(map[string]any{
+			"status":     status,
+			"updated_at": at,
+		}).Error
 }
