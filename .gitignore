@@ -4,3 +4,5 @@
 .codex
 *.md
 **/*.md
+!README.md
+!**/README.md

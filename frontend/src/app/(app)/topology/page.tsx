@@ -25,8 +25,10 @@ import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { HealthChip } from '@/components/primitives/health-chip';
 import { StatusBadge } from '@/components/primitives/status-badge';
-import { TopologyNode } from '@/components/topology/topology-node';
+import { TopologyNode, type TopologyNodeData } from '@/components/topology/topology-node';
 import { TopologyEdgeLabel } from '@/components/topology/topology-edge-label';
+
+type TopologyNode = Node<TopologyNodeData, 'topologyNode'>;
 
 const NODE_TYPES: NodeTypes = {
   topologyNode: TopologyNode,
@@ -59,7 +61,7 @@ const STATUS_BG_COLORS: Record<TopologyHealth, string> = {
   unknown: 'rgba(148, 163, 184, 0.08)',
 };
 
-function toReactFlowNodes(nodes: TopologyDisplayNode[]): Node[] {
+function toReactFlowNodes(nodes: TopologyDisplayNode[]): TopologyNode[] {
   const total = nodes.length;
   const cols = Math.min(total, 4);
   const rows = Math.ceil(total / cols);
@@ -73,7 +75,7 @@ function toReactFlowNodes(nodes: TopologyDisplayNode[]): Node[] {
     const row = Math.floor(i / cols);
     return {
       id: node.id,
-      type: 'topologyNode',
+      type: 'topologyNode' as const,
       position: { x: startX + col * xSpacing, y: startY + row * ySpacing },
       data: {
         label: node.label,
@@ -121,7 +123,7 @@ export default function TopologyPage() {
     [data],
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState<TopologyNode>(rfNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);
 
   if (isLoading) {
