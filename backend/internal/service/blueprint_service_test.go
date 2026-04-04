@@ -89,6 +89,23 @@ func (f *fakeBlueprintStore) GetByIDForProject(projectID, blueprintID string) (*
 	return nil, nil
 }
 
+func (f *fakeBlueprintStore) GetLatestByProject(projectID string) (*models.Blueprint, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+
+	for index := len(f.items) - 1; index >= 0; index-- {
+		item := f.items[index]
+		if item.ProjectID != projectID {
+			continue
+		}
+		copyItem := item
+		return &copyItem, nil
+	}
+
+	return nil, nil
+}
+
 func TestBlueprintServiceCompileSuccess(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",

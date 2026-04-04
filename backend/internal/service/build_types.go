@@ -72,3 +72,34 @@ type BuildJobRecord struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
+
+type BuildCallbackCommand struct {
+	BuildJobID       string
+	ProjectID        string
+	CommitSHA        string
+	Status           string
+	ImageRef         string
+	ImageDigest      string
+	DetectedServices []string
+}
+
+type BuildCallbackResult struct {
+	BuildJob BuildJobRecord
+	Revision *DesiredStateRevisionRecord
+}
+
+type BuildRealtimeEvent struct {
+	Type    string       `json:"type"`
+	Payload any          `json:"payload"`
+	Meta    RealtimeMeta `json:"meta"`
+}
+
+type BuildFailureRealtimePayload struct {
+	BuildJobID       string                           `json:"build_job_id"`
+	ProjectID        string                           `json:"project_id"`
+	Status           string                           `json:"status"`
+	TriggerKind      string                           `json:"trigger_kind"`
+	CommitSHA        string                           `json:"commit_sha"`
+	TrackedBranch    string                           `json:"tracked_branch"`
+	ArtifactMetadata BuildArtifactMetadataStageRecord `json:"artifact_metadata"`
+}

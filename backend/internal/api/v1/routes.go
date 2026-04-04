@@ -14,6 +14,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	authController := controller.NewAuthController(app.AuthService, app.GoogleOAuthService, app.GitHubOAuthService, app.Config)
 	githubController := controller.NewGitHubController(app.GitHubInstallSvc)
 	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
+	buildController := controller.NewBuildController(app.BuildCallbackSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
 	initContractController := controller.NewInitContractController(app.InitContractSvc)
@@ -30,6 +31,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	{
 		v1.GET("/health", healthController.Health)
 		v1.POST("/integrations/github/webhook", integrationController.GitHubWebhook)
+		v1.POST("/builds/callback", buildController.Callback)
 		v1.POST("/agents/enroll", agentRuntimeController.Enroll)
 
 		authGroup := v1.Group("/auth")

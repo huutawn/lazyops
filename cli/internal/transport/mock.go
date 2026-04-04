@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,9 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	}
 	if strings.EqualFold(req.Method, "POST") && isProjectBindingsPath(req.Path) {
 		return mockCreateDeploymentBinding(req)
+	}
+	if strings.EqualFold(req.Method, "GET") && req.Path == "/ws/logs/stream" {
+		return mockLogsStream(req)
 	}
 
 	response, ok := t.fixtures[req.Key()]
@@ -444,12 +448,166 @@ func sanitizeBindingID(name string) string {
 	return normalized
 }
 
+func mockLogsStream(req Request) (Response, error) {
+	projectID := strings.TrimSpace(req.Query["project"])
+	if projectID != "" && projectID != "prj_demo" {
+		return Response{
+			StatusCode:  404,
+			FixtureName: "logs-project-not-found",
+			Body: mustJSON(map[string]any{
+				"error":     "project_not_found",
+				"message":   fmt.Sprintf("Project %q was not found for the logs stream.", projectID),
+				"next_step": "rerun `lazyops logs <service>` from a repo linked to a valid project",
+			}),
+		}, nil
+	}
+
+	service := strings.TrimSpace(req.Query["service"])
+	if service == "" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "logs-missing-service",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_service",
+				"message":   "Service filter is required for the logs stream.",
+				"next_step": "rerun `lazyops logs <service>` with a declared service name",
+			}),
+		}, nil
+	}
+
+	baseTimestamp := time.Date(2026, time.March, 31, 12, 0, 0, 0, time.UTC)
+	datasets := map[string]contracts.LogsStreamPreview{
+		"api": {
+			Service: "api",
+			Cursor:  "cursor_demo_002",
+			Lines: []contracts.LogLine{
+				{
+					Timestamp: baseTimestamp,
+					Level:     "info",
+					Message:   "api listening on :8080",
+					Node:      "edge-ap-1",
+				},
+				{
+					Timestamp: baseTimestamp.Add(2 * time.Second),
+					Level:     "info",
+					Message:   "GET /health 200 1.2ms",
+					Node:      "edge-ap-1",
+				},
+				{
+					Timestamp: baseTimestamp.Add(4 * time.Second),
+					Level:     "error",
+					Message:   "upstream timeout while contacting postgres",
+					Node:      "edge-ap-2",
+				},
+			},
+		},
+		"web": {
+			Service: "web",
+			Cursor:  "cursor_web_001",
+			Lines: []contracts.LogLine{
+				{
+					Timestamp: baseTimestamp,
+					Level:     "info",
+					Message:   "web listening on :3000",
+					Node:      "edge-ap-1",
+				},
+			},
+		},
+	}
+
+	preview, ok := datasets[service]
+	if !ok {
+		return Response{
+			StatusCode:  404,
+			FixtureName: "logs-service-not-found",
+			Body: mustJSON(map[string]any{
+				"error":     "service_not_found",
+				"message":   fmt.Sprintf("Service %q has no log stream for the selected project.", service),
+				"next_step": "choose a service declared in lazyops.yaml or rerun `lazyops init` if the repo layout changed",
+			}),
+		}, nil
+	}
+
+	level := strings.ToLower(strings.TrimSpace(req.Query["level"]))
+	if level != "" && level != "debug" && level != "info" && level != "warn" && level != "error" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "logs-invalid-level",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_filter",
+				"message":   fmt.Sprintf("Log level filter %q is invalid.", level),
+				"next_step": "use level filters debug, info, warn, or error",
+			}),
+		}, nil
+	}
+
+	cursor := strings.TrimSpace(req.Query["cursor"])
+	if cursor != "" && cursor != "cursor_demo_001" && cursor != "cursor_demo_002" && cursor != "cursor_web_001" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "logs-invalid-cursor",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_cursor",
+				"message":   fmt.Sprintf("Cursor %q is invalid for the logs stream.", cursor),
+				"next_step": "drop `--cursor` or use a cursor returned by the previous logs response",
+			}),
+		}, nil
+	}
+
+	limit := len(preview.Lines)
+	if rawLimit := strings.TrimSpace(req.Query["limit"]); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			return Response{
+				StatusCode:  400,
+				FixtureName: "logs-invalid-limit",
+				Body: mustJSON(map[string]any{
+					"error":     "invalid_limit",
+					"message":   fmt.Sprintf("Log limit %q is invalid.", rawLimit),
+					"next_step": "use a positive integer for the log limit filter",
+				}),
+			}, nil
+		}
+		limit = parsed
+	}
+
+	if cursor == "cursor_demo_001" && service == "api" && len(preview.Lines) > 1 {
+		preview.Lines = preview.Lines[1:]
+	}
+
+	contains := strings.ToLower(strings.TrimSpace(req.Query["contains"]))
+	node := strings.TrimSpace(req.Query["node"])
+
+	filtered := make([]contracts.LogLine, 0, len(preview.Lines))
+	for _, line := range preview.Lines {
+		if level != "" && !strings.EqualFold(line.Level, level) {
+			continue
+		}
+		if node != "" && !strings.EqualFold(line.Node, node) {
+			continue
+		}
+		if contains != "" && !strings.Contains(strings.ToLower(line.Message), contains) {
+			continue
+		}
+		filtered = append(filtered, line)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+	preview.Lines = filtered
+
+	return Response{
+		StatusCode:  200,
+		FixtureName: "logs-stream",
+		Body:        mustJSON(preview),
+	}, nil
+}
+
 func DefaultFixtures() map[string]Response {
 	projectCreatedAt := time.Date(2026, time.March, 31, 12, 0, 0, 0, time.UTC)
 	installationInstalledAt := projectCreatedAt.Add(-24 * time.Hour)
 	instanceCreatedAt := projectCreatedAt.Add(-72 * time.Hour)
 	bindingCreatedAt := projectCreatedAt.Add(-6 * time.Hour)
-	traceTimestamp := projectCreatedAt
 
 	projectList := contracts.ProjectsResponse{
 		Projects: []contracts.Project{
@@ -628,25 +786,6 @@ func DefaultFixtures() map[string]Response {
 		TotalLatencyMS: 182,
 	}
 
-	logsPreview := contracts.LogsStreamPreview{
-		Service: "api",
-		Cursor:  "cursor_demo_001",
-		Lines: []contracts.LogLine{
-			{
-				Timestamp: traceTimestamp,
-				Level:     "info",
-				Message:   "api listening on :8080",
-				Node:      "edge-ap-1",
-			},
-			{
-				Timestamp: traceTimestamp.Add(2 * time.Second),
-				Level:     "info",
-				Message:   "GET /health 200 1.2ms",
-				Node:      "edge-ap-1",
-			},
-		},
-	}
-
 	return map[string]Response{
 		Request{Method: "GET", Path: "/api/v1/projects"}.Key(): {
 			StatusCode:  200,
@@ -727,11 +866,6 @@ func DefaultFixtures() map[string]Response {
 				"rollout":    "idle",
 				"topology":   "mock-preview",
 			}),
-		},
-		Request{Method: "GET", Path: "/ws/logs/stream", Query: map[string]string{"service": "api"}}.Key(): {
-			StatusCode:  200,
-			FixtureName: "logs-stream",
-			Body:        mustJSON(logsPreview),
 		},
 		Request{Method: "GET", Path: "/api/v1/traces/corr-demo"}.Key(): {
 			StatusCode:  200,

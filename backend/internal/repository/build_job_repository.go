@@ -49,3 +49,21 @@ func (r *BuildJobRepository) UpdateStatus(buildJobID, status string, startedAt, 
 		Where("id = ?", buildJobID).
 		Updates(updates).Error
 }
+
+func (r *BuildJobRepository) UpdateResult(buildJobID, status, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
+	updates := map[string]any{
+		"status":                 status,
+		"artifact_metadata_json": artifactMetadataJSON,
+		"updated_at":             updatedAt,
+	}
+	if startedAt != nil {
+		updates["started_at"] = *startedAt
+	}
+	if completedAt != nil {
+		updates["completed_at"] = *completedAt
+	}
+
+	return r.db.Model(&models.BuildJob{}).
+		Where("id = ?", buildJobID).
+		Updates(updates).Error
+}

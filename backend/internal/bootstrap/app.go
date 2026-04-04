@@ -40,6 +40,7 @@ type Application struct {
 	GitHubOAuthService    *service.GitHubOAuthService
 	GitHubInstallSvc      *service.GitHubInstallationService
 	GitHubWebhookSvc      *service.GitHubWebhookService
+	BuildCallbackSvc      *service.BuildCallbackService
 	ProjectService        *service.ProjectService
 	ProjectRepoLinkSvc    *service.ProjectRepoLinkService
 	BuildJobSvc           *service.BuildJobService
@@ -127,6 +128,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
 	wsHub.Start()
+	buildCallbackSvc := service.NewBuildCallbackService(projectRepo, blueprintRepo, revisionRepo, buildJobRepo, wsHub)
 
 	return &Application{
 		Config:                cfg,
@@ -156,6 +158,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		GitHubOAuthService:    githubOAuthService,
 		GitHubInstallSvc:      githubInstallSvc,
 		GitHubWebhookSvc:      githubWebhookSvc,
+		BuildCallbackSvc:      buildCallbackSvc,
 		ProjectService:        projectService,
 		ProjectRepoLinkSvc:    projectRepoLinkSvc,
 		BuildJobSvc:           buildJobSvc,

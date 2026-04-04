@@ -2151,6 +2151,210 @@ func TestStatusReportsOfflineTargetAsDegraded(t *testing.T) {
 	}
 }
 
+func TestLogsHappyPathWithFilters(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"logs", "api", "--level", "error", "--node", "edge-ap-2", "--limit", "1"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"logs stream",
+		"project: Acme Shop (acme-shop)",
+		"service: api",
+		"filters: level=error, node=edge-ap-2, limit=1",
+		"cursor: cursor_demo_002",
+		"ERROR [edge-ap-2] upstream timeout while contacting postgres",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected logs output to contain %q, got %q", expected, output)
+		}
+	}
+	if strings.Contains(output, "GET /health 200 1.2ms") {
+		t.Fatalf("expected filtered output to omit non-matching lines, got %q", output)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no warnings or errors, got stderr %q", stderr.String())
+	}
+}
+
+func TestLogsRejectsUnknownServiceFromDeployContract(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"logs", "worker"})
+	if err == nil {
+		t.Fatal("expected service validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), `service "worker" is not declared in lazyops.yaml for project "acme-shop"`) {
+		t.Fatalf("expected service-specific error, got %v", err)
+	}
+}
+
+func TestLogsRedactsSecretsFromRenderedLines(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	capture := &stubTransport{
+		mode: "stub",
+		do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+			switch req.Path {
+			case "/api/v1/projects":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "projects-list",
+					Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+				}, nil
+			case "/ws/logs/stream":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "logs-stream",
+					Body:        []byte(`{"service":"api","cursor":"cursor_demo","lines":[{"timestamp":"2026-03-31T12:00:00Z","level":"info","message":"Authorization: Bearer lazyops_pat_mock_secret_value","node":"edge-ap-1"}]}`),
+				}, nil
+			default:
+				return transport.Response{}, nil
+			}
+		},
+	}
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      capture,
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"logs", "api", "--contains", "authorization", "--limit", "10"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if strings.Contains(output, "lazyops_pat_mock_secret_value") {
+		t.Fatalf("expected secret token to be redacted, got %q", output)
+	}
+	if !strings.Contains(output, "[redacted]") {
+		t.Fatalf("expected redaction marker in logs output, got %q", output)
+	}
+	if len(capture.requests) != 2 {
+		t.Fatalf("expected project lookup and logs request, got %d requests", len(capture.requests))
+	}
+	logsRequest := capture.requests[1]
+	if logsRequest.Path != "/ws/logs/stream" {
+		t.Fatalf("expected logs request path, got %+v", logsRequest)
+	}
+	if logsRequest.Query["project"] != "prj_demo" || logsRequest.Query["service"] != "api" {
+		t.Fatalf("expected logs query to include project and service, got %+v", logsRequest.Query)
+	}
+	if logsRequest.Query["contains"] != "authorization" || logsRequest.Query["limit"] != "10" {
+		t.Fatalf("expected logs filters to be forwarded, got %+v", logsRequest.Query)
+	}
+}
+
+func TestLogsCancellationReturnsCleanly(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(ctx context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects-list",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+					}, nil
+				case "/ws/logs/stream":
+					<-ctx.Done()
+					return transport.Response{}, ctx.Err()
+				default:
+					return transport.Response{}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	time.AfterFunc(10*time.Millisecond, cancel)
+
+	root := NewRootCommand()
+	if err := root.Execute(ctx, runtime, []string{"logs", "api"}); err != nil {
+		t.Fatalf("expected clean cancellation, got %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "log stream cancelled for service api in project acme-shop") {
+		t.Fatalf("expected cancellation warning, got stderr %q", stderr.String())
+	}
+}
+
 func TestProtectedCommandsRequireLogin(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -2205,8 +2409,8 @@ func TestAuthorizedCommandInjectsBearerToken(t *testing.T) {
 		do: func(_ context.Context, req transport.Request) (transport.Response, error) {
 			return transport.Response{
 				StatusCode:  200,
-				FixtureName: "logs-stream",
-				Body:        []byte(`{"service":"api","lines":[]}`),
+				FixtureName: "trace-summary",
+				Body:        []byte(`{"correlation_id":"corr-demo","service_path":["gateway","api"]}`),
 			}, nil
 		},
 	}
@@ -2219,7 +2423,7 @@ func TestAuthorizedCommandInjectsBearerToken(t *testing.T) {
 	}
 
 	root := NewRootCommand()
-	if err := root.Execute(context.Background(), runtime, []string{"logs", "api"}); err != nil {
+	if err := root.Execute(context.Background(), runtime, []string{"traces", "corr-demo"}); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 

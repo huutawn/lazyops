@@ -1508,6 +1508,40 @@ func TestFilesystemDriverRenderSidecarsClassifiesUnhealthyMeshLocalhostRescueAsN
 	}
 }
 
+func TestFilesystemDriverRenderSidecarsRejectsNonLoopbackLocalhostRescueEndpoint(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Binding.CompatibilityPolicy.EnvInjection = false
+	payload.Binding.CompatibilityPolicy.ManagedCredentials = false
+	payload.Binding.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.CompatibilityPolicy.EnvInjection = false
+	payload.Revision.CompatibilityPolicy.ManagedCredentials = false
+	payload.Revision.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.DependencyBindings[0].LocalEndpoint = "http://api.service.lazyops.internal:8080"
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	_, err = driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err == nil {
+		t.Fatal("expected localhost rescue to reject non-loopback listener")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "localhost_rescue_non_local_endpoint" {
+		t.Fatalf("expected localhost_rescue_non_local_endpoint, got %q", opErr.Code)
+	}
+}
+
 func TestValidateSidecarEnvContractRejectsMissingRequiredKey(t *testing.T) {
 	serviceIndex := map[string]ServiceRuntimeContext{
 		"api": {Name: "api"},

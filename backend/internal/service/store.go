@@ -54,6 +54,7 @@ type BuildJobStore interface {
 	Create(job *models.BuildJob) error
 	GetByIDForProject(projectID, buildJobID string) (*models.BuildJob, error)
 	UpdateStatus(buildJobID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error
+	UpdateResult(buildJobID, status, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error
 }
 
 type DeploymentBindingStore interface {
@@ -70,6 +71,7 @@ type ProjectServiceStore interface {
 type BlueprintStore interface {
 	Create(blueprint *models.Blueprint) error
 	GetByIDForProject(projectID, blueprintID string) (*models.Blueprint, error)
+	GetLatestByProject(projectID string) (*models.Blueprint, error)
 }
 
 type DesiredStateRevisionStore interface {

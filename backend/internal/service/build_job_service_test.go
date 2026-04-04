@@ -78,6 +78,27 @@ func (f *fakeBuildJobStore) UpdateStatus(buildJobID, status string, startedAt, c
 	return nil
 }
 
+func (f *fakeBuildJobStore) UpdateResult(buildJobID, status, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	for _, projectItems := range f.byProjectID {
+		if item, ok := projectItems[buildJobID]; ok {
+			item.Status = status
+			item.ArtifactMetadataJSON = artifactMetadataJSON
+			item.UpdatedAt = updatedAt
+			if startedAt != nil {
+				item.StartedAt = startedAt
+			}
+			if completedAt != nil {
+				item.CompletedAt = completedAt
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 func (f *fakeBuildJobStore) put(item *models.BuildJob) {
 	projectItems := f.byProjectID[item.ProjectID]
 	if projectItems == nil {
