@@ -2,6 +2,8 @@ package service
 
 import (
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +46,26 @@ func (f *fakeDeploymentBindingStore) Create(binding *models.DeploymentBinding) e
 	binding.CreatedAt = cloned.CreatedAt
 	binding.UpdatedAt = cloned.UpdatedAt
 	return nil
+}
+
+func (f *fakeDeploymentBindingStore) ListByProject(projectID string) ([]models.DeploymentBinding, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+
+	items := make([]models.DeploymentBinding, 0)
+	for key, binding := range f.byProjectTargetRef {
+		if !strings.HasPrefix(key, projectID+":") {
+			continue
+		}
+		items = append(items, *binding)
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].TargetRef < items[j].TargetRef
+	})
+
+	return items, nil
 }
 
 func (f *fakeDeploymentBindingStore) GetByTargetRefForProject(projectID, targetRef string) (*models.DeploymentBinding, error) {

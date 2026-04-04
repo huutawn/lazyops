@@ -16,6 +16,9 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
+	initContractController := controller.NewInitContractController(app.InitContractSvc)
+	blueprintController := controller.NewBlueprintController(app.BlueprintSvc)
+	deploymentController := controller.NewDeploymentController(app.DeploymentSvc)
 	instanceController := controller.NewInstanceController(app.InstanceService)
 	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService)
 	agentRuntimeController := controller.NewAgentRuntimeController(app.AgentEnrollmentSvc)
@@ -58,9 +61,22 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.POST("/projects", projectController.Create)
 			userProtected.GET("/projects", projectController.List)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+			userProtected.GET("/projects/:id/deployment-bindings", deploymentBindingController.List)
 			userProtected.POST("/projects/:id/deployment-bindings",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				deploymentBindingController.Create,
+			)
+			userProtected.POST("/projects/:id/init/validate-lazyops-yaml",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				initContractController.ValidateLazyopsYAML,
+			)
+			userProtected.PUT("/projects/:id/blueprint",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				blueprintController.Compile,
+			)
+			userProtected.POST("/projects/:id/deployments",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				deploymentController.Create,
 			)
 			userProtected.POST("/instances", instanceController.Create)
 			userProtected.GET("/instances", instanceController.List)

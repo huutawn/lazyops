@@ -22,7 +22,12 @@ type Application struct {
 	GitHubInstallRepo     *repository.GitHubInstallationRepository
 	ProjectRepo           *repository.ProjectRepository
 	ProjectRepoLinkRepo   *repository.ProjectRepoLinkRepository
+	BuildJobRepo          *repository.BuildJobRepository
 	DeploymentBindingRepo *repository.DeploymentBindingRepository
+	ServiceRepo           *repository.ServiceRepository
+	BlueprintRepo         *repository.BlueprintRepository
+	RevisionRepo          *repository.DesiredStateRevisionRepository
+	DeploymentRepo        *repository.DeploymentRepository
 	InstanceRepo          *repository.InstanceRepository
 	MeshNetworkRepo       *repository.MeshNetworkRepository
 	ClusterRepo           *repository.ClusterRepository
@@ -37,7 +42,11 @@ type Application struct {
 	GitHubWebhookSvc      *service.GitHubWebhookService
 	ProjectService        *service.ProjectService
 	ProjectRepoLinkSvc    *service.ProjectRepoLinkService
+	BuildJobSvc           *service.BuildJobService
 	DeploymentBindingSvc  *service.DeploymentBindingService
+	InitContractSvc       *service.InitContractService
+	BlueprintSvc          *service.BlueprintService
+	DeploymentSvc         *service.DeploymentService
 	InstanceService       *service.InstanceService
 	MeshNetworkService    *service.MeshNetworkService
 	ClusterService        *service.ClusterService
@@ -64,7 +73,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	githubInstallRepo := repository.NewGitHubInstallationRepository(db)
 	projectRepo := repository.NewProjectRepository(db)
 	projectRepoLinkRepo := repository.NewProjectRepoLinkRepository(db)
+	buildJobRepo := repository.NewBuildJobRepository(db)
 	deploymentBindingRepo := repository.NewDeploymentBindingRepository(db)
+	serviceRepo := repository.NewServiceRepository(db)
+	blueprintRepo := repository.NewBlueprintRepository(db)
+	revisionRepo := repository.NewDesiredStateRevisionRepository(db)
+	deploymentRepo := repository.NewDeploymentRepository(db)
 	instanceRepo := repository.NewInstanceRepository(db)
 	meshNetworkRepo := repository.NewMeshNetworkRepository(db)
 	clusterRepo := repository.NewClusterRepository(db)
@@ -99,8 +113,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	)
 	projectService := service.NewProjectService(projectRepo)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
+	buildJobSvc := service.NewBuildJobService(projectRepoLinkRepo, buildJobRepo)
 	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
-	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc)
+	initContractSvc := service.NewInitContractService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
+	blueprintSvc := service.NewBlueprintService(projectRepo, projectRepoLinkRepo, deploymentBindingRepo, serviceRepo, blueprintRepo)
+	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo)
+	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
@@ -120,7 +138,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		GitHubInstallRepo:     githubInstallRepo,
 		ProjectRepo:           projectRepo,
 		ProjectRepoLinkRepo:   projectRepoLinkRepo,
+		BuildJobRepo:          buildJobRepo,
 		DeploymentBindingRepo: deploymentBindingRepo,
+		ServiceRepo:           serviceRepo,
+		BlueprintRepo:         blueprintRepo,
+		RevisionRepo:          revisionRepo,
+		DeploymentRepo:        deploymentRepo,
 		InstanceRepo:          instanceRepo,
 		MeshNetworkRepo:       meshNetworkRepo,
 		ClusterRepo:           clusterRepo,
@@ -135,7 +158,11 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		GitHubWebhookSvc:      githubWebhookSvc,
 		ProjectService:        projectService,
 		ProjectRepoLinkSvc:    projectRepoLinkSvc,
+		BuildJobSvc:           buildJobSvc,
 		DeploymentBindingSvc:  deploymentBindingSvc,
+		InitContractSvc:       initContractSvc,
+		BlueprintSvc:          blueprintSvc,
+		DeploymentSvc:         deploymentSvc,
 		InstanceService:       instanceService,
 		MeshNetworkService:    meshNetworkService,
 		ClusterService:        clusterService,

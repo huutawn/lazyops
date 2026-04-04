@@ -27,6 +27,41 @@ func TestContextFromPreparePayloadRejectsK3s(t *testing.T) {
 	}
 }
 
+func TestContextFromPreparePayloadInjectsPlacementRuntimeView(t *testing.T) {
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if runtimeCtx.Runtime.PlacementFingerprint == "" {
+		t.Fatal("expected runtime context to include placement fingerprint")
+	}
+	if len(runtimeCtx.Runtime.ServiceByName) != 2 {
+		t.Fatalf("expected runtime service lookup to include 2 services, got %d", len(runtimeCtx.Runtime.ServiceByName))
+	}
+	if got := runtimeCtx.Runtime.PlacementByService["api"].TargetID; got != "mesh_remote" {
+		t.Fatalf("expected api placement target mesh_remote, got %q", got)
+	}
+	if got := runtimeCtx.Runtime.ServiceByName["web"].Placement.TargetID; got != "mesh_local" {
+		t.Fatalf("expected web service runtime placement mesh_local, got %q", got)
+	}
+}
+
 func TestFilesystemDriverPrepareReleaseWorkspaceCreatesLayout(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
@@ -199,6 +234,503 @@ func TestFilesystemDriverPrepareReleaseWorkspaceBuildsMeshFoundationInDistribute
 	}
 	if manifest.MeshSnapshot == nil || !manifest.MeshSnapshot.Enabled {
 		t.Fatalf("expected workspace manifest to embed enabled mesh snapshot, got %#v", manifest.MeshSnapshot)
+	}
+}
+
+func TestMeshServiceRegistersMeshCommands(t *testing.T) {
+	registry := dispatcher.NewRegistry()
+	service := NewMeshService(nil, nil, NewMeshManager(nil, filepath.Join(t.TempDir(), "runtime-root")))
+	service.Register(registry)
+
+	if _, ok := registry.Resolve(contracts.CommandEnsureMeshPeer); !ok {
+		t.Fatal("expected mesh service to register ensure_mesh_peer handler")
+	}
+	if _, ok := registry.Resolve(contracts.CommandSyncOverlayRoutes); !ok {
+		t.Fatal("expected mesh service to register sync_overlay_routes handler")
+	}
+}
+
+func TestMeshServiceEnsureMeshPeerCreatesWireGuardStateAndSignals(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	driver := NewFilesystemDriver(logger, root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 9, 0, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	manager := NewMeshManager(logger, root)
+	manager.now = driver.now
+	service := NewMeshService(logger, store, manager)
+	service.now = driver.now
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	raw, err := json.Marshal(contracts.EnsureMeshPeerPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+		PeerRef:     "mesh:mesh_remote",
+		TargetID:    "mesh_remote",
+		TargetKind:  contracts.TargetKindMesh,
+	})
+	if err != nil {
+		t.Fatalf("marshal ensure mesh peer payload: %v", err)
+	}
+
+	result := service.handleEnsureMeshPeer(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandEnsureMeshPeer,
+		RequestID:     "req_mesh_ensure",
+		CorrelationID: "corr_mesh_ensure",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected ensure mesh peer to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	statePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "state.json")
+	snapshot, err := loadMeshFoundationSnapshot(statePath)
+	if err != nil {
+		t.Fatalf("load mesh live state: %v", err)
+	}
+	foundActiveRemote := false
+	for _, peer := range snapshot.Membership.Peers {
+		if peer.PeerRef == "mesh:mesh_remote" {
+			if peer.State != MeshPeerStateActive {
+				t.Fatalf("expected remote peer to become active, got %q", peer.State)
+			}
+			foundActiveRemote = true
+		}
+	}
+	if !foundActiveRemote {
+		t.Fatal("expected remote mesh peer to exist in live state")
+	}
+	if snapshot.Health.Status != "active" {
+		t.Fatalf("expected mesh health to become active after ensure, got %q", snapshot.Health.Status)
+	}
+
+	for _, path := range []string{
+		filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "health-signals.json"),
+		filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "capability-signals.json"),
+		filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "wireguard", sanitizePathToken("mesh:mesh_remote"), "peer.json"),
+		filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "wireguard", sanitizePathToken("mesh:mesh_remote"), "wg.conf"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected mesh artifact %s to exist: %v", path, err)
+		}
+	}
+
+	privateKeyPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "wireguard", sanitizePathToken("mesh:mesh_remote"), "private.key")
+	privateKey, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		t.Fatalf("read wireguard private key: %v", err)
+	}
+	peerRecordRaw, err := os.ReadFile(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "wireguard", sanitizePathToken("mesh:mesh_remote"), "peer.json"))
+	if err != nil {
+		t.Fatalf("read wireguard peer record: %v", err)
+	}
+	if strings.Contains(string(peerRecordRaw), strings.TrimSpace(string(privateKey))) {
+		t.Fatal("expected peer record to avoid storing plaintext private key")
+	}
+}
+
+func TestMeshServiceEnsureMeshPeerRemovesPeerDeterministically(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	driver := NewFilesystemDriver(logger, root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 9, 30, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	manager := NewMeshManager(logger, root)
+	manager.now = driver.now
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	if _, err := manager.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+		PeerRef:     "mesh:mesh_remote",
+		TargetID:    "mesh_remote",
+		TargetKind:  contracts.TargetKindMesh,
+	}); err != nil {
+		t.Fatalf("ensure active mesh peer: %v", err)
+	}
+
+	result, err := manager.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:    payload.Project.ProjectID,
+		BindingID:    payload.Binding.BindingID,
+		RevisionID:   payload.Revision.RevisionID,
+		RuntimeMode:  payload.Binding.RuntimeMode,
+		Provider:     contracts.MeshProviderWireGuard,
+		PeerRef:      "mesh:mesh_remote",
+		TargetID:     "mesh_remote",
+		TargetKind:   contracts.TargetKindMesh,
+		DesiredState: string(MeshPeerStateRemoved),
+	})
+	if err != nil {
+		t.Fatalf("remove mesh peer: %v", err)
+	}
+	if len(result.RemovedPeerRefs) != 1 || result.RemovedPeerRefs[0] != "mesh:mesh_remote" {
+		t.Fatalf("expected removed peer mesh:mesh_remote, got %#v", result.RemovedPeerRefs)
+	}
+	if _, err := os.Stat(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "wireguard", sanitizePathToken("mesh:mesh_remote"))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected wireguard peer directory to be removed, got %v", err)
+	}
+
+	snapshot, err := loadMeshFoundationSnapshot(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "state.json"))
+	if err != nil {
+		t.Fatalf("load mesh live state after removal: %v", err)
+	}
+	for _, peer := range snapshot.Membership.Peers {
+		if peer.PeerRef == "mesh:mesh_remote" && peer.State != MeshPeerStateRemoved {
+			t.Fatalf("expected remote peer to become removed, got %q", peer.State)
+		}
+	}
+}
+
+func TestMeshServiceEnsureMeshPeerRejectsStandaloneRuntime(t *testing.T) {
+	manager := NewMeshManager(nil, filepath.Join(t.TempDir(), "runtime-root"))
+	_, err := manager.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:   "prj_123",
+		BindingID:   "bind_123",
+		RuntimeMode: contracts.RuntimeModeStandalone,
+		Provider:    contracts.MeshProviderWireGuard,
+	})
+	if err == nil {
+		t.Fatal("expected ensure mesh peer to reject standalone runtime")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "mesh_runtime_mode_disabled" {
+		t.Fatalf("expected mesh_runtime_mode_disabled code, got %q", opErr.Code)
+	}
+	if opErr.Retryable {
+		t.Fatal("expected standalone mesh ensure failure to be non-retryable")
+	}
+}
+
+func TestMeshServiceSyncOverlayRoutesVerifiesPrivateRoutesAndWritesAdapterSlots(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	driver := NewFilesystemDriver(logger, root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	manager := NewMeshManager(logger, root)
+	manager.now = driver.now
+	service := NewMeshService(logger, store, manager)
+	service.now = driver.now
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := manager.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+		PeerRef:     "mesh:mesh_remote",
+		TargetID:    "mesh_remote",
+		TargetKind:  contracts.TargetKindMesh,
+	}); err != nil {
+		t.Fatalf("ensure active mesh peer: %v", err)
+	}
+
+	raw, err := json.Marshal(contracts.SyncOverlayRoutesPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+	})
+	if err != nil {
+		t.Fatalf("marshal sync overlay routes payload: %v", err)
+	}
+
+	result := service.handleSyncOverlayRoutes(context.Background(), contracts.CommandEnvelope{
+		Type:          contracts.CommandSyncOverlayRoutes,
+		RequestID:     "req_overlay_sync",
+		CorrelationID: "corr_overlay_sync",
+		AgentID:       "agt_local",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	})
+	if result.Error != nil {
+		t.Fatalf("expected sync overlay routes to succeed, got %#v", result.Error)
+	}
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
+	}
+
+	routeReportPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "overlay-routes.json")
+	linkHealthPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "link-health.json")
+	adapterSlotsPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "adapter-slots.json")
+
+	var routes []MeshRouteRecord
+	routesRaw, err := os.ReadFile(routeReportPath)
+	if err != nil {
+		t.Fatalf("read overlay route report: %v", err)
+	}
+	if err := json.Unmarshal(routesRaw, &routes); err != nil {
+		t.Fatalf("decode overlay route report: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("expected 1 overlay route, got %d", len(routes))
+	}
+	if routes[0].Status != "verified" || !routes[0].Verified {
+		t.Fatalf("expected private route to be verified, got %#v", routes[0])
+	}
+	if !routes[0].PublicFallbackBlocked {
+		t.Fatalf("expected private route to block public fallback, got %#v", routes[0])
+	}
+	if routes[0].Provider != contracts.MeshProviderWireGuard {
+		t.Fatalf("expected private route provider wireguard, got %q", routes[0].Provider)
+	}
+
+	var links []MeshLinkHealthRecord
+	linksRaw, err := os.ReadFile(linkHealthPath)
+	if err != nil {
+		t.Fatalf("read link health report: %v", err)
+	}
+	if err := json.Unmarshal(linksRaw, &links); err != nil {
+		t.Fatalf("decode link health report: %v", err)
+	}
+	if len(links) != 1 || links[0].Status != "verified" {
+		t.Fatalf("expected 1 verified link health record, got %#v", links)
+	}
+
+	var adapters []MeshAdapterSlot
+	adaptersRaw, err := os.ReadFile(adapterSlotsPath)
+	if err != nil {
+		t.Fatalf("read adapter slots report: %v", err)
+	}
+	if err := json.Unmarshal(adaptersRaw, &adapters); err != nil {
+		t.Fatalf("decode adapter slots report: %v", err)
+	}
+	if len(adapters) != 2 {
+		t.Fatalf("expected 2 adapter slots, got %d", len(adapters))
+	}
+	if adapters[0].Provider != contracts.MeshProviderWireGuard || !adapters[0].Active {
+		t.Fatalf("expected first adapter slot to be active wireguard, got %#v", adapters[0])
+	}
+	if adapters[1].Provider != contracts.MeshProviderTailscale || !adapters[1].Reserved || adapters[1].Status != "reserved" {
+		t.Fatalf("expected second adapter slot to reserve tailscale, got %#v", adapters[1])
+	}
+	if _, err := os.Stat(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "tailscale", "slot.json")); err != nil {
+		t.Fatalf("expected tailscale reserved slot artifact to exist: %v", err)
+	}
+
+	cache, err := loadServiceMetadataCache(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "service-metadata.json"))
+	if err != nil {
+		t.Fatalf("load synced service metadata cache: %v", err)
+	}
+	if got := cache.Services["web"].Dependencies[0].RouteStatus; got != "verified" {
+		t.Fatalf("expected synced dependency route status verified, got %q", got)
+	}
+	if !cache.Services["web"].Dependencies[0].PublicFallbackBlocked {
+		t.Fatalf("expected synced dependency to block public fallback, got %#v", cache.Services["web"].Dependencies[0])
+	}
+
+	snapshot, err := loadMeshFoundationSnapshot(filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "mesh", "live", "state.json"))
+	if err != nil {
+		t.Fatalf("load synced mesh state: %v", err)
+	}
+	if snapshot.Health.VerifiedRoutes != 1 || snapshot.Health.BlockedRoutes != 0 || snapshot.Health.Status != "active" {
+		t.Fatalf("expected active mesh health with 1 verified route, got %#v", snapshot.Health)
+	}
+}
+
+func TestMeshServiceSyncOverlayRoutesBlocksPrivateRouteWithoutActivePeer(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	driver := NewFilesystemDriver(logger, root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 10, 30, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	manager := NewMeshManager(logger, root)
+	manager.now = driver.now
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	result, err := manager.SyncOverlayRoutes(context.Background(), contracts.SyncOverlayRoutesPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+	})
+	if err != nil {
+		t.Fatalf("sync overlay routes: %v", err)
+	}
+	if result.BlockedRoutes != 1 || result.VerifiedRoutes != 0 {
+		t.Fatalf("expected 1 blocked route and 0 verified routes, got %#v", result)
+	}
+
+	var routes []MeshRouteRecord
+	routesRaw, err := os.ReadFile(result.RouteReportPath)
+	if err != nil {
+		t.Fatalf("read blocked route report: %v", err)
+	}
+	if err := json.Unmarshal(routesRaw, &routes); err != nil {
+		t.Fatalf("decode blocked route report: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Status != "blocked" {
+		t.Fatalf("expected route to be blocked without active peer, got %#v", routes)
+	}
+	if !routes[0].PublicFallbackBlocked {
+		t.Fatalf("expected blocked private route to keep public fallback blocked, got %#v", routes[0])
+	}
+
+	var links []MeshLinkHealthRecord
+	linksRaw, err := os.ReadFile(result.LinkHealthPath)
+	if err != nil {
+		t.Fatalf("read blocked link health report: %v", err)
+	}
+	if err := json.Unmarshal(linksRaw, &links); err != nil {
+		t.Fatalf("decode blocked link health report: %v", err)
+	}
+	if len(links) != 1 || links[0].Status != "unavailable" {
+		t.Fatalf("expected link health to show unavailable, got %#v", links)
+	}
+
+	snapshot, err := loadMeshFoundationSnapshot(result.StatePath)
+	if err != nil {
+		t.Fatalf("load blocked mesh state: %v", err)
+	}
+	if snapshot.Health.Status != "degraded" || snapshot.Health.BlockedRoutes != 1 {
+		t.Fatalf("expected degraded mesh health with blocked route, got %#v", snapshot.Health)
+	}
+}
+
+func TestMeshServiceSyncOverlayRoutesRejectsStandaloneRuntime(t *testing.T) {
+	manager := NewMeshManager(nil, filepath.Join(t.TempDir(), "runtime-root"))
+	_, err := manager.SyncOverlayRoutes(context.Background(), contracts.SyncOverlayRoutesPayload{
+		ProjectID:   "prj_123",
+		BindingID:   "bind_123",
+		RuntimeMode: contracts.RuntimeModeStandalone,
+		Provider:    contracts.MeshProviderWireGuard,
+	})
+	if err == nil {
+		t.Fatal("expected sync overlay routes to reject standalone runtime")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "mesh_runtime_mode_disabled" {
+		t.Fatalf("expected mesh_runtime_mode_disabled code, got %q", opErr.Code)
+	}
+	if opErr.Retryable {
+		t.Fatal("expected standalone overlay sync failure to be non-retryable")
 	}
 }
 
@@ -406,6 +938,91 @@ func TestFilesystemDriverRenderGatewayConfigRollsBackOnReloadFailure(t *testing.
 	}
 }
 
+func TestFilesystemDriverRenderGatewayConfigUsesMeshPlacementResolutionForRemotePublicService(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 12, 30, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	if driver.gateway != nil {
+		driver.gateway.now = driver.now
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.mesh.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+		PeerRef:     "mesh:mesh_remote",
+		TargetID:    "mesh_remote",
+		TargetKind:  contracts.TargetKindMesh,
+	}); err != nil {
+		t.Fatalf("ensure remote peer: %v", err)
+	}
+
+	rendered, err := driver.RenderGatewayConfig(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render gateway config: %v", err)
+	}
+	if len(rendered.Plan.Routes) != 1 {
+		t.Fatalf("expected one public route, got %#v", rendered.Plan.Routes)
+	}
+	route := rendered.Plan.Routes[0]
+	if route.RouteScope != "mesh_private" {
+		t.Fatalf("expected mesh_private gateway route scope, got %#v", route)
+	}
+	if route.ResolutionStatus != "verified" {
+		t.Fatalf("expected verified gateway resolution, got %#v", route)
+	}
+	if route.PlacementPeerRef != "mesh:mesh_remote" {
+		t.Fatalf("expected remote placement peer mesh:mesh_remote, got %#v", route)
+	}
+	if !route.PublicFallbackBlocked {
+		t.Fatalf("expected remote gateway route to keep public fallback blocked, got %#v", route)
+	}
+	if strings.Contains(route.Upstream, "127.0.0.1") || !strings.Contains(route.Upstream, ".mesh.lazyops.internal:3000") {
+		t.Fatalf("expected remote gateway upstream to use mesh host, got %#v", route)
+	}
+	if !containsString(rendered.Plan.InvalidationRules, "mesh_peer_health_changed") {
+		t.Fatalf("expected gateway plan to expose invalidation rules, got %#v", rendered.Plan.InvalidationRules)
+	}
+
+	liveConfigRaw, err := os.ReadFile(rendered.LiveConfigPath)
+	if err != nil {
+		t.Fatalf("read live Caddyfile: %v", err)
+	}
+	if !strings.Contains(string(liveConfigRaw), ".mesh.lazyops.internal:3000") {
+		t.Fatalf("expected live Caddyfile to use mesh upstream, got %q", string(liveConfigRaw))
+	}
+}
+
 func TestFilesystemDriverRenderSidecarsInjectsRuntimeConfigAndMetadataCache(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
@@ -510,6 +1127,63 @@ func TestFilesystemDriverRenderSidecarsInjectsRuntimeConfigAndMetadataCache(t *t
 	}
 }
 
+func TestFilesystemDriverRenderSidecarsBuildsValidatedEnvContracts(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	runtimeCtx, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeStandalone))
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if len(rendered.Plan.Services) != 1 {
+		t.Fatalf("expected one sidecar service config, got %#v", rendered.Plan.Services)
+	}
+	if rendered.Plan.Services[0].SelectedMode != "env_injection" {
+		t.Fatalf("expected env_injection mode, got %#v", rendered.Plan.Services[0])
+	}
+	if len(rendered.Plan.Services[0].EnvContracts) != 1 {
+		t.Fatalf("expected one env contract, got %#v", rendered.Plan.Services[0].EnvContracts)
+	}
+	contract := rendered.Plan.Services[0].EnvContracts[0]
+	if !contract.SecretSafe {
+		t.Fatalf("expected env contract to remain secret safe, got %#v", contract)
+	}
+	for _, key := range contract.RequiredKeys {
+		if strings.TrimSpace(contract.Values[key]) == "" {
+			t.Fatalf("expected env contract key %q to be populated, got %#v", key, contract.Values)
+		}
+	}
+	if contract.Values["LAZYOPS_DEP_API_ENDPOINT"] != "http://localhost:8080" {
+		t.Fatalf("expected env contract endpoint http://localhost:8080, got %#v", contract.Values)
+	}
+
+	webRuntimePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_123", "services", "web", "runtime.json")
+	webRaw, err := os.ReadFile(webRuntimePath)
+	if err != nil {
+		t.Fatalf("read web runtime config: %v", err)
+	}
+	var webRuntime map[string]any
+	if err := json.Unmarshal(webRaw, &webRuntime); err != nil {
+		t.Fatalf("decode web runtime config: %v", err)
+	}
+	sidecarBlock, ok := webRuntime["sidecar"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sidecar runtime block, got %#v", webRuntime["sidecar"])
+	}
+	envContracts, ok := sidecarBlock["env_contracts"].([]any)
+	if !ok || len(envContracts) != 1 {
+		t.Fatalf("expected runtime sidecar block to include one env contract, got %#v", sidecarBlock["env_contracts"])
+	}
+}
+
 func TestFilesystemDriverRenderSidecarsUsesManagedCredentialsFallbackWhenEnvInjectionDisabled(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
@@ -537,6 +1211,587 @@ func TestFilesystemDriverRenderSidecarsUsesManagedCredentialsFallbackWhenEnvInje
 	}
 	if len(rendered.Plan.Services[0].ManagedCredentials) == 0 {
 		t.Fatal("expected managed credential injection config to be generated")
+	}
+	if len(rendered.Plan.Services[0].ManagedCredentialContracts) != 1 {
+		t.Fatalf("expected one managed credential contract, got %#v", rendered.Plan.Services[0].ManagedCredentialContracts)
+	}
+	if len(rendered.Plan.Services[0].EnvContracts) != 0 {
+		t.Fatalf("expected env contracts to stay empty in managed credential mode, got %#v", rendered.Plan.Services[0].EnvContracts)
+	}
+	if len(rendered.Plan.Services[0].ProxyRoutes) != 0 {
+		t.Fatalf("expected localhost rescue to stay disabled after managed credential injection, got %#v", rendered.Plan.Services[0].ProxyRoutes)
+	}
+	contract := rendered.Plan.Services[0].ManagedCredentialContracts[0]
+	if !contract.SecretSafe || !contract.LocalhostRescueSkipped {
+		t.Fatalf("expected managed credential contract to be secret-safe and skip localhost rescue, got %#v", contract)
+	}
+	if contract.CredentialRef != "managed://prj_123/web/api" {
+		t.Fatalf("expected managed credential ref managed://prj_123/web/api, got %#v", contract)
+	}
+	if !strings.HasPrefix(contract.Values["LAZYOPS_MANAGED_API_REF"], "managed://") {
+		t.Fatalf("expected managed credential ref env to use managed:// scheme, got %#v", contract.Values)
+	}
+	if !strings.HasPrefix(contract.Values["LAZYOPS_MANAGED_API_HANDLE"], "mcred_") {
+		t.Fatalf("expected managed credential handle env to use mcred_ prefix, got %#v", contract.Values)
+	}
+
+	if _, err := os.Stat(rendered.ManagedCredentialAuditPath); err != nil {
+		t.Fatalf("expected managed credential audit log to exist: %v", err)
+	}
+	var audit ManagedCredentialAuditLog
+	auditRaw, err := os.ReadFile(rendered.ManagedCredentialAuditPath)
+	if err != nil {
+		t.Fatalf("read managed credential audit log: %v", err)
+	}
+	if err := json.Unmarshal(auditRaw, &audit); err != nil {
+		t.Fatalf("decode managed credential audit log: %v", err)
+	}
+	if audit.PlaintextPersisted {
+		t.Fatalf("expected audit to record no plaintext persistence, got %#v", audit)
+	}
+	if len(audit.Services["web"]) != 1 {
+		t.Fatalf("expected one managed credential audit record for web, got %#v", audit.Services)
+	}
+	record := audit.Services["web"][0]
+	if record.MaskedValues["LAZYOPS_MANAGED_API_HANDLE"] == contract.Values["LAZYOPS_MANAGED_API_HANDLE"] {
+		t.Fatalf("expected audit to mask handle value, got %#v", record)
+	}
+	if record.ValueFingerprints["LAZYOPS_MANAGED_API_HANDLE"] == "" {
+		t.Fatalf("expected audit to store handle fingerprint, got %#v", record)
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsUsesLocalhostRescueWhenHigherModesDisabled(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Binding.CompatibilityPolicy.EnvInjection = false
+	payload.Binding.CompatibilityPolicy.ManagedCredentials = false
+	payload.Binding.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.CompatibilityPolicy.EnvInjection = false
+	payload.Revision.CompatibilityPolicy.ManagedCredentials = false
+	payload.Revision.CompatibilityPolicy.LocalhostRescue = true
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if rendered.Plan.Services[0].SelectedMode != "localhost_rescue" {
+		t.Fatalf("expected localhost_rescue mode, got %q", rendered.Plan.Services[0].SelectedMode)
+	}
+	if len(rendered.Plan.Services[0].LocalhostRescueContracts) != 1 {
+		t.Fatalf("expected one localhost rescue contract, got %#v", rendered.Plan.Services[0].LocalhostRescueContracts)
+	}
+	if len(rendered.Plan.Services[0].ProxyRoutes) != 1 {
+		t.Fatalf("expected one proxy route for localhost rescue, got %#v", rendered.Plan.Services[0].ProxyRoutes)
+	}
+	contract := rendered.Plan.Services[0].LocalhostRescueContracts[0]
+	if contract.Protocol != "http" {
+		t.Fatalf("expected http localhost rescue contract, got %#v", contract)
+	}
+	if contract.ListenerEndpoint != "http://localhost:8080" || contract.ListenerHost != "localhost" || contract.ListenerPort != 8080 {
+		t.Fatalf("expected localhost http listener to stay on port 8080, got %#v", contract)
+	}
+	if contract.ForwardingMode != "local_target" {
+		t.Fatalf("expected local_target forwarding mode, got %#v", contract)
+	}
+	if contract.FallbackClass != "service_down" || contract.MeshHealthRequired {
+		t.Fatalf("expected standalone localhost rescue to classify failures as service_down without mesh health, got %#v", contract)
+	}
+	if !contract.NetworkNamespaceIntercept {
+		t.Fatalf("expected localhost rescue to stay in the same network namespace, got %#v", contract)
+	}
+
+	webRuntimePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_123", "services", "web", "runtime.json")
+	webRaw, err := os.ReadFile(webRuntimePath)
+	if err != nil {
+		t.Fatalf("read web runtime config: %v", err)
+	}
+	var webRuntime map[string]any
+	if err := json.Unmarshal(webRaw, &webRuntime); err != nil {
+		t.Fatalf("decode web runtime config: %v", err)
+	}
+	sidecarBlock, ok := webRuntime["sidecar"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sidecar runtime block, got %#v", webRuntime["sidecar"])
+	}
+	rescueContracts, ok := sidecarBlock["localhost_rescue_contracts"].([]any)
+	if !ok || len(rescueContracts) != 1 {
+		t.Fatalf("expected runtime sidecar block to include one localhost rescue contract, got %#v", sidecarBlock["localhost_rescue_contracts"])
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsSupportsTCPLocalhostRescue(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Binding.CompatibilityPolicy.EnvInjection = false
+	payload.Binding.CompatibilityPolicy.ManagedCredentials = false
+	payload.Binding.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.CompatibilityPolicy.EnvInjection = false
+	payload.Revision.CompatibilityPolicy.ManagedCredentials = false
+	payload.Revision.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.Services[0].HealthCheck = contracts.HealthCheckPayload{
+		Protocol: "tcp",
+		Port:     5432,
+	}
+	payload.Revision.DependencyBindings[0].Protocol = "tcp"
+	payload.Revision.DependencyBindings[0].LocalEndpoint = "localhost:5432"
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	contract := rendered.Plan.Services[0].LocalhostRescueContracts[0]
+	if contract.Protocol != "tcp" || contract.ListenerScheme != "tcp" {
+		t.Fatalf("expected tcp localhost rescue contract, got %#v", contract)
+	}
+	if contract.ListenerEndpoint != "localhost:5432" || contract.ListenerPort != 5432 {
+		t.Fatalf("expected tcp localhost listener to stay on port 5432, got %#v", contract)
+	}
+	if contract.Upstream != "api.service.lazyops.internal" {
+		t.Fatalf("expected tcp upstream without http scheme, got %#v", contract)
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsUsesMeshForwardingForRemoteLocalhostRescue(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	if driver.sidecar != nil {
+		driver.sidecar.now = driver.now
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Binding.CompatibilityPolicy.EnvInjection = false
+	payload.Binding.CompatibilityPolicy.ManagedCredentials = false
+	payload.Binding.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.CompatibilityPolicy.EnvInjection = false
+	payload.Revision.CompatibilityPolicy.ManagedCredentials = false
+	payload.Revision.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.mesh.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+		PeerRef:     "mesh:mesh_remote",
+		TargetID:    "mesh_remote",
+		TargetKind:  contracts.TargetKindMesh,
+	}); err != nil {
+		t.Fatalf("ensure remote peer: %v", err)
+	}
+	if _, err := driver.mesh.SyncOverlayRoutes(context.Background(), contracts.SyncOverlayRoutesPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+	}); err != nil {
+		t.Fatalf("sync overlay routes: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	contract := rendered.Plan.Services[0].LocalhostRescueContracts[0]
+	if contract.ForwardingMode != "mesh_target" {
+		t.Fatalf("expected localhost rescue to forward through mesh_target, got %#v", contract)
+	}
+	if contract.FallbackClass != "service_down" || !contract.MeshHealthRequired {
+		t.Fatalf("expected verified remote rescue to require mesh health but classify remaining failures as service_down, got %#v", contract)
+	}
+	if contract.PlacementPeerRef != "mesh:mesh_remote" || contract.Provider != contracts.MeshProviderWireGuard {
+		t.Fatalf("expected localhost rescue to target the remote wireguard peer, got %#v", contract)
+	}
+	if !strings.Contains(contract.Upstream, ".mesh.lazyops.internal") {
+		t.Fatalf("expected localhost rescue upstream to use the mesh host, got %#v", contract)
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsClassifiesUnhealthyMeshLocalhostRescueAsNetworkDown(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Binding.CompatibilityPolicy.EnvInjection = false
+	payload.Binding.CompatibilityPolicy.ManagedCredentials = false
+	payload.Binding.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.CompatibilityPolicy.EnvInjection = false
+	payload.Revision.CompatibilityPolicy.ManagedCredentials = false
+	payload.Revision.CompatibilityPolicy.LocalhostRescue = true
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	contract := rendered.Plan.Services[0].LocalhostRescueContracts[0]
+	if contract.ForwardingMode != "mesh_target" {
+		t.Fatalf("expected localhost rescue to keep mesh_target forwarding, got %#v", contract)
+	}
+	if contract.ResolutionStatus != "planned" {
+		t.Fatalf("expected unhealthy remote rescue to remain planned before overlay sync, got %#v", contract)
+	}
+	if contract.FallbackClass != "network_down" || !contract.MeshHealthRequired {
+		t.Fatalf("expected unhealthy mesh rescue to classify as network_down with mesh health required, got %#v", contract)
+	}
+	if !containsString(contract.InvalidationReasons, "overlay_route_sync_pending") {
+		t.Fatalf("expected unhealthy mesh rescue to include overlay_route_sync_pending, got %#v", contract.InvalidationReasons)
+	}
+}
+
+func TestValidateSidecarEnvContractRejectsMissingRequiredKey(t *testing.T) {
+	serviceIndex := map[string]ServiceRuntimeContext{
+		"api": {Name: "api"},
+	}
+	contract := SidecarEnvContract{
+		Alias:         "api",
+		TargetService: "api",
+		Protocol:      "http",
+		RequiredKeys: []string{
+			"LAZYOPS_DEP_API_ENDPOINT",
+			"LAZYOPS_DEP_API_PROTOCOL",
+		},
+		Values: map[string]string{
+			"LAZYOPS_DEP_API_ENDPOINT": "http://localhost:8080",
+		},
+		SecretSafe: true,
+	}
+
+	err := validateSidecarEnvContract("web", contract, serviceIndex)
+	if err == nil {
+		t.Fatal("expected env contract validation to reject missing required key")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "sidecar_env_contract_missing_key" {
+		t.Fatalf("expected sidecar_env_contract_missing_key, got %q", opErr.Code)
+	}
+}
+
+func TestValidateSidecarEnvContractRejectsMissingTargetService(t *testing.T) {
+	err := validateSidecarEnvContract("web", SidecarEnvContract{
+		Alias:         "api",
+		TargetService: "missing",
+		Protocol:      "http",
+		RequiredKeys:  []string{"LAZYOPS_DEP_API_ENDPOINT"},
+		Values: map[string]string{
+			"LAZYOPS_DEP_API_ENDPOINT": "http://localhost:8080",
+		},
+		SecretSafe: true,
+	}, map[string]ServiceRuntimeContext{
+		"api": {Name: "api"},
+	})
+	if err == nil {
+		t.Fatal("expected env contract validation to reject missing target service")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "sidecar_env_contract_missing_target" {
+		t.Fatalf("expected sidecar_env_contract_missing_target, got %q", opErr.Code)
+	}
+}
+
+func TestValidateManagedCredentialContractRejectsPlaintextValue(t *testing.T) {
+	err := validateManagedCredentialContract("web", SidecarManagedCredentialContract{
+		Alias:         "api",
+		TargetService: "api",
+		Protocol:      "http",
+		CredentialRef: "managed://prj_123/web/api",
+		RequiredKeys: []string{
+			"LAZYOPS_MANAGED_API_REF",
+			"LAZYOPS_MANAGED_API_HANDLE",
+		},
+		Values: map[string]string{
+			"LAZYOPS_MANAGED_API_REF":    "managed://prj_123/web/api",
+			"LAZYOPS_MANAGED_API_HANDLE": "plain-secret-handle",
+		},
+		SecretSafe:             true,
+		LocalhostRescueSkipped: true,
+	}, map[string]ServiceRuntimeContext{
+		"api": {Name: "api"},
+	})
+	if err == nil {
+		t.Fatal("expected managed credential validation to reject plaintext handle")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "managed_credential_plaintext_forbidden" {
+		t.Fatalf("expected managed_credential_plaintext_forbidden, got %q", opErr.Code)
+	}
+}
+
+func TestValidateSidecarEnvContractRejectsSensitiveKeys(t *testing.T) {
+	err := validateSidecarEnvContract("web", SidecarEnvContract{
+		Alias:         "api",
+		TargetService: "api",
+		Protocol:      "http",
+		RequiredKeys:  []string{"LAZYOPS_DEP_API_SECRET"},
+		Values: map[string]string{
+			"LAZYOPS_DEP_API_SECRET": "should-not-exist",
+		},
+		SecretSafe: true,
+	}, map[string]ServiceRuntimeContext{
+		"api": {Name: "api"},
+	})
+	if err == nil {
+		t.Fatal("expected env contract validation to reject sensitive env key")
+	}
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected operation error, got %T", err)
+	}
+	if opErr.Code != "sidecar_env_contract_secret_key" {
+		t.Fatalf("expected sidecar_env_contract_secret_key, got %q", opErr.Code)
+	}
+}
+
+func TestSelectSidecarModeKeepsEnvInjectionFirst(t *testing.T) {
+	mode := selectSidecarMode(contracts.CompatibilityPolicy{
+		EnvInjection:       true,
+		ManagedCredentials: true,
+		LocalhostRescue:    true,
+	})
+	if mode != "env_injection" {
+		t.Fatalf("expected env injection to remain first precedence mode, got %q", mode)
+	}
+	if err := validateSelectedSidecarMode(mode, contracts.CompatibilityPolicy{
+		EnvInjection:       true,
+		ManagedCredentials: true,
+		LocalhostRescue:    true,
+	}); err != nil {
+		t.Fatalf("expected precedence validation to pass, got %v", err)
+	}
+}
+
+func TestSelectSidecarModeKeepsManagedCredentialsAheadOfLocalhostRescue(t *testing.T) {
+	mode := selectSidecarMode(contracts.CompatibilityPolicy{
+		EnvInjection:       false,
+		ManagedCredentials: true,
+		LocalhostRescue:    true,
+	})
+	if mode != "managed_credentials" {
+		t.Fatalf("expected managed_credentials to remain ahead of localhost rescue, got %q", mode)
+	}
+	if err := validateSelectedSidecarMode(mode, contracts.CompatibilityPolicy{
+		EnvInjection:       false,
+		ManagedCredentials: true,
+		LocalhostRescue:    true,
+	}); err != nil {
+		t.Fatalf("expected managed credential precedence validation to pass, got %v", err)
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsResolvesVerifiedRemoteMeshDependency(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 13, 0, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	if driver.sidecar != nil {
+		driver.sidecar.now = driver.now
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+	if _, err := driver.mesh.EnsurePeer(context.Background(), contracts.EnsureMeshPeerPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+		PeerRef:     "mesh:mesh_remote",
+		TargetID:    "mesh_remote",
+		TargetKind:  contracts.TargetKindMesh,
+	}); err != nil {
+		t.Fatalf("ensure remote peer: %v", err)
+	}
+	if _, err := driver.mesh.SyncOverlayRoutes(context.Background(), contracts.SyncOverlayRoutesPayload{
+		ProjectID:   payload.Project.ProjectID,
+		BindingID:   payload.Binding.BindingID,
+		RevisionID:  payload.Revision.RevisionID,
+		RuntimeMode: payload.Binding.RuntimeMode,
+		Provider:    contracts.MeshProviderWireGuard,
+	}); err != nil {
+		t.Fatalf("sync overlay routes: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	resolution := rendered.Plan.Services[0].Resolutions[0]
+	if resolution.RouteScope != "mesh_private" {
+		t.Fatalf("expected mesh_private route scope, got %#v", resolution)
+	}
+	if resolution.ResolutionStatus != "verified" {
+		t.Fatalf("expected verified mesh resolution, got %#v", resolution)
+	}
+	if resolution.Provider != contracts.MeshProviderWireGuard {
+		t.Fatalf("expected wireguard provider, got %#v", resolution)
+	}
+	if resolution.PlacementPeerRef != "mesh:mesh_remote" {
+		t.Fatalf("expected remote placement peer mesh:mesh_remote, got %#v", resolution)
+	}
+	if !strings.Contains(rendered.Plan.Services[0].Env["LAZYOPS_DEP_API_ENDPOINT"], ".mesh.lazyops.internal") {
+		t.Fatalf("expected env endpoint to use mesh host, got %#v", rendered.Plan.Services[0].Env)
+	}
+	if len(resolution.InvalidationReasons) != 0 {
+		t.Fatalf("expected verified route to have no active invalidation reasons, got %#v", resolution.InvalidationReasons)
+	}
+}
+
+func TestFilesystemDriverRenderSidecarsMarksPendingRemoteDependencyForInvalidation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+	driver.now = func() time.Time {
+		return time.Date(2026, 4, 2, 13, 30, 0, 0, time.UTC)
+	}
+	if driver.mesh != nil {
+		driver.mesh.now = driver.now
+	}
+	if driver.sidecar != nil {
+		driver.sidecar.now = driver.now
+	}
+
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedMesh)
+	payload.Binding.TargetKind = contracts.TargetKindMesh
+	payload.Binding.TargetID = "mesh_local"
+	payload.Revision.PlacementAssignments = []contracts.PlacementAssignment{
+		{
+			ServiceName: "api",
+			TargetID:    "mesh_remote",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+		{
+			ServiceName: "web",
+			TargetID:    "mesh_local",
+			TargetKind:  contracts.TargetKindMesh,
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderSidecars(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	resolution := rendered.Plan.Services[0].Resolutions[0]
+	if resolution.ResolutionStatus != "planned" {
+		t.Fatalf("expected planned resolution before overlay sync, got %#v", resolution)
+	}
+	if !containsString(resolution.InvalidationReasons, "overlay_route_sync_pending") {
+		t.Fatalf("expected overlay_route_sync_pending invalidation reason, got %#v", resolution.InvalidationReasons)
+	}
+	if !containsString(resolution.InvalidationReasons, "mesh_peer_health_changed") {
+		t.Fatalf("expected mesh_peer_health_changed invalidation reason, got %#v", resolution.InvalidationReasons)
+	}
+	if !strings.Contains(rendered.Plan.Services[0].Env["LAZYOPS_DEP_API_ENDPOINT"], ".mesh.lazyops.internal") {
+		t.Fatalf("expected pending remote endpoint to already target mesh host, got %#v", rendered.Plan.Services[0].Env)
 	}
 }
 
@@ -1968,6 +3223,15 @@ func startTCPHealthListener(t *testing.T) (net.Listener, func()) {
 		_ = listener.Close()
 		<-done
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func runRuntimeSetup(t *testing.T, service *Service, raw []byte) {

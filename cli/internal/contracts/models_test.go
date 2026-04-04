@@ -146,6 +146,24 @@ func TestDecodeCoreContracts(t *testing.T) {
 			},
 		},
 		{
+			name: "project_repo_link",
+			body: mustMarshal(t, ProjectRepoLink{
+				ID:                   "prl_demo",
+				ProjectID:            "prj_demo",
+				GitHubInstallationID: 48151623,
+				GitHubRepoID:         1001,
+				RepoOwner:            "lazyops",
+				RepoName:             "acme-shop",
+				TrackedBranch:        "main",
+				PreviewEnabled:       true,
+				CreatedAt:            timestamp,
+			}),
+			decode: func(payload []byte) error {
+				_, err := DecodeProjectRepoLink(payload)
+				return err
+			},
+		},
+		{
 			name: "trace_summary",
 			body: mustMarshal(t, TraceSummary{
 				CorrelationID:  "corr-demo",

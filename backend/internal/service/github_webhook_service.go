@@ -19,6 +19,10 @@ type WebhookRouteResolver interface {
 	LookupWebhookRoute(cmd WebhookRouteLookupCommand) (*ProjectRepoLinkRecord, error)
 }
 
+type BuildJobDispatcher interface {
+	EnqueueFromWebhook(deliveryID string, event GitHubWebhookNormalizedEvent) (*BuildJobRecord, error)
+}
+
 type GitHubWebhookCommand struct {
 	DeliveryID string
 	EventType  string
@@ -50,11 +54,13 @@ type GitHubWebhookResult struct {
 	Status        string
 	IgnoredReason string
 	Event         GitHubWebhookNormalizedEvent
+	BuildJob      *BuildJobRecord
 }
 
 type GitHubWebhookService struct {
 	webhookSecret string
 	routes        WebhookRouteResolver
+	builds        BuildJobDispatcher
 }
 
 func NewGitHubWebhookService(webhookSecret string, routes WebhookRouteResolver) *GitHubWebhookService {
@@ -62,6 +68,11 @@ func NewGitHubWebhookService(webhookSecret string, routes WebhookRouteResolver) 
 		webhookSecret: strings.TrimSpace(webhookSecret),
 		routes:        routes,
 	}
+}
+
+func (s *GitHubWebhookService) WithBuildDispatcher(builds BuildJobDispatcher) *GitHubWebhookService {
+	s.builds = builds
+	return s
 }
 
 func (s *GitHubWebhookService) Handle(cmd GitHubWebhookCommand) (*GitHubWebhookResult, error) {
@@ -182,7 +193,7 @@ func (s *GitHubWebhookService) handlePush(cmd GitHubWebhookCommand) (*GitHubWebh
 	event.RepoFullName = route.RepoFullName
 	event.ShouldEnqueueBuild = true
 
-	return acceptedWebhookResult(cmd, event), nil
+	return s.finalizeAcceptedWebhook(cmd, event)
 }
 
 func (s *GitHubWebhookService) handlePullRequest(cmd GitHubWebhookCommand) (*GitHubWebhookResult, error) {
@@ -258,7 +269,7 @@ func (s *GitHubWebhookService) handlePullRequest(cmd GitHubWebhookCommand) (*Git
 	}
 
 	event.ShouldEnqueueBuild = true
-	return acceptedWebhookResult(cmd, event), nil
+	return s.finalizeAcceptedWebhook(cmd, event)
 }
 
 func (s *GitHubWebhookService) lookupRoute(githubInstallationID, githubRepoID int64, trackedBranch string) (*ProjectRepoLinkRecord, error) {
@@ -270,6 +281,27 @@ func (s *GitHubWebhookService) lookupRoute(githubInstallationID, githubRepoID in
 		GitHubRepoID:         githubRepoID,
 		TrackedBranch:        trackedBranch,
 	})
+}
+
+func (s *GitHubWebhookService) finalizeAcceptedWebhook(cmd GitHubWebhookCommand, event GitHubWebhookNormalizedEvent) (*GitHubWebhookResult, error) {
+	result := acceptedWebhookResult(cmd, event)
+	if s.builds == nil || !event.ShouldEnqueueBuild {
+		return result, nil
+	}
+
+	buildJob, err := s.builds.EnqueueFromWebhook(cmd.DeliveryID, event)
+	if err != nil {
+		if errors.Is(err, ErrBuildBranchRejected) || errors.Is(err, ErrRepoLinkNotFound) {
+			result.Status = "ignored"
+			result.IgnoredReason = "branch_policy_rejected"
+			result.Event.ShouldEnqueueBuild = false
+			return result, nil
+		}
+		return nil, err
+	}
+
+	result.BuildJob = buildJob
+	return result, nil
 }
 
 func acceptedWebhookResult(cmd GitHubWebhookCommand, event GitHubWebhookNormalizedEvent) *GitHubWebhookResult {

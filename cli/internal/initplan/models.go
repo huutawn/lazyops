@@ -49,12 +49,14 @@ type TargetSummary struct {
 }
 
 type BindingSummary struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	TargetRef   string      `json:"target_ref"`
-	RuntimeMode RuntimeMode `json:"runtime_mode"`
-	TargetKind  string      `json:"target_kind"`
-	TargetID    string      `json:"target_id"`
+	ID           string      `json:"id"`
+	Name         string      `json:"name"`
+	TargetRef    string      `json:"target_ref"`
+	RuntimeMode  RuntimeMode `json:"runtime_mode"`
+	TargetKind   string      `json:"target_kind"`
+	TargetID     string      `json:"target_id"`
+	TargetStatus string      `json:"target_status,omitempty"`
+	Reusable     bool        `json:"reusable,omitempty"`
 }
 
 type ServiceCandidate struct {
@@ -147,7 +149,7 @@ func ApplyDiscovery(
 	selection SelectionInput,
 ) (InitPlan, error) {
 	plan.Projects = summarizeProjects(projects)
-	plan.Targets = summarizeTargets(instances, meshNetworks, clusters)
+	plan.Targets = SummarizeTargets(instances, meshNetworks, clusters)
 
 	if selection.RuntimeMode != "" {
 		if err := selection.RuntimeMode.Validate(); err != nil {
@@ -478,7 +480,7 @@ func summarizeProjects(projects []contracts.Project) []ProjectSummary {
 	return summaries
 }
 
-func summarizeTargets(instances []contracts.Instance, meshNetworks []contracts.MeshNetwork, clusters []contracts.Cluster) []TargetSummary {
+func SummarizeTargets(instances []contracts.Instance, meshNetworks []contracts.MeshNetwork, clusters []contracts.Cluster) []TargetSummary {
 	targets := make([]TargetSummary, 0, len(instances)+len(meshNetworks)+len(clusters))
 
 	for _, instance := range instances {
@@ -528,6 +530,90 @@ func SummarizeBindings(bindings []contracts.DeploymentBinding) []BindingSummary 
 		})
 	}
 	return summaries
+}
+
+func AnnotateBindingsWithTargets(bindings []BindingSummary, targets []TargetSummary, project *ProjectSummary) []BindingSummary {
+	indexedTargets := make(map[string]TargetSummary, len(targets))
+	for _, target := range targets {
+		indexedTargets[bindingTargetKey(target.Kind, target.ID)] = target
+	}
+
+	annotated := make([]BindingSummary, 0, len(bindings))
+	for _, binding := range bindings {
+		enriched := binding
+		target, ok := indexedTargets[bindingTargetKey(binding.TargetKind, binding.TargetID)]
+		if !ok {
+			enriched.TargetStatus = "missing"
+			enriched.Reusable = false
+			annotated = append(annotated, enriched)
+			continue
+		}
+
+		enriched.TargetStatus = target.Status
+		enriched.Reusable, _ = targetSelectableForProject(target, project)
+		annotated = append(annotated, enriched)
+	}
+
+	return annotated
+}
+
+func FilterBindingsByTargetRef(bindings []BindingSummary, targetRef string) []BindingSummary {
+	normalized := strings.TrimSpace(targetRef)
+	if normalized == "" {
+		return append([]BindingSummary(nil), bindings...)
+	}
+
+	filtered := make([]BindingSummary, 0, len(bindings))
+	for _, binding := range bindings {
+		if binding.TargetRef != normalized {
+			continue
+		}
+		filtered = append(filtered, binding)
+	}
+	return filtered
+}
+
+func FilterBindingsByTargetKind(bindings []BindingSummary, targetKind string) []BindingSummary {
+	normalized := strings.TrimSpace(targetKind)
+	if normalized == "" {
+		return append([]BindingSummary(nil), bindings...)
+	}
+
+	filtered := make([]BindingSummary, 0, len(bindings))
+	for _, binding := range bindings {
+		if binding.TargetKind != normalized {
+			continue
+		}
+		filtered = append(filtered, binding)
+	}
+	return filtered
+}
+
+func FilterBindingsByStatus(bindings []BindingSummary, status string) []BindingSummary {
+	normalized := strings.TrimSpace(status)
+	if normalized == "" {
+		return append([]BindingSummary(nil), bindings...)
+	}
+
+	filtered := make([]BindingSummary, 0, len(bindings))
+	for _, binding := range bindings {
+		if !strings.EqualFold(binding.TargetStatus, normalized) {
+			continue
+		}
+		filtered = append(filtered, binding)
+	}
+	return filtered
+}
+
+func ReusableBindings(bindings []BindingSummary) []BindingSummary {
+	filtered := make([]BindingSummary, 0, len(bindings))
+	for _, binding := range bindings {
+		if !binding.Reusable {
+			continue
+		}
+		filtered = append(filtered, binding)
+	}
+	return filtered
 }
 
 func pickProject(projects []ProjectSummary, selector string) (*ProjectSummary, error) {
@@ -678,6 +764,10 @@ func FilterBindingsByTarget(bindings []BindingSummary, target TargetSummary) []B
 		filtered = append(filtered, binding)
 	}
 	return filtered
+}
+
+func bindingTargetKey(kind string, id string) string {
+	return strings.TrimSpace(kind) + "::" + strings.TrimSpace(id)
 }
 
 func defaultBindingName(target TargetSummary) string {

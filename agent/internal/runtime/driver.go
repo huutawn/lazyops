@@ -34,6 +34,7 @@ type RuntimeContext struct {
 	Revision contracts.DesiredRevisionPayload   `json:"revision"`
 	Services []ServiceRuntimeContext            `json:"services"`
 	Rollout  RolloutContext                     `json:"-"`
+	Runtime  RuntimeDependencyContext           `json:"-"`
 }
 
 type RolloutContext struct {
@@ -43,6 +44,12 @@ type RolloutContext struct {
 	PendingRevisionID        string
 	CandidateRevisionID      string
 	DrainingRevisionID       string
+}
+
+type RuntimeDependencyContext struct {
+	PlacementByService   map[string]contracts.PlacementAssignment `json:"-"`
+	ServiceByName        map[string]ServiceRuntimeContext         `json:"-"`
+	PlacementFingerprint string                                   `json:"-"`
 }
 
 type ProjectMetadata struct {
@@ -109,28 +116,38 @@ type ArtifactPlan struct {
 }
 
 type GatewayPlan struct {
-	Version             string             `json:"version,omitempty"`
-	GeneratedAt         time.Time          `json:"generated_at,omitempty"`
-	Provider            string             `json:"provider"`
-	PublicServices      []string           `json:"public_services"`
-	MagicDomain         string             `json:"magic_domain_provider,omitempty"`
-	FallbackMagicDomain string             `json:"fallback_magic_domain_provider,omitempty"`
-	HostToken           string             `json:"host_token,omitempty"`
-	Routes              []GatewayRoute     `json:"routes,omitempty"`
-	Validation          *GatewayHookResult `json:"validation,omitempty"`
-	Apply               *GatewayHookResult `json:"apply,omitempty"`
-	Reload              *GatewayHookResult `json:"reload,omitempty"`
-	Rollback            *GatewayHookResult `json:"rollback,omitempty"`
+	Version              string             `json:"version,omitempty"`
+	GeneratedAt          time.Time          `json:"generated_at,omitempty"`
+	Provider             string             `json:"provider"`
+	PublicServices       []string           `json:"public_services"`
+	MagicDomain          string             `json:"magic_domain_provider,omitempty"`
+	FallbackMagicDomain  string             `json:"fallback_magic_domain_provider,omitempty"`
+	HostToken            string             `json:"host_token,omitempty"`
+	PlacementFingerprint string             `json:"placement_fingerprint,omitempty"`
+	RouteFingerprint     string             `json:"route_fingerprint,omitempty"`
+	InvalidationRules    []string           `json:"invalidation_rules,omitempty"`
+	Routes               []GatewayRoute     `json:"routes,omitempty"`
+	Validation           *GatewayHookResult `json:"validation,omitempty"`
+	Apply                *GatewayHookResult `json:"apply,omitempty"`
+	Reload               *GatewayHookResult `json:"reload,omitempty"`
+	Rollback             *GatewayHookResult `json:"rollback,omitempty"`
 }
 
 type GatewayRoute struct {
-	ServiceName  string `json:"service_name"`
-	Port         int    `json:"port"`
-	Upstream     string `json:"upstream"`
-	PrimaryHost  string `json:"primary_host"`
-	FallbackHost string `json:"fallback_host"`
-	PrimaryURL   string `json:"primary_url"`
-	FallbackURL  string `json:"fallback_url"`
+	ServiceName           string                 `json:"service_name"`
+	Port                  int                    `json:"port"`
+	Upstream              string                 `json:"upstream"`
+	PrimaryHost           string                 `json:"primary_host"`
+	FallbackHost          string                 `json:"fallback_host"`
+	PrimaryURL            string                 `json:"primary_url"`
+	FallbackURL           string                 `json:"fallback_url"`
+	RouteScope            string                 `json:"route_scope,omitempty"`
+	ResolutionStatus      string                 `json:"resolution_status,omitempty"`
+	PlacementPeerRef      string                 `json:"placement_peer_ref,omitempty"`
+	Provider              contracts.MeshProvider `json:"provider,omitempty"`
+	PublicFallbackBlocked bool                   `json:"public_fallback_blocked,omitempty"`
+	InvalidationReasons   []string               `json:"invalidation_reasons,omitempty"`
+	ResolutionReason      string                 `json:"resolution_reason,omitempty"`
 }
 
 type GatewayHookResult struct {
@@ -163,46 +180,77 @@ type GatewayRenderResult struct {
 }
 
 type SidecarPlan struct {
-	Version           string                        `json:"version,omitempty"`
-	GeneratedAt       time.Time                     `json:"generated_at,omitempty"`
-	EnabledServices   []string                      `json:"enabled_services"`
-	Compatibility     contracts.CompatibilityPolicy `json:"compatibility_policy"`
-	Precedence        []string                      `json:"precedence,omitempty"`
-	Bindings          []SidecarBinding              `json:"bindings,omitempty"`
-	Services          []SidecarServiceConfig        `json:"services,omitempty"`
-	MetadataCachePath string                        `json:"metadata_cache_path,omitempty"`
-	Create            *SidecarHookResult            `json:"create,omitempty"`
-	Reconcile         *SidecarHookResult            `json:"reconcile,omitempty"`
-	Restart           *SidecarHookResult            `json:"restart,omitempty"`
-	Remove            *SidecarHookResult            `json:"remove,omitempty"`
+	Version              string                        `json:"version,omitempty"`
+	GeneratedAt          time.Time                     `json:"generated_at,omitempty"`
+	EnabledServices      []string                      `json:"enabled_services"`
+	Compatibility        contracts.CompatibilityPolicy `json:"compatibility_policy"`
+	Precedence           []string                      `json:"precedence,omitempty"`
+	PlacementFingerprint string                        `json:"placement_fingerprint,omitempty"`
+	RouteFingerprint     string                        `json:"route_fingerprint,omitempty"`
+	InvalidationRules    []string                      `json:"invalidation_rules,omitempty"`
+	Bindings             []SidecarBinding              `json:"bindings,omitempty"`
+	Services             []SidecarServiceConfig        `json:"services,omitempty"`
+	MetadataCachePath    string                        `json:"metadata_cache_path,omitempty"`
+	Create               *SidecarHookResult            `json:"create,omitempty"`
+	Reconcile            *SidecarHookResult            `json:"reconcile,omitempty"`
+	Restart              *SidecarHookResult            `json:"restart,omitempty"`
+	Remove               *SidecarHookResult            `json:"remove,omitempty"`
 }
 
 type SidecarBinding struct {
-	ServiceName   string `json:"service_name"`
-	Alias         string `json:"alias"`
-	TargetService string `json:"target_service"`
-	Protocol      string `json:"protocol"`
-	LocalEndpoint string `json:"local_endpoint,omitempty"`
+	ServiceName           string                 `json:"service_name"`
+	Alias                 string                 `json:"alias"`
+	TargetService         string                 `json:"target_service"`
+	Protocol              string                 `json:"protocol"`
+	LocalEndpoint         string                 `json:"local_endpoint,omitempty"`
+	RouteScope            string                 `json:"route_scope,omitempty"`
+	ResolutionStatus      string                 `json:"resolution_status,omitempty"`
+	PlacementPeerRef      string                 `json:"placement_peer_ref,omitempty"`
+	ResolvedEndpoint      string                 `json:"resolved_endpoint,omitempty"`
+	ResolvedUpstream      string                 `json:"resolved_upstream,omitempty"`
+	Provider              contracts.MeshProvider `json:"provider,omitempty"`
+	PublicFallbackBlocked bool                   `json:"public_fallback_blocked,omitempty"`
+	InvalidationReasons   []string               `json:"invalidation_reasons,omitempty"`
+	ResolutionReason      string                 `json:"resolution_reason,omitempty"`
 }
 
 type SidecarServiceConfig struct {
-	ServiceName            string              `json:"service_name"`
-	SelectedMode           string              `json:"selected_mode"`
-	DependencyAliases      []string            `json:"dependency_aliases,omitempty"`
-	Env                    map[string]string   `json:"env,omitempty"`
-	ManagedCredentials     map[string]string   `json:"managed_credentials,omitempty"`
-	ProxyRoutes            []SidecarProxyRoute `json:"proxy_routes,omitempty"`
-	CorrelationPropagation bool                `json:"correlation_propagation"`
-	LatencyMeasurement     bool                `json:"latency_measurement"`
+	ServiceName                string                             `json:"service_name"`
+	SelectedMode               string                             `json:"selected_mode"`
+	DependencyAliases          []string                           `json:"dependency_aliases,omitempty"`
+	Env                        map[string]string                  `json:"env,omitempty"`
+	EnvContracts               []SidecarEnvContract               `json:"env_contracts,omitempty"`
+	ManagedCredentials         map[string]string                  `json:"managed_credentials,omitempty"`
+	ManagedCredentialContracts []SidecarManagedCredentialContract `json:"managed_credential_contracts,omitempty"`
+	LocalhostRescueContracts   []SidecarLocalhostRescueContract   `json:"localhost_rescue_contracts,omitempty"`
+	ProxyRoutes                []SidecarProxyRoute                `json:"proxy_routes,omitempty"`
+	Resolutions                []DependencyResolutionView         `json:"resolutions,omitempty"`
+	CorrelationPropagation     bool                               `json:"correlation_propagation"`
+	LatencyMeasurement         bool                               `json:"latency_measurement"`
 }
 
 type SidecarProxyRoute struct {
-	Alias           string `json:"alias"`
-	TargetService   string `json:"target_service"`
-	Protocol        string `json:"protocol"`
-	LocalEndpoint   string `json:"local_endpoint,omitempty"`
-	Upstream        string `json:"upstream"`
-	LocalhostRescue bool   `json:"localhost_rescue"`
+	Alias                 string                 `json:"alias"`
+	TargetService         string                 `json:"target_service"`
+	Protocol              string                 `json:"protocol"`
+	LocalEndpoint         string                 `json:"local_endpoint,omitempty"`
+	ListenerHost          string                 `json:"listener_host,omitempty"`
+	ListenerPort          int                    `json:"listener_port,omitempty"`
+	ListenerScheme        string                 `json:"listener_scheme,omitempty"`
+	ForwardingMode        string                 `json:"forwarding_mode,omitempty"`
+	Upstream              string                 `json:"upstream"`
+	RouteScope            string                 `json:"route_scope,omitempty"`
+	ResolutionStatus      string                 `json:"resolution_status,omitempty"`
+	PlacementPeerRef      string                 `json:"placement_peer_ref,omitempty"`
+	Provider              contracts.MeshProvider `json:"provider,omitempty"`
+	PublicFallbackBlocked bool                   `json:"public_fallback_blocked,omitempty"`
+	InvalidationReasons   []string               `json:"invalidation_reasons,omitempty"`
+	ResolutionReason      string                 `json:"resolution_reason,omitempty"`
+	FallbackClass         string                 `json:"fallback_class,omitempty"`
+	FallbackReason        string                 `json:"fallback_reason,omitempty"`
+	MeshHealthRequired    bool                   `json:"mesh_health_required,omitempty"`
+	NetworkNamespace      bool                   `json:"network_namespace_intercept,omitempty"`
+	LocalhostRescue       bool                   `json:"localhost_rescue"`
 }
 
 type SidecarHookResult struct {
@@ -221,32 +269,139 @@ type SidecarActivation struct {
 }
 
 type SidecarMetadataCache struct {
-	Version   string                            `json:"version"`
-	UpdatedAt time.Time                         `json:"updated_at"`
-	Services  map[string]SidecarServiceMetadata `json:"services"`
+	Version              string                            `json:"version"`
+	UpdatedAt            time.Time                         `json:"updated_at"`
+	PlacementFingerprint string                            `json:"placement_fingerprint,omitempty"`
+	RouteFingerprint     string                            `json:"route_fingerprint,omitempty"`
+	InvalidationRules    []string                          `json:"invalidation_rules,omitempty"`
+	Services             map[string]SidecarServiceMetadata `json:"services"`
 }
 
 type SidecarServiceMetadata struct {
-	SelectedMode           string   `json:"selected_mode"`
-	DependencyAliases      []string `json:"dependency_aliases,omitempty"`
-	Protocols              []string `json:"protocols,omitempty"`
-	ConfigPath             string   `json:"config_path,omitempty"`
-	RuntimePath            string   `json:"runtime_path,omitempty"`
-	CorrelationPropagation bool     `json:"correlation_propagation"`
-	LatencyMeasurement     bool     `json:"latency_measurement"`
+	SelectedMode               string                             `json:"selected_mode"`
+	DependencyAliases          []string                           `json:"dependency_aliases,omitempty"`
+	Protocols                  []string                           `json:"protocols,omitempty"`
+	EnvContracts               []SidecarEnvContract               `json:"env_contracts,omitempty"`
+	ManagedCredentialContracts []SidecarManagedCredentialContract `json:"managed_credential_contracts,omitempty"`
+	LocalhostRescueContracts   []SidecarLocalhostRescueContract   `json:"localhost_rescue_contracts,omitempty"`
+	Resolutions                []DependencyResolutionView         `json:"resolutions,omitempty"`
+	CacheInvalidationRules     []string                           `json:"cache_invalidation_rules,omitempty"`
+	ConfigPath                 string                             `json:"config_path,omitempty"`
+	RuntimePath                string                             `json:"runtime_path,omitempty"`
+	ManagedCredentialAuditPath string                             `json:"managed_credential_audit_path,omitempty"`
+	CorrelationPropagation     bool                               `json:"correlation_propagation"`
+	LatencyMeasurement         bool                               `json:"latency_measurement"`
+}
+
+type SidecarEnvContract struct {
+	Alias               string            `json:"alias"`
+	TargetService       string            `json:"target_service"`
+	Protocol            string            `json:"protocol"`
+	RequiredKeys        []string          `json:"required_keys,omitempty"`
+	Values              map[string]string `json:"values"`
+	RouteScope          string            `json:"route_scope,omitempty"`
+	ResolutionStatus    string            `json:"resolution_status,omitempty"`
+	PlacementPeerRef    string            `json:"placement_peer_ref,omitempty"`
+	InvalidationReasons []string          `json:"invalidation_reasons,omitempty"`
+	ResolutionReason    string            `json:"resolution_reason,omitempty"`
+	SecretSafe          bool              `json:"secret_safe"`
+}
+
+type SidecarManagedCredentialContract struct {
+	Alias                  string            `json:"alias"`
+	TargetService          string            `json:"target_service"`
+	Protocol               string            `json:"protocol"`
+	CredentialRef          string            `json:"credential_ref"`
+	RequiredKeys           []string          `json:"required_keys,omitempty"`
+	Values                 map[string]string `json:"values"`
+	MaskedValues           map[string]string `json:"masked_values,omitempty"`
+	ValueFingerprints      map[string]string `json:"value_fingerprints,omitempty"`
+	RouteScope             string            `json:"route_scope,omitempty"`
+	ResolutionStatus       string            `json:"resolution_status,omitempty"`
+	PlacementPeerRef       string            `json:"placement_peer_ref,omitempty"`
+	InvalidationReasons    []string          `json:"invalidation_reasons,omitempty"`
+	ResolutionReason       string            `json:"resolution_reason,omitempty"`
+	SecretSafe             bool              `json:"secret_safe"`
+	LocalhostRescueSkipped bool              `json:"localhost_rescue_skipped"`
+}
+
+type SidecarLocalhostRescueContract struct {
+	Alias                     string                 `json:"alias"`
+	TargetService             string                 `json:"target_service"`
+	Protocol                  string                 `json:"protocol"`
+	ListenerEndpoint          string                 `json:"listener_endpoint"`
+	ListenerHost              string                 `json:"listener_host"`
+	ListenerPort              int                    `json:"listener_port"`
+	ListenerScheme            string                 `json:"listener_scheme,omitempty"`
+	ForwardingMode            string                 `json:"forwarding_mode"`
+	Upstream                  string                 `json:"upstream"`
+	RouteScope                string                 `json:"route_scope,omitempty"`
+	ResolutionStatus          string                 `json:"resolution_status,omitempty"`
+	PlacementPeerRef          string                 `json:"placement_peer_ref,omitempty"`
+	Provider                  contracts.MeshProvider `json:"provider,omitempty"`
+	PublicFallbackBlocked     bool                   `json:"public_fallback_blocked,omitempty"`
+	InvalidationReasons       []string               `json:"invalidation_reasons,omitempty"`
+	ResolutionReason          string                 `json:"resolution_reason,omitempty"`
+	FallbackClass             string                 `json:"fallback_class"`
+	FallbackReason            string                 `json:"fallback_reason,omitempty"`
+	MeshHealthRequired        bool                   `json:"mesh_health_required,omitempty"`
+	NetworkNamespaceIntercept bool                   `json:"network_namespace_intercept"`
+}
+
+type ManagedCredentialAuditLog struct {
+	Version              string                                    `json:"version"`
+	UpdatedAt            time.Time                                 `json:"updated_at"`
+	PlaintextPersisted   bool                                      `json:"plaintext_persisted"`
+	LoggerRedactionScope []string                                  `json:"logger_redaction_scope,omitempty"`
+	Services             map[string][]ManagedCredentialAuditRecord `json:"services,omitempty"`
+}
+
+type ManagedCredentialAuditRecord struct {
+	ServiceName            string            `json:"service_name"`
+	Alias                  string            `json:"alias"`
+	TargetService          string            `json:"target_service"`
+	Protocol               string            `json:"protocol"`
+	CredentialRef          string            `json:"credential_ref"`
+	MaskedValues           map[string]string `json:"masked_values,omitempty"`
+	ValueFingerprints      map[string]string `json:"value_fingerprints,omitempty"`
+	RouteScope             string            `json:"route_scope,omitempty"`
+	ResolutionStatus       string            `json:"resolution_status,omitempty"`
+	PlacementPeerRef       string            `json:"placement_peer_ref,omitempty"`
+	PlaintextPersisted     bool              `json:"plaintext_persisted"`
+	SecretSafe             bool              `json:"secret_safe"`
+	LocalhostRescueSkipped bool              `json:"localhost_rescue_skipped"`
+	AuditedAt              time.Time         `json:"audited_at"`
+}
+
+type DependencyResolutionView struct {
+	Alias                 string                 `json:"alias"`
+	TargetService         string                 `json:"target_service"`
+	Protocol              string                 `json:"protocol"`
+	RouteScope            string                 `json:"route_scope"`
+	ResolutionStatus      string                 `json:"resolution_status"`
+	ResolvedEndpoint      string                 `json:"resolved_endpoint,omitempty"`
+	ResolvedUpstream      string                 `json:"resolved_upstream,omitempty"`
+	PlacementTargetID     string                 `json:"placement_target_id,omitempty"`
+	PlacementTargetKind   contracts.TargetKind   `json:"placement_target_kind,omitempty"`
+	PlacementPeerRef      string                 `json:"placement_peer_ref,omitempty"`
+	Provider              contracts.MeshProvider `json:"provider,omitempty"`
+	PublicFallbackBlocked bool                   `json:"public_fallback_blocked,omitempty"`
+	InvalidationReasons   []string               `json:"invalidation_reasons,omitempty"`
+	Reason                string                 `json:"reason,omitempty"`
 }
 
 type SidecarRenderResult struct {
-	Version           string            `json:"version"`
-	PlanPath          string            `json:"plan_path"`
-	ConfigPath        string            `json:"config_path"`
-	LivePlanPath      string            `json:"live_plan_path"`
-	LiveConfigRoot    string            `json:"live_config_root"`
-	ActivationPath    string            `json:"activation_path"`
-	MetadataCachePath string            `json:"metadata_cache_path"`
-	Services          []string          `json:"services,omitempty"`
-	Plan              SidecarPlan       `json:"plan"`
-	Activation        SidecarActivation `json:"activation"`
+	Version                    string            `json:"version"`
+	PlanPath                   string            `json:"plan_path"`
+	ConfigPath                 string            `json:"config_path"`
+	LivePlanPath               string            `json:"live_plan_path"`
+	LiveConfigRoot             string            `json:"live_config_root"`
+	ActivationPath             string            `json:"activation_path"`
+	MetadataCachePath          string            `json:"metadata_cache_path"`
+	ManagedCredentialAuditPath string            `json:"managed_credential_audit_path,omitempty"`
+	Services                   []string          `json:"services,omitempty"`
+	Plan                       SidecarPlan       `json:"plan"`
+	Activation                 SidecarActivation `json:"activation"`
 }
 
 type ArtifactMaterialization struct {
@@ -533,7 +688,11 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 	}
 
 	serviceNames := make(map[string]struct{}, len(payload.Revision.Services))
+	placementByService := make(map[string]contracts.PlacementAssignment, len(payload.Revision.PlacementAssignments))
 	services := make([]ServiceRuntimeContext, 0, len(payload.Revision.Services))
+	for _, placement := range payload.Revision.PlacementAssignments {
+		placementByService[placement.ServiceName] = placement
+	}
 	for _, service := range payload.Revision.Services {
 		if strings.TrimSpace(service.Name) == "" {
 			return RuntimeContext{}, fmt.Errorf("service name is required")
@@ -558,12 +717,9 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 				ctxService.Dependencies = append(ctxService.Dependencies, dependency)
 			}
 		}
-		for _, placement := range payload.Revision.PlacementAssignments {
-			if placement.ServiceName == service.Name {
-				placementCopy := placement
-				ctxService.Placement = &placementCopy
-				break
-			}
+		if placement, ok := placementByService[service.Name]; ok {
+			placementCopy := placement
+			ctxService.Placement = &placementCopy
 		}
 		services = append(services, ctxService)
 	}
@@ -571,6 +727,11 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 	sort.Slice(services, func(i, j int) bool {
 		return services[i].Name < services[j].Name
 	})
+
+	serviceByName := make(map[string]ServiceRuntimeContext, len(services))
+	for _, service := range services {
+		serviceByName[service.Name] = service
+	}
 
 	return RuntimeContext{
 		Project: ProjectMetadata{
@@ -582,6 +743,11 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 		Binding:  payload.Binding,
 		Revision: payload.Revision,
 		Services: services,
+		Runtime: RuntimeDependencyContext{
+			PlacementByService:   placementByService,
+			ServiceByName:        serviceByName,
+			PlacementFingerprint: placementFingerprint(payload.Binding, services, placementByService),
+		},
 	}, nil
 }
 

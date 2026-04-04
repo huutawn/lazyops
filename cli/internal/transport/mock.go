@@ -46,6 +46,9 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	if response, handled := mockAuthorize(req); handled {
 		return response, nil
 	}
+	if strings.EqualFold(req.Method, "POST") && isProjectRepoLinkPath(req.Path) {
+		return mockLinkRepository(req)
+	}
 	if strings.EqualFold(req.Method, "POST") && isProjectBindingsPath(req.Path) {
 		return mockCreateDeploymentBinding(req)
 	}
@@ -317,6 +320,10 @@ func isProjectBindingsPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/projects/") && strings.HasSuffix(path, "/deployment-bindings")
 }
 
+func isProjectRepoLinkPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/projects/") && strings.HasSuffix(path, "/repo-link")
+}
+
 func projectIDFromBindingsPath(path string) (string, bool) {
 	trimmed := strings.Trim(path, "/")
 	parts := strings.Split(trimmed, "/")
@@ -340,6 +347,91 @@ func bindingModeMatchesKind(mode string, kind string) bool {
 	default:
 		return false
 	}
+}
+
+func mockLinkRepository(req Request) (Response, error) {
+	projectID, ok := projectIDFromRepoLinkPath(req.Path)
+	if !ok {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "repo-link-invalid-path",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_path",
+				"message":   "Repo link path is invalid.",
+				"next_step": "retry the command with a valid project id",
+			}),
+		}, nil
+	}
+
+	var payload struct {
+		InstallationID int64  `json:"installation_id"`
+		RepoID         int64  `json:"repo_id"`
+		TrackedBranch  string `json:"tracked_branch"`
+	}
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "repo-link-bad-json",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_request",
+				"message":   "Repo link payload is invalid.",
+				"next_step": "retry `lazyops link` after rechecking the project, installation, repo, and branch selections",
+			}),
+		}, nil
+	}
+
+	if payload.InstallationID != 48151623 || payload.RepoID != 1001 {
+		return Response{
+			StatusCode:  403,
+			FixtureName: "repo-link-repo-access-denied",
+			Body: mustJSON(map[string]any{
+				"error":     "repo_access_denied",
+				"message":   "The selected GitHub App installation does not grant access to the repo.",
+				"next_step": "install the GitHub App on the repo or choose a different installation",
+			}),
+		}, nil
+	}
+	if strings.TrimSpace(payload.TrackedBranch) == "" {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "repo-link-missing-branch",
+			Body: mustJSON(map[string]any{
+				"error":     "missing_branch",
+				"message":   "Tracked branch is required for repo link.",
+				"next_step": "rerun `lazyops link --branch <tracked-branch>`",
+			}),
+		}, nil
+	}
+
+	link := contracts.ProjectRepoLink{
+		ID:                   "prl_demo",
+		ProjectID:            projectID,
+		GitHubInstallationID: payload.InstallationID,
+		GitHubRepoID:         payload.RepoID,
+		RepoOwner:            "lazyops",
+		RepoName:             "acme-shop",
+		TrackedBranch:        strings.TrimSpace(payload.TrackedBranch),
+		PreviewEnabled:       true,
+		CreatedAt:            time.Date(2026, time.April, 2, 8, 0, 0, 0, time.UTC),
+	}
+
+	return Response{
+		StatusCode:  201,
+		FixtureName: "repo-link",
+		Body:        mustJSON(link),
+	}, nil
+}
+
+func projectIDFromRepoLinkPath(path string) (string, bool) {
+	trimmed := strings.Trim(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 5 {
+		return "", false
+	}
+	if parts[0] != "api" || parts[1] != "v1" || parts[2] != "projects" || parts[4] != "repo-link" {
+		return "", false
+	}
+	return parts[3], true
 }
 
 func sanitizeBindingID(name string) string {
@@ -606,9 +698,24 @@ func DefaultFixtures() map[string]Response {
 			FixtureName: "doctor-preview",
 			Body: mustJSON(map[string]any{
 				"checks": []map[string]any{
-					{"name": "auth", "status": "pass"},
-					{"name": "repo_link", "status": "pass"},
-					{"name": "lazyops_yaml", "status": "warn"},
+					{
+						"name":      "auth",
+						"status":    "pass",
+						"summary":   "CLI auth preview is healthy.",
+						"next_step": "",
+					},
+					{
+						"name":      "repo_link",
+						"status":    "pass",
+						"summary":   "Repo link preview is healthy.",
+						"next_step": "",
+					},
+					{
+						"name":      "webhook_health",
+						"status":    "pass",
+						"summary":   "Deploy webhook is registered and reachable.",
+						"next_step": "",
+					},
 				},
 			}),
 		},

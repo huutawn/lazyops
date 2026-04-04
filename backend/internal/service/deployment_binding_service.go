@@ -135,6 +135,29 @@ func (s *DeploymentBindingService) Create(cmd CreateDeploymentBindingCommand) (*
 	return &record, nil
 }
 
+func (s *DeploymentBindingService) List(requesterUserID, requesterRole, projectID string) (*DeploymentBindingListResult, error) {
+	project, err := s.resolveProjectForWrite(requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.bindings.ListByProject(project.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]DeploymentBindingRecord, 0, len(items))
+	for _, item := range items {
+		record, err := ToDeploymentBindingRecord(item)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+
+	return &DeploymentBindingListResult{Items: records}, nil
+}
+
 func (s *DeploymentBindingService) resolveProjectForWrite(requesterUserID, requesterRole, projectID string) (*models.Project, error) {
 	requesterUserID = strings.TrimSpace(requesterUserID)
 	projectID = strings.TrimSpace(projectID)

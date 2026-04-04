@@ -40,3 +40,12 @@ func ToDeploymentBindingResponse(record service.DeploymentBindingRecord) respons
 		UpdatedAt:           record.UpdatedAt,
 	}
 }
+
+func ToDeploymentBindingListResponse(result service.DeploymentBindingListResult) responsedto.DeploymentBindingListResponse {
+	items := make([]responsedto.DeploymentBindingResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, ToDeploymentBindingResponse(item))
+	}
+
+	return responsedto.DeploymentBindingListResponse{Items: items}
+}

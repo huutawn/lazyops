@@ -62,7 +62,10 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 
 	version := gatewayVersion(runtimeCtx)
 	paths := m.renderPaths(layout, runtimeCtx, version)
-	plan := m.buildPlan(runtimeCtx, version)
+	plan, err := m.buildPlan(runtimeCtx, version)
+	if err != nil {
+		return GatewayRenderResult{}, err
+	}
 	config := renderCaddyfile(plan)
 
 	for _, dir := range []string{paths.versionRoot, filepath.Dir(paths.workspacePlan), paths.liveRoot} {
@@ -236,9 +239,13 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 	return renderResult, nil
 }
 
-func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) GatewayPlan {
+func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) (GatewayPlan, error) {
 	primaryProvider, fallbackProvider := preferredMagicProviders()
 	hostToken := gatewayHostToken(runtimeCtx)
+	resolver, err := newRuntimeDependencyResolver(m.runtimeRoot, runtimeCtx)
+	if err != nil {
+		return GatewayPlan{}, err
+	}
 
 	routes := make([]GatewayRoute, 0)
 	publicServices := make([]string, 0)
@@ -249,15 +256,12 @@ func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) Ga
 		publicServices = append(publicServices, service.Name)
 		primaryHost := fmt.Sprintf("%s.%s.%s", service.Name, hostToken, primaryProvider)
 		fallbackHost := fmt.Sprintf("%s.%s.%s", service.Name, hostToken, fallbackProvider)
-		routes = append(routes, GatewayRoute{
-			ServiceName:  service.Name,
-			Port:         service.HealthCheck.Port,
-			Upstream:     fmt.Sprintf("127.0.0.1:%d", service.HealthCheck.Port),
-			PrimaryHost:  primaryHost,
-			FallbackHost: fallbackHost,
-			PrimaryURL:   "https://" + primaryHost,
-			FallbackURL:  "https://" + fallbackHost,
-		})
+		route := resolver.ResolvePublicService(service)
+		route.PrimaryHost = primaryHost
+		route.FallbackHost = fallbackHost
+		route.PrimaryURL = "https://" + primaryHost
+		route.FallbackURL = "https://" + fallbackHost
+		routes = append(routes, route)
 	}
 	sort.Slice(routes, func(i, j int) bool {
 		return routes[i].ServiceName < routes[j].ServiceName
@@ -265,15 +269,18 @@ func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) Ga
 	sort.Strings(publicServices)
 
 	return GatewayPlan{
-		Version:             version,
-		GeneratedAt:         m.now(),
-		Provider:            "caddy",
-		PublicServices:      publicServices,
-		MagicDomain:         primaryProvider,
-		FallbackMagicDomain: fallbackProvider,
-		HostToken:           hostToken,
-		Routes:              routes,
-	}
+		Version:              version,
+		GeneratedAt:          m.now(),
+		Provider:             "caddy",
+		PublicServices:       publicServices,
+		MagicDomain:          primaryProvider,
+		FallbackMagicDomain:  fallbackProvider,
+		HostToken:            hostToken,
+		PlacementFingerprint: resolver.PlacementFingerprint(),
+		RouteFingerprint:     resolver.RouteFingerprint(),
+		InvalidationRules:    resolver.InvalidationRules(),
+		Routes:               routes,
+	}, nil
 }
 
 func (m *GatewayManager) renderPaths(layout WorkspaceLayout, runtimeCtx RuntimeContext, version string) gatewayRenderPaths {
@@ -465,10 +472,11 @@ func renderCaddyfile(plan GatewayPlan) string {
 }
 
 func gatewayVersion(runtimeCtx RuntimeContext) string {
-	base := fmt.Sprintf("%s|%s|%s|%s|%s",
+	base := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
 		runtimeCtx.Project.ProjectID,
 		runtimeCtx.Binding.BindingID,
 		runtimeCtx.Revision.RevisionID,
+		runtimeCtx.Runtime.PlacementFingerprint,
 		gatewayHostToken(runtimeCtx),
 		runtimeCtx.Binding.DomainPolicy.Provider,
 	)

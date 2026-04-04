@@ -284,6 +284,193 @@ type DeploymentBindingRecord struct {
 	UpdatedAt           time.Time
 }
 
+type DeploymentBindingListResult struct {
+	Items []DeploymentBindingRecord
+}
+
+type ValidateLazyopsYAMLCommand struct {
+	RequesterUserID string
+	RequesterRole   string
+	ProjectID       string
+	RawDocument     []byte
+}
+
+type LazyopsYAMLDocument struct {
+	ProjectSlug         string                          `json:"project_slug"`
+	RuntimeMode         string                          `json:"runtime_mode"`
+	DeploymentBinding   LazyopsYAMLDeploymentBindingRef `json:"deployment_binding"`
+	Services            []LazyopsYAMLService            `json:"services"`
+	DependencyBindings  []LazyopsYAMLDependencyBinding  `json:"dependency_bindings,omitempty"`
+	CompatibilityPolicy LazyopsYAMLCompatibilityPolicy  `json:"compatibility_policy"`
+	MagicDomainPolicy   LazyopsYAMLMagicDomainPolicy    `json:"magic_domain_policy,omitempty"`
+	PreviewPolicy       LazyopsYAMLPreviewPolicy        `json:"preview_policy,omitempty"`
+	ScaleToZeroPolicy   LazyopsYAMLScaleToZeroPolicy    `json:"scale_to_zero_policy,omitempty"`
+}
+
+type LazyopsYAMLDeploymentBindingRef struct {
+	TargetRef string `json:"target_ref"`
+}
+
+type LazyopsYAMLService struct {
+	Name        string                        `json:"name"`
+	Path        string                        `json:"path"`
+	StartHint   string                        `json:"start_hint,omitempty"`
+	Public      bool                          `json:"public,omitempty"`
+	Healthcheck LazyopsYAMLServiceHealthcheck `json:"healthcheck,omitempty"`
+}
+
+type LazyopsYAMLServiceHealthcheck struct {
+	Path string `json:"path,omitempty"`
+	Port int    `json:"port,omitempty"`
+}
+
+type LazyopsYAMLDependencyBinding struct {
+	Service       string `json:"service"`
+	Alias         string `json:"alias"`
+	TargetService string `json:"target_service"`
+	Protocol      string `json:"protocol"`
+	LocalEndpoint string `json:"local_endpoint,omitempty"`
+}
+
+type LazyopsYAMLCompatibilityPolicy struct {
+	EnvInjection       bool `json:"env_injection"`
+	ManagedCredentials bool `json:"managed_credentials"`
+	LocalhostRescue    bool `json:"localhost_rescue"`
+}
+
+type LazyopsYAMLMagicDomainPolicy struct {
+	Enabled  bool   `json:"enabled,omitempty"`
+	Provider string `json:"provider,omitempty"`
+}
+
+type LazyopsYAMLPreviewPolicy struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+type LazyopsYAMLScaleToZeroPolicy struct {
+	Enabled bool `json:"enabled"`
+}
+
+type InitTargetSummary struct {
+	ID          string
+	Name        string
+	Kind        string
+	Status      string
+	RuntimeMode string
+}
+
+type LazyopsYAMLSchemaSummary struct {
+	AllowedDependencyProtocols  []string
+	AllowedMagicDomainProviders []string
+	ForbiddenFieldNames         []string
+}
+
+type ValidateLazyopsYAMLResult struct {
+	Project           ProjectSummary
+	DeploymentBinding DeploymentBindingRecord
+	TargetSummary     InitTargetSummary
+	Schema            LazyopsYAMLSchemaSummary
+}
+
+type BlueprintArtifactMetadata struct {
+	CommitSHA   string
+	ArtifactRef string
+	ImageRef    string
+}
+
+type CompileBlueprintCommand struct {
+	RequesterUserID string
+	RequesterRole   string
+	ProjectID       string
+	SourceRef       string
+	TriggerKind     string
+	Artifact        BlueprintArtifactMetadata
+	LazyopsYAMLRaw  []byte
+}
+
+type ProjectServiceRecord struct {
+	ID             string
+	ProjectID      string
+	Name           string
+	Path           string
+	Public         bool
+	RuntimeProfile string
+	Healthcheck    map[string]any
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type BlueprintRepoStateRecord struct {
+	ProjectRepoLinkID string
+	RepoOwner         string
+	RepoName          string
+	RepoFullName      string
+	TrackedBranch     string
+	PreviewEnabled    bool
+}
+
+type BlueprintServiceContractRecord struct {
+	Name           string
+	Path           string
+	Public         bool
+	RuntimeProfile string
+	StartHint      string
+	Healthcheck    map[string]any
+}
+
+type PlacementAssignmentRecord struct {
+	ServiceName string
+	TargetID    string
+	TargetKind  string
+	Labels      map[string]string
+}
+
+type BlueprintCompiledContractRecord struct {
+	ProjectID           string
+	RuntimeMode         string
+	Repo                BlueprintRepoStateRecord
+	Binding             DeploymentBindingRecord
+	Services            []BlueprintServiceContractRecord
+	DependencyBindings  []LazyopsYAMLDependencyBinding
+	CompatibilityPolicy LazyopsYAMLCompatibilityPolicy
+	MagicDomainPolicy   LazyopsYAMLMagicDomainPolicy
+	ScaleToZeroPolicy   LazyopsYAMLScaleToZeroPolicy
+	ArtifactMetadata    BlueprintArtifactMetadata
+}
+
+type BlueprintRecord struct {
+	ID         string
+	ProjectID  string
+	SourceKind string
+	SourceRef  string
+	Compiled   BlueprintCompiledContractRecord
+	CreatedAt  time.Time
+}
+
+type DesiredStateRevisionDraftRecord struct {
+	RevisionID           string
+	ProjectID            string
+	BlueprintID          string
+	DeploymentBindingID  string
+	CommitSHA            string
+	ArtifactRef          string
+	ImageRef             string
+	TriggerKind          string
+	RuntimeMode          string
+	Services             []BlueprintServiceContractRecord
+	DependencyBindings   []LazyopsYAMLDependencyBinding
+	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy
+	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy
+	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy
+	PlacementAssignments []PlacementAssignmentRecord
+}
+
+type CompileBlueprintResult struct {
+	Services             []ProjectServiceRecord
+	Blueprint            BlueprintRecord
+	DesiredRevisionDraft DesiredStateRevisionDraftRecord
+}
+
 type CreateProjectCommand struct {
 	UserID        string
 	Name          string

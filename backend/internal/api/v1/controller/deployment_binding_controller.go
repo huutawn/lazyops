@@ -54,3 +54,23 @@ func (ctl *DeploymentBindingController) Create(c *gin.Context) {
 
 	response.JSON(c, http.StatusCreated, "deployment binding created", mapper.ToDeploymentBindingResponse(*result))
 }
+
+func (ctl *DeploymentBindingController) List(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	result, err := ctl.bindings.List(claims.UserID, claims.Role, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load deployment bindings", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load deployment bindings", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load deployment bindings", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load deployment bindings", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "deployment bindings loaded", mapper.ToDeploymentBindingListResponse(*result))
+}

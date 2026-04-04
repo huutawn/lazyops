@@ -50,9 +50,38 @@ type ProjectRepoLinkStore interface {
 	LookupWebhookRoute(githubInstallationID int64, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error)
 }
 
+type BuildJobStore interface {
+	Create(job *models.BuildJob) error
+	GetByIDForProject(projectID, buildJobID string) (*models.BuildJob, error)
+	UpdateStatus(buildJobID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error
+}
+
 type DeploymentBindingStore interface {
 	Create(binding *models.DeploymentBinding) error
+	ListByProject(projectID string) ([]models.DeploymentBinding, error)
 	GetByTargetRefForProject(projectID, targetRef string) (*models.DeploymentBinding, error)
+}
+
+type ProjectServiceStore interface {
+	ReplaceForProject(projectID string, items []models.Service) error
+	ListByProject(projectID string) ([]models.Service, error)
+}
+
+type BlueprintStore interface {
+	Create(blueprint *models.Blueprint) error
+	GetByIDForProject(projectID, blueprintID string) (*models.Blueprint, error)
+}
+
+type DesiredStateRevisionStore interface {
+	Create(revision *models.DesiredStateRevision) error
+	GetByIDForProject(projectID, revisionID string) (*models.DesiredStateRevision, error)
+	UpdateStatus(revisionID, status string, at time.Time) error
+}
+
+type DeploymentStore interface {
+	Create(deployment *models.Deployment) error
+	GetByIDForProject(projectID, deploymentID string) (*models.Deployment, error)
+	UpdateStatus(deploymentID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error
 }
 
 type InstanceStore interface {

@@ -348,6 +348,64 @@ func TestApplyDiscoveryRejectsUnavailableCluster(t *testing.T) {
 	}
 }
 
+func TestAnnotateBindingsWithTargetsMarksReusableStatus(t *testing.T) {
+	bindings := []BindingSummary{
+		{
+			ID:          "bind_standalone_demo",
+			Name:        "prod-solo-binding",
+			TargetRef:   "prod-solo-1",
+			RuntimeMode: RuntimeModeStandalone,
+			TargetKind:  "instance",
+			TargetID:    "inst_demo",
+		},
+		{
+			ID:          "bind_mesh_demo",
+			Name:        "prod-ap-mesh",
+			TargetRef:   "prod-ap",
+			RuntimeMode: RuntimeModeDistributedMesh,
+			TargetKind:  "mesh",
+			TargetID:    "mesh_demo",
+		},
+	}
+	targets := []TargetSummary{
+		{ID: "inst_demo", Name: "prod-solo-1", Kind: "instance", Status: "online", OwnerUserID: "usr_demo", RuntimeMode: RuntimeModeStandalone},
+		{ID: "mesh_demo", Name: "prod-ap", Kind: "mesh", Status: "offline", OwnerUserID: "usr_demo", RuntimeMode: RuntimeModeDistributedMesh},
+	}
+	project := &ProjectSummary{ID: "prj_demo", UserID: "usr_demo", Slug: "acme-shop", Name: "Acme Shop"}
+
+	annotated := AnnotateBindingsWithTargets(bindings, targets, project)
+	if len(annotated) != 2 {
+		t.Fatalf("expected two annotated bindings, got %+v", annotated)
+	}
+	if annotated[0].TargetStatus != "online" || !annotated[0].Reusable {
+		t.Fatalf("expected standalone binding to be reusable, got %+v", annotated[0])
+	}
+	if annotated[1].TargetStatus != "offline" || annotated[1].Reusable {
+		t.Fatalf("expected mesh binding to be non-reusable, got %+v", annotated[1])
+	}
+}
+
+func TestBindingFiltersSupportTargetRefKindAndStatus(t *testing.T) {
+	bindings := []BindingSummary{
+		{ID: "bind1", Name: "prod-solo-binding", TargetRef: "prod-solo-1", RuntimeMode: RuntimeModeStandalone, TargetKind: "instance", TargetID: "inst_demo", TargetStatus: "online", Reusable: true},
+		{ID: "bind2", Name: "prod-ap-mesh", TargetRef: "prod-ap", RuntimeMode: RuntimeModeDistributedMesh, TargetKind: "mesh", TargetID: "mesh_demo", TargetStatus: "offline"},
+		{ID: "bind3", Name: "prod-k3s-binding", TargetRef: "prod-k3s-ap", RuntimeMode: RuntimeModeDistributedK3s, TargetKind: "cluster", TargetID: "cls_demo", TargetStatus: "registered", Reusable: true},
+	}
+
+	filtered := FilterBindingsByRuntimeMode(bindings, RuntimeModeDistributedK3s)
+	filtered = FilterBindingsByTargetKind(filtered, "cluster")
+	filtered = FilterBindingsByTargetRef(filtered, "prod-k3s-ap")
+	filtered = FilterBindingsByStatus(filtered, "registered")
+	if len(filtered) != 1 || filtered[0].ID != "bind3" {
+		t.Fatalf("expected one k3s binding after filters, got %+v", filtered)
+	}
+
+	reusable := ReusableBindings(bindings)
+	if len(reusable) != 2 {
+		t.Fatalf("expected two reusable bindings, got %+v", reusable)
+	}
+}
+
 func TestApplyBindingsAutoSelectsCompatibleBinding(t *testing.T) {
 	plan := InitPlan{
 		RepoRoot: "/tmp/repo",

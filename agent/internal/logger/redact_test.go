@@ -32,3 +32,20 @@ func TestRedactNestedMap(t *testing.T) {
 		t.Fatalf("expected safe field to remain visible, got %v", typed["safe"])
 	}
 }
+
+func TestRedactManagedCredentialFields(t *testing.T) {
+	got := RedactField("managed_credentials", map[string]string{
+		"LAZYOPS_MANAGED_API_REF":    "managed://prj_123/web/api",
+		"LAZYOPS_MANAGED_API_HANDLE": "mcred_abcdef12",
+	})
+	typed, ok := got.(map[string]string)
+	if !ok {
+		t.Fatalf("expected map[string]string result, got %T", got)
+	}
+	if typed["LAZYOPS_MANAGED_API_REF"] != redactedValue {
+		t.Fatalf("expected managed credential ref to be redacted, got %v", typed["LAZYOPS_MANAGED_API_REF"])
+	}
+	if typed["LAZYOPS_MANAGED_API_HANDLE"] != redactedValue {
+		t.Fatalf("expected managed credential handle to be redacted, got %v", typed["LAZYOPS_MANAGED_API_HANDLE"])
+	}
+}

@@ -72,6 +72,12 @@ func logGitHubWebhookOutcome(c *gin.Context, deliveryID, eventType string, resul
 			"tracked_branch", result.Event.TrackedBranch,
 			"commit_sha", result.Event.CommitSHA,
 		)
+		if result.BuildJob != nil {
+			args = append(args,
+				"build_job_id", result.BuildJob.ID,
+				"build_job_status", result.BuildJob.Status,
+			)
+		}
 	}
 
 	if err != nil {

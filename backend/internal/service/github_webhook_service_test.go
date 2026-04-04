@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"lazyops-server/internal/models"
 )
 
 type fakeWebhookRouteResolver struct {
@@ -95,6 +97,90 @@ func TestGitHubWebhookServiceAcceptsPushTrigger(t *testing.T) {
 	}
 	if result.Event.ProjectID != "prj_123" || result.Event.TrackedBranch != "main" {
 		t.Fatalf("expected project and branch to resolve, got %+v", result.Event)
+	}
+}
+
+func TestGitHubWebhookServiceDispatchesBuildJobForAcceptedPush(t *testing.T) {
+	buildDispatcher := NewBuildJobService(
+		newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+			ID:                   "prl_123",
+			ProjectID:            "prj_123",
+			GitHubInstallationID: "ghi_alpha",
+			GitHubRepoID:         42,
+			RepoOwner:            "lazyops",
+			RepoName:             "backend",
+			TrackedBranch:        "main",
+		}),
+		newFakeBuildJobStore(),
+	)
+	service := NewGitHubWebhookService("secret", newFakeWebhookRouteResolver(ProjectRepoLinkRecord{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		RepoFullName:         "lazyops/backend",
+		TrackedBranch:        "main",
+	})).WithBuildDispatcher(buildDispatcher)
+	payload := []byte(`{"ref":"refs/heads/main","after":"abc123","installation":{"id":100},"repository":{"id":42,"name":"backend","full_name":"lazyops/backend","owner":{"login":"lazyops"}}}`)
+
+	result, err := service.Handle(GitHubWebhookCommand{
+		DeliveryID: "delivery_19",
+		EventType:  "push",
+		Signature:  signGitHubWebhook("secret", payload),
+		Payload:    payload,
+	})
+	if err != nil {
+		t.Fatalf("handle webhook: %v", err)
+	}
+	if result.BuildJob == nil {
+		t.Fatalf("expected build job to be dispatched, got %+v", result)
+	}
+	if result.BuildJob.Status != BuildJobStatusQueued {
+		t.Fatalf("expected queued build job, got %+v", result.BuildJob)
+	}
+}
+
+func TestGitHubWebhookServiceIgnoresBranchPolicyRejectedBuild(t *testing.T) {
+	buildDispatcher := NewBuildJobService(
+		newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+			ID:                   "prl_123",
+			ProjectID:            "prj_123",
+			GitHubInstallationID: "ghi_alpha",
+			GitHubRepoID:         42,
+			RepoOwner:            "lazyops",
+			RepoName:             "backend",
+			TrackedBranch:        "release",
+		}),
+		newFakeBuildJobStore(),
+	)
+	service := NewGitHubWebhookService("secret", newFakeWebhookRouteResolver(ProjectRepoLinkRecord{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		RepoFullName:         "lazyops/backend",
+		TrackedBranch:        "main",
+	})).WithBuildDispatcher(buildDispatcher)
+	payload := []byte(`{"ref":"refs/heads/main","after":"abc123","installation":{"id":100},"repository":{"id":42,"name":"backend","full_name":"lazyops/backend","owner":{"login":"lazyops"}}}`)
+
+	result, err := service.Handle(GitHubWebhookCommand{
+		DeliveryID: "delivery_20",
+		EventType:  "push",
+		Signature:  signGitHubWebhook("secret", payload),
+		Payload:    payload,
+	})
+	if err != nil {
+		t.Fatalf("handle webhook: %v", err)
+	}
+	if result.Status != "ignored" || result.IgnoredReason != "branch_policy_rejected" {
+		t.Fatalf("expected ignored branch_policy_rejected, got %+v", result)
+	}
+	if result.BuildJob != nil {
+		t.Fatalf("expected no build job when branch policy rejected, got %+v", result.BuildJob)
 	}
 }
 

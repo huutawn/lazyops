@@ -99,6 +99,18 @@ type DeploymentBindingsResponse struct {
 	Bindings []DeploymentBinding `json:"bindings"`
 }
 
+type ProjectRepoLink struct {
+	ID                   string    `json:"id"`
+	ProjectID            string    `json:"project_id"`
+	GitHubInstallationID int64     `json:"github_installation_id"`
+	GitHubRepoID         int64     `json:"github_repo_id"`
+	RepoOwner            string    `json:"repo_owner"`
+	RepoName             string    `json:"repo_name"`
+	TrackedBranch        string    `json:"tracked_branch"`
+	PreviewEnabled       bool      `json:"preview_enabled,omitempty"`
+	CreatedAt            time.Time `json:"created_at,omitempty"`
+}
+
 type TraceSummary struct {
 	CorrelationID  string   `json:"correlation_id"`
 	ServicePath    []string `json:"service_path"`
@@ -181,6 +193,15 @@ func DecodeDeploymentBinding(payload []byte) (DeploymentBinding, error) {
 	}
 
 	return binding, binding.Validate()
+}
+
+func DecodeProjectRepoLink(payload []byte) (ProjectRepoLink, error) {
+	var link ProjectRepoLink
+	if err := decode(payload, &link); err != nil {
+		return ProjectRepoLink{}, err
+	}
+
+	return link, link.Validate()
 }
 
 func DecodeTraceSummary(payload []byte) (TraceSummary, error) {
@@ -343,6 +364,28 @@ func (response DeploymentBindingsResponse) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (link ProjectRepoLink) Validate() error {
+	if err := requireValue("project_repo_link.id", link.ID); err != nil {
+		return err
+	}
+	if err := requireValue("project_repo_link.project_id", link.ProjectID); err != nil {
+		return err
+	}
+	if link.GitHubInstallationID <= 0 {
+		return fmt.Errorf("project_repo_link.github_installation_id must be greater than zero")
+	}
+	if link.GitHubRepoID <= 0 {
+		return fmt.Errorf("project_repo_link.github_repo_id must be greater than zero")
+	}
+	if err := requireValue("project_repo_link.repo_owner", link.RepoOwner); err != nil {
+		return err
+	}
+	if err := requireValue("project_repo_link.repo_name", link.RepoName); err != nil {
+		return err
+	}
+	return requireValue("project_repo_link.tracked_branch", link.TrackedBranch)
 }
 
 func (trace TraceSummary) Validate() error {

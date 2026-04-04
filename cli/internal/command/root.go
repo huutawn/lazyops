@@ -20,20 +20,8 @@ func NewRootCommand() *Command {
 			logoutCommand(),
 			initCommand(),
 			linkCommand(),
-			authFixtureCommand(
-				"doctor",
-				"Validate local onboarding and deploy contract health.",
-				"lazyops doctor",
-				"Day 2 scaffold: doctor uses a mock-only preview contract until the backend API is locked.",
-				transport.Request{Method: "GET", Path: "/mock/v1/doctor", Query: map[string]string{"project": "prj_demo"}},
-			),
-			authFixtureCommand(
-				"status",
-				"Show a thin runtime summary.",
-				"lazyops status",
-				"Day 2 scaffold: status uses a mock-only preview contract until the backend contract is locked.",
-				transport.Request{Method: "GET", Path: "/mock/v1/status", Query: map[string]string{"project": "prj_demo"}},
-			),
+			doctorCommand(),
+			statusCommand(),
 			bindingsCommand(),
 			logsCommand(),
 			tracesCommand(),
@@ -68,46 +56,6 @@ func initCommand() *Command {
 		Summary: "Initialize the repository into a valid LazyOps deploy contract.",
 		Usage:   "lazyops init [--project <project-id-or-slug>] [--runtime-mode <mode>] [--target <id|name>] [--binding <binding-id|name|target-ref> | --create-binding [--binding-name <name>]] [--magic-domain-provider <sslip.io|nip.io>] [--scale-to-zero] [--write [--overwrite]]",
 		Run:     withAuth(runInit),
-	}
-}
-
-func linkCommand() *Command {
-	return &Command{
-		Name:    "link",
-		Summary: "Connect the local repo to a project and GitHub App installation.",
-		Usage:   "lazyops link",
-		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
-			return renderAuthorizedRequest(ctx, runtime, "Day 2 scaffold: link is wired to the transport abstraction.", credential, transport.Request{
-				Method: "POST",
-				Path:   "/api/v1/projects/prj_demo/repo-link",
-			})
-		}),
-	}
-}
-
-func logsCommand() *Command {
-	return &Command{
-		Name:    "logs",
-		Summary: "Inspect service logs.",
-		Usage:   "lazyops logs <service>",
-		Run: withAuth(func(ctx context.Context, runtime *Runtime, args []string, credential credentials.Record) error {
-			if len(args) < 1 {
-				return fmt.Errorf("usage: lazyops logs <service>")
-			}
-
-			service := strings.TrimSpace(args[0])
-			if service == "" {
-				return fmt.Errorf("service name is required")
-			}
-
-			return renderAuthorizedRequest(ctx, runtime, "Day 2 scaffold: logs is wired to the transport abstraction.", credential, transport.Request{
-				Method: "GET",
-				Path:   "/ws/logs/stream",
-				Query: map[string]string{
-					"service": service,
-				},
-			})
-		}),
 	}
 }
 

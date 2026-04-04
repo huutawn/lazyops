@@ -18,6 +18,7 @@ var sensitiveKeyParts = []string{
 	"mesh_key",
 	"private_key",
 	"api_key",
+	"credential",
 }
 
 type RedactingHandler struct {
@@ -77,12 +78,26 @@ func RedactField(key string, value any) any {
 		}
 		return out
 	case map[string]string:
+		if isSensitiveKey(key) {
+			out := make(map[string]string, len(typed))
+			for childKey := range typed {
+				out[childKey] = redactedValue
+			}
+			return out
+		}
 		out := make(map[string]string, len(typed))
 		for childKey, childValue := range typed {
 			out[childKey] = fmt.Sprint(RedactField(childKey, childValue))
 		}
 		return out
 	case map[string]any:
+		if isSensitiveKey(key) {
+			out := make(map[string]any, len(typed))
+			for childKey := range typed {
+				out[childKey] = redactedValue
+			}
+			return out
+		}
 		out := make(map[string]any, len(typed))
 		for childKey, childValue := range typed {
 			out[childKey] = RedactField(childKey, childValue)

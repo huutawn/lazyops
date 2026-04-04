@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1239,14 +1240,484 @@ func TestBindingsCommandRendersTypedBindingList(t *testing.T) {
 	if !strings.Contains(output, "deployment bindings loaded") {
 		t.Fatalf("expected bindings header, got %q", output)
 	}
-	if !strings.Contains(output, "binding prod-ap-mesh -> prod-ap (distributed-mesh, mesh)") {
+	if !strings.Contains(output, "filters: none") {
+		t.Fatalf("expected bindings filter summary, got %q", output)
+	}
+	if !strings.Contains(output, "binding prod-ap-mesh -> prod-ap (distributed-mesh, mesh, status=online)") {
 		t.Fatalf("expected typed mesh binding output, got %q", output)
 	}
-	if !strings.Contains(output, "binding prod-solo-binding -> prod-solo-1 (standalone, instance)") {
+	if !strings.Contains(output, "binding prod-solo-binding -> prod-solo-1 (standalone, instance, status=online)") {
 		t.Fatalf("expected typed standalone binding output, got %q", output)
 	}
-	if !strings.Contains(output, "binding prod-k3s-binding -> prod-k3s-ap (distributed-k3s, cluster)") {
+	if !strings.Contains(output, "binding prod-k3s-binding -> prod-k3s-ap (distributed-k3s, cluster, status=registered)") {
 		t.Fatalf("expected typed k3s binding output, got %q", output)
+	}
+	if !strings.Contains(output, "reuse with: lazyops init --project acme-shop --runtime-mode standalone --binding bind_standalone_demo") {
+		t.Fatalf("expected reuse hint for standalone binding, got %q", output)
+	}
+}
+
+func TestBindingsCommandFiltersByRuntimeTargetKindStatusAndReuse(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"bindings", "--runtime-mode", "distributed-k3s", "--target-kind", "cluster", "--status", "registered", "--reuse"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "filters: runtime_mode=distributed-k3s, target_kind=cluster, status=registered, reuse=true") {
+		t.Fatalf("expected filter summary, got %q", output)
+	}
+	if !strings.Contains(output, "binding prod-k3s-binding -> prod-k3s-ap (distributed-k3s, cluster, status=registered)") {
+		t.Fatalf("expected filtered k3s binding output, got %q", output)
+	}
+	if !strings.Contains(output, "reuse candidate selected: prod-k3s-binding") {
+		t.Fatalf("expected reuse candidate selection, got %q", output)
+	}
+	if strings.Contains(output, "prod-ap-mesh") || strings.Contains(output, "prod-solo-binding") {
+		t.Fatalf("expected filtered output to omit non-matching bindings, got %q", output)
+	}
+}
+
+func TestBindingsCommandWarnsWhenNoBindingsMatchFilters(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"bindings", "--target-ref", "missing-ref"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "no deployment bindings match the current filters") {
+		t.Fatalf("expected no-match warning, got %q", stderr.String())
+	}
+}
+
+func TestInitReusesExistingBindingWithoutCreatingNewOne(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	capture := &stubTransport{
+		mode: "capture-init-reuse",
+		do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+			switch req.Path {
+			case "/api/v1/projects":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "projects",
+					Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+				}, nil
+			case "/api/v1/instances":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "instances",
+					Body:        []byte(`{"instances":[{"id":"inst_demo","user_id":"usr_demo","name":"prod-solo-1","status":"online"}]}`),
+				}, nil
+			case "/api/v1/mesh-networks":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "mesh-empty",
+					Body:        []byte(`{"mesh_networks":[]}`),
+				}, nil
+			case "/api/v1/clusters":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "clusters-empty",
+					Body:        []byte(`{"clusters":[]}`),
+				}, nil
+			case "/api/v1/projects/prj_demo/deployment-bindings":
+				switch req.Method {
+				case "GET":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "bindings",
+						Body:        []byte(`{"bindings":[{"id":"bind_standalone_demo","project_id":"prj_demo","name":"prod-solo-binding","target_ref":"prod-solo-1","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_demo"}]}`),
+					}, nil
+				case "POST":
+					return transport.Response{
+						StatusCode:  500,
+						FixtureName: "unexpected-binding-create",
+						Body:        []byte(`{"error":"unexpected_create","message":"should not create binding in reuse flow","next_step":"reuse the existing binding instead"}`),
+					}, nil
+				}
+			default:
+				return transport.Response{StatusCode: 404}, nil
+			}
+
+			return transport.Response{StatusCode: 404}, nil
+		},
+	}
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      capture,
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"init", "--project", "acme-shop", "--runtime-mode", "standalone", "--target", "prod-solo-1"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "selected binding: prod-solo-binding -> prod-solo-1 (standalone, instance)") {
+		t.Fatalf("expected init reuse selection, got %q", output)
+	}
+	for _, request := range capture.requests {
+		if request.Method == "POST" && request.Path == "/api/v1/projects/prj_demo/deployment-bindings" {
+			t.Fatalf("expected init reuse flow to avoid create-binding POST, got %+v", request)
+		}
+	}
+}
+
+func TestLinkConnectsRepoToProjectInstallationAndTrackedBranch(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareLinkRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	capture := &stubTransport{
+		mode: "capture-link",
+		do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+			switch req.Path {
+			case "/api/v1/projects":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "projects",
+					Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+				}, nil
+			case "/api/v1/projects/prj_demo/deployment-bindings":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "bindings",
+					Body:        []byte(`{"bindings":[{"id":"bind_standalone_demo","project_id":"prj_demo","name":"prod-solo-binding","target_ref":"prod-solo-1","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_demo"}]}`),
+				}, nil
+			case "/api/v1/instances":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "instances",
+					Body:        []byte(`{"instances":[{"id":"inst_demo","user_id":"usr_demo","name":"prod-solo-1","status":"online"}]}`),
+				}, nil
+			case "/api/v1/mesh-networks":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "mesh-empty",
+					Body:        []byte(`{"mesh_networks":[]}`),
+				}, nil
+			case "/api/v1/clusters":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "clusters-empty",
+					Body:        []byte(`{"clusters":[]}`),
+				}, nil
+			case "/api/v1/github/app/installations/sync":
+				return transport.Response{
+					StatusCode:  200,
+					FixtureName: "installations",
+					Body:        []byte(`{"installations":[{"id":"ghi_demo","user_id":"usr_demo","github_installation_id":48151623,"account_login":"lazyops","account_type":"Organization","scope_json":{"repositories":[{"id":1001,"name":"acme-shop","owner":"lazyops","default_branch":"main"}]}}]}`),
+				}, nil
+			case "/api/v1/projects/prj_demo/repo-link":
+				return transport.Response{
+					StatusCode:  201,
+					FixtureName: "repo-link",
+					Body:        []byte(`{"id":"prl_demo","project_id":"prj_demo","github_installation_id":48151623,"github_repo_id":1001,"repo_owner":"lazyops","repo_name":"acme-shop","tracked_branch":"main","preview_enabled":true}`),
+				}, nil
+			default:
+				return transport.Response{StatusCode: 404}, nil
+			}
+		},
+	}
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      capture,
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"link"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"repo link review ready",
+		"local repo: lazyops/acme-shop",
+		"tracked branch: main",
+		"github app installation: lazyops (48151623)",
+		"verified binding: prod-solo-binding -> prod-solo-1 (standalone, instance)",
+		"verified target: instance prod-solo-1 [online]",
+		"repository linked",
+		"repo link: lazyops/acme-shop -> acme-shop on main",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected link output to contain %q, got %q", expected, output)
+		}
+	}
+
+	if len(capture.requests) != 7 {
+		t.Fatalf("expected 7 requests during link flow, got %d", len(capture.requests))
+	}
+	linkRequest := capture.requests[6]
+	if linkRequest.Path != "/api/v1/projects/prj_demo/repo-link" {
+		t.Fatalf("expected repo link request path, got %+v", linkRequest)
+	}
+	if got := linkRequest.Headers["Authorization"]; got != "Bearer lazyops_pat_mock_secret_value" {
+		t.Fatalf("expected auth header on repo link request, got %q", got)
+	}
+
+	var payload struct {
+		InstallationID int64  `json:"installation_id"`
+		RepoID         int64  `json:"repo_id"`
+		TrackedBranch  string `json:"tracked_branch"`
+	}
+	if err := json.Unmarshal(linkRequest.Body, &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.InstallationID != 48151623 || payload.RepoID != 1001 || payload.TrackedBranch != "main" {
+		t.Fatalf("expected typed repo-link payload, got %+v", payload)
+	}
+}
+
+func TestLinkFailsWhenProjectOwnershipMismatchesCredential(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareLinkRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_other","name":"Acme Shop","slug":"acme-shop"}]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"link"})
+	if err == nil {
+		t.Fatal("expected project ownership mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not owned by the current CLI user") {
+		t.Fatalf("expected project ownership mismatch error, got %v", err)
+	}
+}
+
+func TestLinkFailsWhenGitHubAppDoesNotGrantRepoAccess(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareLinkRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+					}, nil
+				case "/api/v1/projects/prj_demo/deployment-bindings":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "bindings",
+						Body:        []byte(`{"bindings":[{"id":"bind_standalone_demo","project_id":"prj_demo","name":"prod-solo-binding","target_ref":"prod-solo-1","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_demo"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances",
+						Body:        []byte(`{"instances":[{"id":"inst_demo","user_id":"usr_demo","name":"prod-solo-1","status":"online"}]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-empty",
+						Body:        []byte(`{"mesh_networks":[]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-empty",
+						Body:        []byte(`{"clusters":[]}`),
+					}, nil
+				case "/api/v1/github/app/installations/sync":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "installations",
+						Body:        []byte(`{"installations":[{"id":"ghi_demo","user_id":"usr_demo","github_installation_id":48151623,"account_login":"lazyops","account_type":"Organization","scope_json":{"repositories":[{"id":1002,"name":"different-repo","owner":"lazyops","default_branch":"main"}]}}]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"link"})
+	if err == nil {
+		t.Fatal("expected GitHub App repo access error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no GitHub App installation grants access") {
+		t.Fatalf("expected GitHub App repo access error, got %v", err)
+	}
+}
+
+func TestLinkFailsWhenBindingTargetIsOffline(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareLinkRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+					}, nil
+				case "/api/v1/projects/prj_demo/deployment-bindings":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "bindings",
+						Body:        []byte(`{"bindings":[{"id":"bind_standalone_demo","project_id":"prj_demo","name":"prod-solo-binding","target_ref":"prod-solo-1","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_demo"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances",
+						Body:        []byte(`{"instances":[{"id":"inst_demo","user_id":"usr_demo","name":"prod-solo-1","status":"offline"}]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-empty",
+						Body:        []byte(`{"mesh_networks":[]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-empty",
+						Body:        []byte(`{"clusters":[]}`),
+					}, nil
+				default:
+					return transport.Response{StatusCode: 404}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"link"})
+	if err == nil {
+		t.Fatal("expected offline target error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not online or registered") {
+		t.Fatalf("expected offline target error, got %v", err)
 	}
 }
 
@@ -1348,6 +1819,338 @@ func TestLogoutWithoutLocalSessionIsNoop(t *testing.T) {
 	}
 }
 
+func TestDoctorHappyPath(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"doctor"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"pass auth:",
+		"pass lazyops_yaml:",
+		"pass repo_link:",
+		"pass binding:",
+		"pass dependency_declarations:",
+		"pass webhook_health:",
+		"summary: 6 pass, 0 warn, 0 fail",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected doctor output to contain %q, got %q", expected, output)
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no warnings or errors, got stderr %q", stderr.String())
+	}
+}
+
+func TestDoctorReportsMissingAuthAsCheckFailure(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    mustTestStore(t),
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail when auth is missing")
+	}
+
+	if !strings.Contains(stderr.String(), "fail auth:") {
+		t.Fatalf("expected auth failure output, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warn repo_link:") {
+		t.Fatalf("expected repo_link warning output, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "next: run `lazyops login") {
+		t.Fatalf("expected next-step guidance in stdout, got %q", stdout.String())
+	}
+}
+
+func TestDoctorFailsWhenBindingIsMissing(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: standalone\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: missing-binding\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail when binding is missing")
+	}
+
+	if !strings.Contains(stderr.String(), "fail binding:") {
+		t.Fatalf("expected binding failure output, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "rerun `lazyops init` to create or reuse a compatible binding") {
+		t.Fatalf("expected binding next-step guidance, got %q", stdout.String())
+	}
+}
+
+func TestDoctorFailsWhenServiceDeclarationIsMissing(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorMeshRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: distributed-mesh\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: prod-ap\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail when service declarations are incomplete")
+	}
+
+	if !strings.Contains(stderr.String(), "fail dependency_declarations:") {
+		t.Fatalf("expected dependency declaration failure output, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "apps/web") {
+		t.Fatalf("expected missing service path in failure output, got stderr %q", stderr.String())
+	}
+}
+
+func TestStatusHappyPath(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"status"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"status summary",
+		"source: existing-api-composition/v1",
+		"project: Acme Shop (acme-shop)",
+		"binding state: attached (prod-solo-binding -> prod-solo-1)",
+		"topology state: healthy (instance prod-solo-1, status=online)",
+		"deployment state: ready (deploy contract, binding, and topology are aligned)",
+		"rollout: idle",
+		"next: push or open a pull request to trigger deployment through GitHub",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected status output to contain %q, got %q", expected, output)
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no warnings or errors, got stderr %q", stderr.String())
+	}
+}
+
+func TestStatusReportsMissingBindingAsBlocked(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: standalone\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: missing-binding\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"status"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "binding state: missing target_ref missing-binding") {
+		t.Fatalf("expected missing binding output, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "deployment state: blocked (deploy contract is missing a compatible deployment binding)") {
+		t.Fatalf("expected blocked deployment output, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "next: rerun `lazyops init` to create or reuse a compatible deployment binding") {
+		t.Fatalf("expected blocked next-step output, got %q", stdout.String())
+	}
+}
+
+func TestStatusReportsOfflineTargetAsDegraded(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepo(t)
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport: &stubTransport{
+			mode: "stub",
+			do: func(_ context.Context, req transport.Request) (transport.Response, error) {
+				switch req.Path {
+				case "/api/v1/projects":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "projects-list",
+						Body:        []byte(`{"projects":[{"id":"prj_demo","user_id":"usr_demo","name":"Acme Shop","slug":"acme-shop","default_branch":"main"}]}`),
+					}, nil
+				case "/api/v1/projects/prj_demo/deployment-bindings":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "deployment-bindings",
+						Body:        []byte(`{"bindings":[{"id":"bind_standalone_demo","project_id":"prj_demo","name":"prod-solo-binding","target_ref":"prod-solo-1","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_demo"}]}`),
+					}, nil
+				case "/api/v1/instances":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "instances-list",
+						Body:        []byte(`{"instances":[{"id":"inst_demo","user_id":"usr_demo","name":"prod-solo-1","status":"offline"}]}`),
+					}, nil
+				case "/api/v1/mesh-networks":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "mesh-list",
+						Body:        []byte(`{"mesh_networks":[]}`),
+					}, nil
+				case "/api/v1/clusters":
+					return transport.Response{
+						StatusCode:  200,
+						FixtureName: "clusters-list",
+						Body:        []byte(`{"clusters":[]}`),
+					}, nil
+				default:
+					return transport.Response{}, nil
+				}
+			},
+		},
+		Credentials: store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"status"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "topology state: degraded (instance prod-solo-1, status=offline)") {
+		t.Fatalf("expected degraded topology output, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "deployment state: degraded (deploy contract is attached, but the target is not ready)") {
+		t.Fatalf("expected degraded deployment output, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "rollout: paused") {
+		t.Fatalf("expected paused rollout output, got %q", stdout.String())
+	}
+}
+
 func TestProtectedCommandsRequireLogin(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -1355,7 +2158,6 @@ func TestProtectedCommandsRequireLogin(t *testing.T) {
 	}{
 		{name: "init", args: []string{"init"}},
 		{name: "link", args: []string{"link"}},
-		{name: "doctor", args: []string{"doctor"}},
 		{name: "status", args: []string{"status"}},
 		{name: "bindings", args: []string{"bindings"}},
 		{name: "logs", args: []string{"logs", "api"}},
@@ -1403,8 +2205,8 @@ func TestAuthorizedCommandInjectsBearerToken(t *testing.T) {
 		do: func(_ context.Context, req transport.Request) (transport.Response, error) {
 			return transport.Response{
 				StatusCode:  200,
-				FixtureName: "status",
-				Body:        []byte(`{"ok":true}`),
+				FixtureName: "logs-stream",
+				Body:        []byte(`{"service":"api","lines":[]}`),
 			}, nil
 		},
 	}
@@ -1417,7 +2219,7 @@ func TestAuthorizedCommandInjectsBearerToken(t *testing.T) {
 	}
 
 	root := NewRootCommand()
-	if err := root.Execute(context.Background(), runtime, []string{"status"}); err != nil {
+	if err := root.Execute(context.Background(), runtime, []string{"logs", "api"}); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -1480,6 +2282,49 @@ func mustPrepareMeshInitRepo(t *testing.T) string {
 
 	repoRoot := mustPrepareInitRepo(t)
 	mustWriteTestFile(t, filepath.Join(repoRoot, "apps", "web", "package.json"), `{"name":"web","scripts":{"start":"next start"}}`)
+	return repoRoot
+}
+
+func mustPrepareLinkRepo(t *testing.T) string {
+	t.Helper()
+
+	repoRoot := t.TempDir()
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "config"), "[remote \"origin\"]\n\turl = git@github.com:lazyops/acme-shop.git\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "lazyops.yaml"), "project_slug: acme-shop\nruntime_mode: standalone\n\ndeployment_binding:\n  target_ref: prod-solo-1\n")
+	return repoRoot
+}
+
+func mustPrepareDoctorRepo(t *testing.T) string {
+	t.Helper()
+
+	return mustPrepareDoctorRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: standalone\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: prod-solo-1\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n")
+}
+
+func mustPrepareDoctorRepoWithYAML(t *testing.T, lazyopsYAML string) string {
+	t.Helper()
+
+	repoRoot := mustPrepareInitRepo(t)
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "config"), "[remote \"origin\"]\n\turl = git@github.com:lazyops/acme-shop.git\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "lazyops.yaml"), lazyopsYAML)
+	return repoRoot
+}
+
+func mustPrepareDoctorMeshRepoWithYAML(t *testing.T, lazyopsYAML string) string {
+	t.Helper()
+
+	repoRoot := mustPrepareMeshInitRepo(t)
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "config"), "[remote \"origin\"]\n\turl = git@github.com:lazyops/acme-shop.git\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, "lazyops.yaml"), lazyopsYAML)
 	return repoRoot
 }
 
