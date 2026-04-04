@@ -32,6 +32,11 @@ type Application struct {
 	InstanceRepo          *repository.InstanceRepository
 	MeshNetworkRepo       *repository.MeshNetworkRepository
 	ClusterRepo           *repository.ClusterRepository
+	TunnelSessionRepo     *repository.TunnelSessionRepository
+	TraceSummaryRepo      *repository.TraceSummaryRepository
+	TopologyStateRepo     *repository.TopologyStateRepository
+	TopologyNodeRepo      *repository.TopologyNodeRepository
+	TopologyEdgeRepo      *repository.TopologyEdgeRepository
 	BootstrapTokenRepo    *repository.BootstrapTokenRepository
 	AgentTokenRepo        *repository.AgentTokenRepository
 	PATRepo               *repository.PersonalAccessTokenRepository
@@ -52,6 +57,8 @@ type Application struct {
 	InstanceService       *service.InstanceService
 	MeshNetworkService    *service.MeshNetworkService
 	ClusterService        *service.ClusterService
+	MeshPlanningSvc       *service.MeshPlanningService
+	ObservabilitySvc      *service.ObservabilityService
 	AgentEnrollmentSvc    *service.AgentEnrollmentService
 	UserService           *service.UserService
 	AgentService          *service.AgentService
@@ -91,6 +98,11 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	instanceRepo := repository.NewInstanceRepository(db)
 	meshNetworkRepo := repository.NewMeshNetworkRepository(db)
 	clusterRepo := repository.NewClusterRepository(db)
+	tunnelSessionRepo := repository.NewTunnelSessionRepository(db)
+	traceSummaryRepo := repository.NewTraceSummaryRepository(db)
+	topologyStateRepo := repository.NewTopologyStateRepository(db)
+	topologyNodeRepo := repository.NewTopologyNodeRepository(db)
+	topologyEdgeRepo := repository.NewTopologyEdgeRepository(db)
 	bootstrapTokenRepo := repository.NewBootstrapTokenRepository(db)
 	agentTokenRepo := repository.NewAgentTokenRepository(db)
 	patRepo := repository.NewPersonalAccessTokenRepository(db)
@@ -133,6 +145,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
+	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
+	observabilitySvc := service.NewObservabilityService(traceSummaryRepo, incidentRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo)
 	agentEnrollmentSvc := service.NewAgentEnrollmentService(agentRepo, instanceRepo, bootstrapTokenRepo, agentTokenRepo, cfg.Enrollment)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
@@ -188,6 +202,11 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		InstanceRepo:          instanceRepo,
 		MeshNetworkRepo:       meshNetworkRepo,
 		ClusterRepo:           clusterRepo,
+		TunnelSessionRepo:     tunnelSessionRepo,
+		TraceSummaryRepo:      traceSummaryRepo,
+		TopologyStateRepo:     topologyStateRepo,
+		TopologyNodeRepo:      topologyNodeRepo,
+		TopologyEdgeRepo:      topologyEdgeRepo,
 		BootstrapTokenRepo:    bootstrapTokenRepo,
 		AgentTokenRepo:        agentTokenRepo,
 		PATRepo:               patRepo,
@@ -208,6 +227,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		InstanceService:       instanceService,
 		MeshNetworkService:    meshNetworkService,
 		ClusterService:        clusterService,
+		MeshPlanningSvc:       meshPlanningSvc,
+		ObservabilitySvc:      observabilitySvc,
 		AgentEnrollmentSvc:    agentEnrollmentSvc,
 		UserService:           userService,
 		AgentService:          agentService,

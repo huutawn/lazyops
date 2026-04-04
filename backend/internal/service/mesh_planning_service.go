@@ -18,9 +18,8 @@ const (
 	TunnelSessionStatusClosed  = "closed"
 	TunnelSessionStatusExpired = "expired"
 
-	TunnelSessionTypeDB   = "db"
-	TunnelSessionTypeSSH  = "ssh"
-	TunnelSessionTypeHTTP = "http"
+	TunnelSessionTypeDB  = "db"
+	TunnelSessionTypeTCP = "tcp"
 
 	TopologyStateOnline   = "online"
 	TopologyStateOffline  = "offline"

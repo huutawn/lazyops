@@ -20,6 +20,7 @@ const (
 	CommandTypeReportTopologyState     = "report_topology_state"
 	CommandTypeReportTraceSummary      = "report_trace_summary"
 	CommandTypeReportMetricRollup      = "report_metric_rollup"
+	CommandTypeReportLogBatch          = "report_log_batch"
 	CommandTypeGarbageCollectRuntime   = "garbage_collect_runtime"
 )
 
@@ -39,6 +40,7 @@ var ValidAgentCommands = map[string]struct{}{
 	CommandTypeReportTopologyState:     {},
 	CommandTypeReportTraceSummary:      {},
 	CommandTypeReportMetricRollup:      {},
+	CommandTypeReportLogBatch:          {},
 	CommandTypeGarbageCollectRuntime:   {},
 }
 

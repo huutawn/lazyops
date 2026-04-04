@@ -22,12 +22,29 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	deploymentController := controller.NewDeploymentController(app.DeploymentSvc)
 	instanceController := controller.NewInstanceController(app.InstanceService)
 	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService)
+	observabilityController := controller.NewObservabilityController(app.ProjectRepo, app.ObservabilitySvc)
+	tunnelController := controller.NewTunnelController(app.ProjectRepo, app.DeploymentBindingRepo, app.TunnelSessionRepo, app.MeshPlanningSvc)
 	agentRuntimeController := controller.NewAgentRuntimeController(app.AgentEnrollmentSvc)
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
 	agentControlController := controller.NewAgentControlController(app.ControlHub, app.Config)
 	operatorStreamController := controller.NewOperatorStreamController(app.OperatorStreamHub, app.Config)
+
+	rootAgentControl := router.Group("/ws")
+	rootAgentControl.Use(middleware.Authenticate(app.AuthService))
+	rootAgentControl.Use(middleware.RequireAuthKinds(service.AuthKindAgentToken))
+	{
+		rootAgentControl.GET("/agents/control", agentControlController.ControlStream)
+	}
+
+	rootOperatorStream := router.Group("/ws")
+	rootOperatorStream.Use(middleware.Authenticate(app.AuthService))
+	rootOperatorStream.Use(middleware.RequireAuthKinds(service.AuthKindWebSession, service.AuthKindCLIPAT))
+	rootOperatorStream.Use(middleware.RequireRoles(service.RoleAdmin, service.RoleOperator))
+	{
+		rootOperatorStream.GET("/operators/stream", operatorStreamController.OperatorStream)
+	}
 
 	v1 := router.Group("/api/v1")
 	{
@@ -82,12 +99,26 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				deploymentController.Create,
 			)
+			userProtected.GET("/projects/:id/topology", observabilityController.GetTopology)
+			userProtected.GET("/traces/:correlation_id", observabilityController.GetTrace)
 			userProtected.POST("/instances", instanceController.Create)
 			userProtected.GET("/instances", instanceController.List)
 			userProtected.POST("/mesh-networks", targetController.CreateMeshNetwork)
 			userProtected.GET("/mesh-networks", targetController.ListMeshNetworks)
 			userProtected.POST("/clusters", targetController.CreateCluster)
 			userProtected.GET("/clusters", targetController.ListClusters)
+			userProtected.POST("/tunnels/db/sessions",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				tunnelController.CreateDBSession,
+			)
+			userProtected.POST("/tunnels/tcp/sessions",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				tunnelController.CreateTCPSession,
+			)
+			userProtected.DELETE("/tunnels/sessions/:id",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				tunnelController.CloseSession,
+			)
 			userProtected.GET("/users/me", userController.Me)
 			userProtected.GET("/agents", agentController.List)
 			userProtected.POST("/agents",
@@ -106,13 +137,8 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		agentProtected.Use(middleware.RequireAuthKinds(service.AuthKindAgentToken))
 		{
 			agentProtected.POST("/agents/heartbeat", agentRuntimeController.Heartbeat)
+			agentProtected.GET("/ws/agents/control", agentControlController.ControlStream)
 		}
-
-		agentProtected.GET("/ws/agents/control", agentControlController.ControlStream)
-		agentProtected.POST("/agents/:agent_id/dispatch",
-			middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
-			agentControlController.DispatchCommand,
-		)
 
 		operatorProtected := v1.Group("/")
 		operatorProtected.Use(middleware.Authenticate(app.AuthService))
@@ -121,5 +147,10 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		{
 			operatorProtected.GET("/ws/operators/stream", operatorStreamController.OperatorStream)
 		}
+
+		operatorProtected.POST("/agents/:agent_id/dispatch",
+			middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+			agentControlController.DispatchCommand,
+		)
 	}
 }

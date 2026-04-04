@@ -202,6 +202,40 @@ func (s *ObservabilityService) BuildTopologyGraph(ctx context.Context, projectID
 	return graph, nil
 }
 
+func (s *ObservabilityService) BuildTopologyGraphForUser(ctx context.Context, projectID, userID string) (*TopologyGraph, error) {
+	nodes, err := s.topoNodes.ListByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	edges, err := s.topoEdges.ListByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodes) == 0 {
+		nodes, err = s.buildNodesFromTargetsForUser(ctx, projectID, userID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	graph := &TopologyGraph{
+		ProjectID: projectID,
+		Nodes:     make([]TopologyNodeRecord, len(nodes)),
+		Edges:     make([]TopologyEdgeRecord, len(edges)),
+	}
+
+	for i, node := range nodes {
+		graph.Nodes[i] = toTopologyNodeRecord(node)
+	}
+	for i, edge := range edges {
+		graph.Edges[i] = toTopologyEdgeRecord(edge)
+	}
+
+	return graph, nil
+}
+
 func (s *ObservabilityService) RefreshTopologyGraph(ctx context.Context, projectID string) (*TopologyGraph, error) {
 	_ = s.topoNodes.DeleteByProject(projectID)
 	_ = s.topoEdges.DeleteByProject(projectID)
@@ -233,6 +267,30 @@ func (s *ObservabilityService) buildNodesFromTargets(ctx context.Context, projec
 	nodes := make([]models.TopologyNode, 0)
 
 	instances, err := s.instances.ListByUser("")
+	if err != nil {
+		return nil, err
+	}
+	for _, inst := range instances {
+		nodes = append(nodes, models.TopologyNode{
+			ID:           utils.NewPrefixedID("tn"),
+			ProjectID:    projectID,
+			NodeKind:     NodeKindInstance,
+			NodeRef:      inst.ID,
+			Name:         inst.Name,
+			Status:       normalizeTopologyNodeStatus(inst.Status),
+			MetadataJSON: inst.LabelsJSON,
+			UpdatedAt:    time.Now().UTC(),
+			CreatedAt:    time.Now().UTC(),
+		})
+	}
+
+	return nodes, nil
+}
+
+func (s *ObservabilityService) buildNodesFromTargetsForUser(ctx context.Context, projectID, userID string) ([]models.TopologyNode, error) {
+	nodes := make([]models.TopologyNode, 0)
+
+	instances, err := s.instances.ListByUser(userID)
 	if err != nil {
 		return nil, err
 	}
