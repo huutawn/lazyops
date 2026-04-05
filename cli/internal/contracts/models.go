@@ -105,6 +105,27 @@ type DeploymentBindingsResponse struct {
 	Bindings []DeploymentBinding `json:"items"`
 }
 
+type InitTargetSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Status      string `json:"status"`
+	RuntimeMode string `json:"runtime_mode"`
+}
+
+type LazyopsYAMLSchema struct {
+	AllowedDependencyProtocols  []string `json:"allowed_dependency_protocols"`
+	AllowedMagicDomainProviders []string `json:"allowed_magic_domain_providers"`
+	ForbiddenFieldNames         []string `json:"forbidden_field_names"`
+}
+
+type ValidateLazyopsYAMLResponse struct {
+	Project           Project           `json:"project"`
+	DeploymentBinding DeploymentBinding `json:"deployment_binding"`
+	TargetSummary     InitTargetSummary `json:"target_summary"`
+	Schema            LazyopsYAMLSchema `json:"schema"`
+}
+
 type ProjectRepoLink struct {
 	ID                   string    `json:"id"`
 	ProjectID            string    `json:"project_id"`
@@ -293,6 +314,14 @@ func DecodeDeploymentBinding(payload []byte) (DeploymentBinding, error) {
 	return binding, binding.Validate()
 }
 
+func DecodeValidateLazyopsYAMLResponse(payload []byte) (ValidateLazyopsYAMLResponse, error) {
+	var response ValidateLazyopsYAMLResponse
+	if err := DecodeFromEnvelope(payload, &response); err != nil {
+		return ValidateLazyopsYAMLResponse{}, err
+	}
+	return response, response.Validate()
+}
+
 func DecodeProjectRepoLink(payload []byte) (ProjectRepoLink, error) {
 	var link ProjectRepoLink
 	if err := DecodeFromEnvelope(payload, &link); err != nil {
@@ -459,6 +488,57 @@ func (response DeploymentBindingsResponse) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (summary InitTargetSummary) Validate() error {
+	if err := requireValue("target_summary.id", summary.ID); err != nil {
+		return err
+	}
+	if err := requireValue("target_summary.name", summary.Name); err != nil {
+		return err
+	}
+	if err := requireValue("target_summary.kind", summary.Kind); err != nil {
+		return err
+	}
+	if !isOneOf(summary.Kind, "instance", "mesh", "cluster") {
+		return fmt.Errorf("target_summary.kind is invalid")
+	}
+	if err := requireValue("target_summary.status", summary.Status); err != nil {
+		return err
+	}
+	if err := requireValue("target_summary.runtime_mode", summary.RuntimeMode); err != nil {
+		return err
+	}
+	if !isOneOf(summary.RuntimeMode, "standalone", "distributed-mesh", "distributed-k3s") {
+		return fmt.Errorf("target_summary.runtime_mode is invalid")
+	}
+	return nil
+}
+
+func (schema LazyopsYAMLSchema) Validate() error {
+	if len(schema.AllowedDependencyProtocols) == 0 {
+		return fmt.Errorf("lazyops_yaml_schema.allowed_dependency_protocols must not be empty")
+	}
+	if len(schema.AllowedMagicDomainProviders) == 0 {
+		return fmt.Errorf("lazyops_yaml_schema.allowed_magic_domain_providers must not be empty")
+	}
+	if len(schema.ForbiddenFieldNames) == 0 {
+		return fmt.Errorf("lazyops_yaml_schema.forbidden_field_names must not be empty")
+	}
+	return nil
+}
+
+func (response ValidateLazyopsYAMLResponse) Validate() error {
+	if err := response.Project.Validate(); err != nil {
+		return err
+	}
+	if err := response.DeploymentBinding.Validate(); err != nil {
+		return err
+	}
+	if err := response.TargetSummary.Validate(); err != nil {
+		return err
+	}
+	return response.Schema.Validate()
 }
 
 func (link ProjectRepoLink) Validate() error {

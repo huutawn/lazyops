@@ -176,7 +176,7 @@ func (p *RolloutPlanner) PromoteCandidate(ctx context.Context, projectID, deploy
 		return nil, ErrRevisionNotFound
 	}
 
-	if revision.Status != RevisionStatusArtifactReady && revision.Status != RevisionStatusPlanned {
+	if revision.Status != RevisionStatusArtifactReady && revision.Status != RevisionStatusPlanned && revision.Status != RevisionStatusApplying {
 		return nil, fmt.Errorf("%w: cannot promote from status %q", ErrInvalidRevisionStateTransition, revision.Status)
 	}
 
@@ -229,6 +229,13 @@ func (p *RolloutPlanner) RollbackDeployment(ctx context.Context, projectID, depl
 	}
 
 	now := time.Now().UTC()
+	revision, err := p.revisions.GetByIDForProject(projectID, deployment.RevisionID)
+	if err != nil {
+		return nil, err
+	}
+	if revision != nil {
+		_ = p.revisions.UpdateStatus(revision.ID, RevisionStatusRolledBack, now)
+	}
 	if err := p.deployments.UpdateStatus(deploymentID, DeploymentStatusRolledBack, deployment.StartedAt, &now, now); err != nil {
 		return nil, err
 	}

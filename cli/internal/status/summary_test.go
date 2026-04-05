@@ -50,6 +50,9 @@ func TestBuildAdapterSummaryHealthyStandalone(t *testing.T) {
 	if summary.Binding.State != "attached" {
 		t.Fatalf("expected attached binding, got %+v", summary.Binding)
 	}
+	if summary.Validation.State != "unavailable" {
+		t.Fatalf("expected unavailable validation by default, got %+v", summary.Validation)
+	}
 	if summary.Topology.State != "healthy" {
 		t.Fatalf("expected healthy topology, got %+v", summary.Topology)
 	}
@@ -131,5 +134,38 @@ func TestBuildAdapterSummaryOfflineTargetDegradesDeployment(t *testing.T) {
 	}
 	if summary.Deployment.State != "degraded" || summary.Deployment.Rollout != "paused" {
 		t.Fatalf("expected degraded deployment/paused rollout, got %+v", summary.Deployment)
+	}
+}
+
+func TestBuildAdapterSummaryFailedValidationBlocksDeployment(t *testing.T) {
+	summary, err := BuildAdapterSummary(Input{
+		Contract: lazyyaml.DoctorMetadata{
+			ProjectSlug: "acme-shop",
+			RuntimeMode: initplan.RuntimeModeStandalone,
+			TargetRef:   "prod-solo-1",
+			Services: []lazyyaml.DoctorService{
+				{Name: "api", Path: "apps/api"},
+			},
+		},
+		Project: contracts.Project{
+			ID:   "prj_demo",
+			Name: "Acme Shop",
+			Slug: "acme-shop",
+		},
+		Validation: ValidationState{
+			State:    "failed",
+			Summary:  "binding uses the wrong runtime mode",
+			NextStep: "rerun `lazyops init` to repair the binding",
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildAdapterSummary() error = %v", err)
+	}
+
+	if summary.Deployment.State != "blocked" || summary.Deployment.Rollout != "blocked" {
+		t.Fatalf("expected blocked deployment from failed validation, got %+v", summary.Deployment)
+	}
+	if summary.Deployment.Summary != "binding uses the wrong runtime mode" {
+		t.Fatalf("expected validation summary to drive deployment summary, got %+v", summary.Deployment)
 	}
 }

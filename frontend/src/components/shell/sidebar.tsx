@@ -33,7 +33,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           <span className="text-base font-bold tracking-tight text-primary">LazyOps</span>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Main navigation">
           <ul className="flex flex-col gap-1">
             {NAV_ITEMS.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);

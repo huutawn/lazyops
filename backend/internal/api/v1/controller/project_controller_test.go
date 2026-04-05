@@ -24,7 +24,8 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	deploymentBindingController := NewDeploymentBindingController(nil)
 	initContractController := NewInitContractController(nil)
 	blueprintController := NewBlueprintController(nil)
-	deploymentController := NewDeploymentController(nil)
+	deploymentController := NewDeploymentController(nil, nil)
+	observabilityController := NewObservabilityController(nil, nil)
 
 	protected := router.Group("/api/v1")
 	protected.Use(middleware.Authenticate(nil))
@@ -36,6 +37,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	protected.POST("/projects/:id/init/validate-lazyops-yaml", initContractController.ValidateLazyopsYAML)
 	protected.PUT("/projects/:id/blueprint", blueprintController.Compile)
 	protected.POST("/projects/:id/deployments", deploymentController.Create)
+	protected.GET("/ws/logs/stream", observabilityController.StreamLogs)
 	protected.GET("/github/repos", githubController.ListRepos)
 	protected.GET("/mesh-networks", targetController.ListMeshNetworks)
 	protected.POST("/mesh-networks", targetController.CreateMeshNetwork)
@@ -56,6 +58,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 		{name: "validate lazyops yaml", method: http.MethodPost, target: "/api/v1/projects/prj_123/init/validate-lazyops-yaml", body: `{"project_slug":"acme","runtime_mode":"standalone","deployment_binding":{"target_ref":"prod-main"},"services":[{"name":"api","path":"apps/api"}],"compatibility_policy":{"env_injection":true}}`},
 		{name: "compile blueprint", method: http.MethodPut, target: "/api/v1/projects/prj_123/blueprint", body: `{"artifact_metadata":{"commit_sha":"abc123"},"lazyops_yaml":{"project_slug":"acme","runtime_mode":"standalone","deployment_binding":{"target_ref":"prod-main"},"services":[{"name":"api","path":"apps/api"}],"compatibility_policy":{"env_injection":true}}}`},
 		{name: "create deployment", method: http.MethodPost, target: "/api/v1/projects/prj_123/deployments", body: `{"blueprint_id":"bp_123"}`},
+		{name: "stream logs", method: http.MethodGet, target: "/api/v1/ws/logs/stream?project=prj_123&service=api"},
 		{name: "list github repos", method: http.MethodGet, target: "/api/v1/github/repos"},
 		{name: "list mesh networks", method: http.MethodGet, target: "/api/v1/mesh-networks"},
 		{name: "create mesh network", method: http.MethodPost, target: "/api/v1/mesh-networks", body: `{"name":"mesh-prod","provider":"wireguard","cidr":"10.20.0.0/24"}`},

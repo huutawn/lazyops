@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lazyops-cli/internal/contracts"
+	"lazyops-cli/internal/lazyyaml"
 )
 
 type MockTransport struct {
@@ -52,6 +53,9 @@ func (t *MockTransport) Do(ctx context.Context, req Request) (Response, error) {
 	}
 	if strings.EqualFold(req.Method, "POST") && isProjectBindingsPath(req.Path) {
 		return mockCreateDeploymentBinding(req)
+	}
+	if strings.EqualFold(req.Method, "POST") && isProjectInitValidatePath(req.Path) {
+		return mockValidateLazyopsYAML(req)
 	}
 	if strings.EqualFold(req.Method, "GET") && req.Path == "/ws/logs/stream" {
 		return mockLogsStream(req)
@@ -329,8 +333,168 @@ func mockCreateDeploymentBinding(req Request) (Response, error) {
 	}, nil
 }
 
+func mockValidateLazyopsYAML(req Request) (Response, error) {
+	projectID, ok := projectIDFromInitValidatePath(req.Path)
+	if !ok {
+		return Response{
+			StatusCode:  400,
+			FixtureName: "validate-lazyops-yaml-invalid-path",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_path",
+				"message":   "lazyops.yaml validation path is invalid.",
+				"next_step": "retry the command with a valid project id",
+			}),
+		}, nil
+	}
+
+	var document lazyyaml.Document
+	if err := json.Unmarshal(req.Body, &document); err != nil {
+		return Response{
+			StatusCode:  422,
+			FixtureName: "validate-lazyops-yaml-invalid-payload",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_lazyops_yaml",
+				"message":   "lazyops.yaml validation failed.",
+				"next_step": "repair the deploy contract payload and retry validation",
+			}),
+		}, nil
+	}
+	if err := document.Validate(); err != nil {
+		return Response{
+			StatusCode:  422,
+			FixtureName: "validate-lazyops-yaml-invalid-document",
+			Body: mustJSON(map[string]any{
+				"error":     "invalid_lazyops_yaml",
+				"message":   err.Error(),
+				"next_step": "repair lazyops.yaml and rerun the validation check",
+			}),
+		}, nil
+	}
+	if projectID != "prj_demo" || strings.TrimSpace(document.ProjectSlug) != "acme-shop" {
+		return Response{
+			StatusCode:  404,
+			FixtureName: "validate-lazyops-yaml-project-not-found",
+			Body: mustJSON(map[string]any{
+				"error":     "project_not_found",
+				"message":   "project was not found for lazyops.yaml validation",
+				"next_step": "repair project_slug or choose an existing project before rerunning validation",
+			}),
+		}, nil
+	}
+
+	type bindingTarget struct {
+		binding contracts.DeploymentBinding
+		target  contracts.InitTargetSummary
+	}
+
+	bindings := map[string]bindingTarget{
+		"prod-solo-1": {
+			binding: contracts.DeploymentBinding{
+				ID:          "bind_standalone_demo",
+				ProjectID:   "prj_demo",
+				Name:        "prod-solo-binding",
+				TargetRef:   "prod-solo-1",
+				RuntimeMode: "standalone",
+				TargetKind:  "instance",
+				TargetID:    "inst_demo",
+			},
+			target: contracts.InitTargetSummary{
+				ID:          "inst_demo",
+				Name:        "prod-solo-1",
+				Kind:        "instance",
+				Status:      "online",
+				RuntimeMode: "standalone",
+			},
+		},
+		"prod-ap": {
+			binding: contracts.DeploymentBinding{
+				ID:          "bind_demo",
+				ProjectID:   "prj_demo",
+				Name:        "prod-ap-mesh",
+				TargetRef:   "prod-ap",
+				RuntimeMode: "distributed-mesh",
+				TargetKind:  "mesh",
+				TargetID:    "mesh_demo",
+			},
+			target: contracts.InitTargetSummary{
+				ID:          "mesh_demo",
+				Name:        "prod-ap",
+				Kind:        "mesh",
+				Status:      "online",
+				RuntimeMode: "distributed-mesh",
+			},
+		},
+		"prod-k3s-ap": {
+			binding: contracts.DeploymentBinding{
+				ID:          "bind_k3s_demo",
+				ProjectID:   "prj_demo",
+				Name:        "prod-k3s-binding",
+				TargetRef:   "prod-k3s-ap",
+				RuntimeMode: "distributed-k3s",
+				TargetKind:  "cluster",
+				TargetID:    "cls_demo",
+			},
+			target: contracts.InitTargetSummary{
+				ID:          "cls_demo",
+				Name:        "prod-k3s-ap",
+				Kind:        "cluster",
+				Status:      "registered",
+				RuntimeMode: "distributed-k3s",
+			},
+		},
+	}
+
+	match, ok := bindings[strings.TrimSpace(document.DeploymentBinding.TargetRef)]
+	if !ok {
+		return Response{
+			StatusCode:  404,
+			FixtureName: "validate-lazyops-yaml-unknown-target-ref",
+			Body: mustJSON(map[string]any{
+				"error":     "unknown_target_ref",
+				"message":   fmt.Sprintf("deployment_binding.target_ref %q is not registered for project %q", document.DeploymentBinding.TargetRef, document.ProjectSlug),
+				"next_step": "create or reuse a compatible deployment binding and retry validation",
+			}),
+		}, nil
+	}
+	if match.binding.RuntimeMode != string(document.RuntimeMode) {
+		return Response{
+			StatusCode:  422,
+			FixtureName: "validate-lazyops-yaml-runtime-mode-mismatch",
+			Body: mustJSON(map[string]any{
+				"error":     "runtime_mode_mismatch",
+				"message":   fmt.Sprintf("binding %q uses runtime mode %q", match.binding.TargetRef, match.binding.RuntimeMode),
+				"next_step": "repair runtime_mode in lazyops.yaml or choose a binding that matches the selected runtime",
+			}),
+		}, nil
+	}
+
+	return Response{
+		StatusCode:  200,
+		FixtureName: "validate-lazyops-yaml",
+		Body: envelope(contracts.ValidateLazyopsYAMLResponse{
+			Project: contracts.Project{
+				ID:            "prj_demo",
+				Name:          "Acme Shop",
+				Slug:          "acme-shop",
+				DefaultBranch: "main",
+			},
+			DeploymentBinding: match.binding,
+			TargetSummary:     match.target,
+			Schema: contracts.LazyopsYAMLSchema{
+				AllowedDependencyProtocols:  []string{"http", "https", "tcp", "grpc"},
+				AllowedMagicDomainProviders: []string{"sslip.io", "nip.io"},
+				ForbiddenFieldNames:         lazyyaml.ForbiddenFieldNames(),
+			},
+		}),
+	}, nil
+}
+
 func isProjectBindingsPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/projects/") && strings.HasSuffix(path, "/deployment-bindings")
+}
+
+func isProjectInitValidatePath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/projects/") && strings.HasSuffix(path, "/init/validate-lazyops-yaml")
 }
 
 func isProjectRepoLinkPath(path string) bool {
@@ -344,6 +508,21 @@ func projectIDFromBindingsPath(path string) (string, bool) {
 		return "", false
 	}
 	if parts[0] != "api" || parts[1] != "v1" || parts[2] != "projects" || parts[4] != "deployment-bindings" {
+		return "", false
+	}
+	return parts[3], true
+}
+
+func projectIDFromInitValidatePath(path string) (string, bool) {
+	trimmed := strings.Trim(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 6 {
+		return "", false
+	}
+	if parts[0] != "api" || parts[1] != "v1" || parts[2] != "projects" || parts[4] != "init" || parts[5] != "validate-lazyops-yaml" {
+		return "", false
+	}
+	if strings.TrimSpace(parts[3]) == "" {
 		return "", false
 	}
 	return parts[3], true
@@ -1011,32 +1190,6 @@ func DefaultFixtures() map[string]Response {
 			StatusCode:  201,
 			FixtureName: "deployment-binding-created",
 			Body:        envelope(binding),
-		},
-		Request{Method: "GET", Path: "/mock/v1/doctor", Query: map[string]string{"project": "prj_demo"}}.Key(): {
-			StatusCode:  200,
-			FixtureName: "doctor-preview",
-			Body: envelope(map[string]any{
-				"checks": []map[string]any{
-					{
-						"name":      "auth",
-						"status":    "pass",
-						"summary":   "CLI auth preview is healthy.",
-						"next_step": "",
-					},
-					{
-						"name":      "repo_link",
-						"status":    "pass",
-						"summary":   "Repo link preview is healthy.",
-						"next_step": "",
-					},
-					{
-						"name":      "webhook_health",
-						"status":    "pass",
-						"summary":   "Deploy webhook is registered and reachable.",
-						"next_step": "",
-					},
-				},
-			}),
 		},
 		Request{Method: "GET", Path: "/mock/v1/status", Query: map[string]string{"project": "prj_demo"}}.Key(): {
 			StatusCode:  200,

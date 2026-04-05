@@ -45,10 +45,11 @@ Mô hình tài liệu được thiết kế theo dạng lai:
    - Backend biên dịch một `Blueprint`, tạo một `DesiredStateRevision`, và tạo một bản ghi `Deployment`.
 7. `rollout`
    - Từ vựng lệnh rollout đã được khóa.
-   - Thực thi runtime end-to-end vẫn còn được kết hợp một phần thay vì hoàn toàn tự động.
+   - `standalone` giờ có đường kickoff best-effort từ `POST /api/v1/projects/:id/deployments` sang plan, dispatch lệnh, health gate, promote hoặc rollback, và garbage collect.
+   - Các chế độ runtime khác vẫn còn được kết hợp một phần thay vì hoàn toàn tự động.
 8. `observe`
-   - Các API đọc topology và trace đang hoạt động.
-   - Logs vẫn chỉ là hợp đồng xem trước.
+   - Các API đọc topology, trace, và logs preview đang hoạt động.
+   - Logs hiện được lưu từ `agent.log_batch` và đọc qua `GET /ws/logs/stream`.
 
 ## Hướng dẫn Bề mặt
 

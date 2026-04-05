@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,16 +125,67 @@ func (f *fakeTopologyEdgeStore) DeleteByProject(projectID string) error {
 	return nil
 }
 
+type fakeLogStreamStore struct {
+	items []models.LogStreamEntry
+}
+
+func newFakeLogStreamStore(items ...models.LogStreamEntry) *fakeLogStreamStore {
+	return &fakeLogStreamStore{items: items}
+}
+
+func (f *fakeLogStreamStore) CreateBatch(entries []models.LogStreamEntry) error {
+	f.items = append(f.items, entries...)
+	return nil
+}
+
+func (f *fakeLogStreamStore) ListByQuery(query models.LogStreamQuery) ([]models.LogStreamEntry, error) {
+	out := make([]models.LogStreamEntry, 0, len(f.items))
+	for _, item := range f.items {
+		if item.ProjectID != query.ProjectID || item.ServiceName != query.ServiceName {
+			continue
+		}
+		if query.Level != "" && item.Level != query.Level {
+			continue
+		}
+		if query.Node != "" && item.Node != query.Node {
+			continue
+		}
+		if query.Contains != "" && !strings.Contains(strings.ToLower(item.Message), strings.ToLower(query.Contains)) {
+			continue
+		}
+		if !query.BeforeOccurredAt.IsZero() && query.BeforeID != "" {
+			if item.OccurredAt.After(query.BeforeOccurredAt) {
+				continue
+			}
+			if item.OccurredAt.Equal(query.BeforeOccurredAt) && item.ID >= query.BeforeID {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].OccurredAt.Equal(out[j].OccurredAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].OccurredAt.After(out[j].OccurredAt)
+	})
+	if query.Limit > 0 && len(out) > query.Limit {
+		out = out[:query.Limit]
+	}
+	return out, nil
+}
+
 func newTestObservabilityService(
 	traceStore TraceSummaryStore,
 	incidentStore RuntimeIncidentStore,
+	logStore LogStreamStore,
 	nodeStore TopologyNodeStore,
 	edgeStore TopologyEdgeStore,
 	instanceStore InstanceStore,
 	meshStore MeshNetworkStore,
 	clusterStore ClusterStore,
 ) *ObservabilityService {
-	return NewObservabilityService(traceStore, incidentStore, nodeStore, edgeStore, instanceStore, meshStore, clusterStore)
+	return NewObservabilityService(traceStore, incidentStore, logStore, nodeStore, edgeStore, instanceStore, meshStore, clusterStore)
 }
 
 func TestObservabilityServiceIngestTraceSuccess(t *testing.T) {
@@ -141,6 +194,7 @@ func TestObservabilityServiceIngestTraceSuccess(t *testing.T) {
 	svc := newTestObservabilityService(
 		traceStore,
 		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
 		newFakeTopologyNodeStore(),
 		newFakeTopologyEdgeStore(),
 		newFakeInstanceStore(),
@@ -197,6 +251,7 @@ func TestObservabilityServiceGetTraceByCorrelationID(t *testing.T) {
 	svc := newTestObservabilityService(
 		traceStore,
 		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
 		newFakeTopologyNodeStore(),
 		newFakeTopologyEdgeStore(),
 		newFakeInstanceStore(),
@@ -221,6 +276,7 @@ func TestObservabilityServiceGetTraceNotFound(t *testing.T) {
 	svc := newTestObservabilityService(
 		newFakeTraceSummaryStore(),
 		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
 		newFakeTopologyNodeStore(),
 		newFakeTopologyEdgeStore(),
 		newFakeInstanceStore(),
@@ -271,6 +327,7 @@ func TestObservabilityServiceBuildTopologyGraph(t *testing.T) {
 	svc := newTestObservabilityService(
 		newFakeTraceSummaryStore(),
 		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
 		nodeStore,
 		edgeStore,
 		newFakeInstanceStore(),
@@ -313,6 +370,7 @@ func TestObservabilityServiceListIncidentsByProject(t *testing.T) {
 	svc := newTestObservabilityService(
 		newFakeTraceSummaryStore(),
 		incidentStore,
+		newFakeLogStreamStore(),
 		newFakeTopologyNodeStore(),
 		newFakeTopologyEdgeStore(),
 		newFakeInstanceStore(),
@@ -352,5 +410,89 @@ func TestNormalizeTraceStatus(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("normalizeTraceStatus(%q, %d) = %q, want %q", tt.raw, tt.httpStatus, got, tt.expected)
 		}
+	}
+}
+
+func TestObservabilityServiceIngestAndPreviewLogs(t *testing.T) {
+	logStore := newFakeLogStreamStore()
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(),
+		logStore,
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	)
+
+	collectedAt := time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
+	record, err := svc.IngestLogBatch(context.Background(), IngestLogBatchCommand{
+		ProjectID: "prj_123",
+		BindingID: "bind_123",
+		Entries: []LogBatchEntry{
+			{
+				Timestamp: collectedAt.Add(-2 * time.Minute),
+				Severity:  "warning",
+				Source:    "api",
+				Message:   "cache warmup slow",
+				Labels:    map[string]string{"node": "edge-1"},
+			},
+			{
+				Timestamp: collectedAt.Add(-1 * time.Minute),
+				Severity:  "critical",
+				Source:    "api",
+				Message:   "postgres timeout",
+				Labels:    map[string]string{"node": "edge-2"},
+			},
+		},
+		CollectedAt: collectedAt,
+	})
+	if err != nil {
+		t.Fatalf("ingest log batch: %v", err)
+	}
+	if record.EntryCount != 2 {
+		t.Fatalf("expected 2 ingested entries, got %d", record.EntryCount)
+	}
+
+	preview, err := svc.PreviewLogs(context.Background(), PreviewLogsCommand{
+		ProjectID:   "prj_123",
+		ServiceName: "api",
+		Level:       "error",
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("preview logs: %v", err)
+	}
+	if len(preview.Lines) != 1 {
+		t.Fatalf("expected 1 filtered log line, got %d", len(preview.Lines))
+	}
+	if preview.Lines[0].Node != "edge-2" {
+		t.Fatalf("expected node edge-2, got %q", preview.Lines[0].Node)
+	}
+	if preview.Cursor == "" {
+		t.Fatal("expected non-empty cursor")
+	}
+}
+
+func TestObservabilityServicePreviewLogsRejectsInvalidLevel(t *testing.T) {
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	)
+
+	_, err := svc.PreviewLogs(context.Background(), PreviewLogsCommand{
+		ProjectID:   "prj_123",
+		ServiceName: "api",
+		Level:       "verbose",
+	})
+	if err == nil {
+		t.Fatal("expected invalid level error")
 	}
 }

@@ -253,6 +253,21 @@ func TestStandaloneDriverPlanRollout(t *testing.T) {
 	if len(plan.Steps) == 0 {
 		t.Fatal("expected at least one rollout step")
 	}
+	expected := []string{
+		CommandTypePrepareReleaseWorkspace,
+		CommandTypeReconcileRevision,
+		CommandTypeStartReleaseCandidate,
+		CommandTypeRunHealthGate,
+		CommandTypePromoteRelease,
+	}
+	if len(plan.Steps) != len(expected) {
+		t.Fatalf("expected %d rollout steps, got %d", len(expected), len(plan.Steps))
+	}
+	for index, commandType := range expected {
+		if plan.Steps[index].Command.Type != commandType {
+			t.Fatalf("expected step %d command %q, got %q", index, commandType, plan.Steps[index].Command.Type)
+		}
+	}
 }
 
 func TestDistributedMeshDriverPlanRollout(t *testing.T) {

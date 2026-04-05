@@ -19,7 +19,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
 	initContractController := controller.NewInitContractController(app.InitContractSvc)
 	blueprintController := controller.NewBlueprintController(app.BlueprintSvc)
-	deploymentController := controller.NewDeploymentController(app.DeploymentSvc)
+	deploymentController := controller.NewDeploymentController(app.DeploymentSvc, app.RolloutExecutionSvc)
 	instanceController := controller.NewInstanceController(app.InstanceService)
 	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService)
 	observabilityController := controller.NewObservabilityController(app.ProjectRepo, app.ObservabilitySvc)
@@ -28,7 +28,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
-	agentControlController := controller.NewAgentControlController(app.ControlHub, app.Config)
+	agentControlController := controller.NewAgentControlController(app.ControlHub, app.ObservabilitySvc, app.Config)
 	operatorStreamController := controller.NewOperatorStreamController(app.OperatorStreamHub, app.Config)
 
 	rootAgentControl := router.Group("/ws")
@@ -44,6 +44,13 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	rootOperatorStream.Use(middleware.RequireRoles(service.RoleAdmin, service.RoleOperator))
 	{
 		rootOperatorStream.GET("/operators/stream", operatorStreamController.OperatorStream)
+	}
+
+	rootLogsStream := router.Group("/ws")
+	rootLogsStream.Use(middleware.Authenticate(app.AuthService))
+	rootLogsStream.Use(middleware.RequireAuthKinds(service.AuthKindWebSession, service.AuthKindCLIPAT))
+	{
+		rootLogsStream.GET("/logs/stream", observabilityController.StreamLogs)
 	}
 
 	v1 := router.Group("/api/v1")
@@ -101,6 +108,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			)
 			userProtected.GET("/projects/:id/topology", observabilityController.GetTopology)
 			userProtected.GET("/traces/:correlation_id", observabilityController.GetTrace)
+			userProtected.GET("/ws/logs/stream", observabilityController.StreamLogs)
 			userProtected.POST("/instances", instanceController.Create)
 			userProtected.GET("/instances", instanceController.List)
 			userProtected.POST("/mesh-networks", targetController.CreateMeshNetwork)

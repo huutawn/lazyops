@@ -15,10 +15,11 @@ import (
 
 type DeploymentController struct {
 	deployments *service.DeploymentService
+	rollouts    *service.RolloutExecutionService
 }
 
-func NewDeploymentController(deployments *service.DeploymentService) *DeploymentController {
-	return &DeploymentController{deployments: deployments}
+func NewDeploymentController(deployments *service.DeploymentService, rollouts *service.RolloutExecutionService) *DeploymentController {
+	return &DeploymentController{deployments: deployments, rollouts: rollouts}
 }
 
 func (ctl *DeploymentController) Create(c *gin.Context) {
@@ -46,5 +47,36 @@ func (ctl *DeploymentController) Create(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusCreated, "deployment created", mapper.ToCreateDeploymentResponse(*result))
+	payload := mapper.ToCreateDeploymentResponse(*result)
+	if ctl.rollouts == nil {
+		response.JSON(c, http.StatusCreated, "deployment created", payload)
+		return
+	}
+
+	rolloutResult, rolloutErr := ctl.rollouts.StartDeployment(c.Request.Context(), result.Deployment.ProjectID, result.Deployment.ID)
+	if rolloutErr == nil {
+		response.JSONWithMeta(c, http.StatusCreated, "deployment created", payload, gin.H{
+			"rollout":             "started",
+			"agent_id":            rolloutResult.AgentID,
+			"correlation_id":      rolloutResult.CorrelationID,
+			"dispatched_commands": rolloutResult.DispatchedCommands,
+		})
+		return
+	}
+
+	switch {
+	case errors.Is(rolloutErr, service.ErrRolloutArtifactPending),
+		errors.Is(rolloutErr, service.ErrRolloutAgentUnavailable),
+		errors.Is(rolloutErr, service.ErrRolloutUnsupportedTarget),
+		errors.Is(rolloutErr, service.ErrRolloutAlreadyStarted):
+		response.JSONWithMeta(c, http.StatusCreated, "deployment created", payload, gin.H{
+			"rollout": "pending",
+			"reason":  rolloutErr.Error(),
+		})
+	default:
+		response.JSONWithMeta(c, http.StatusAccepted, "deployment created; rollout kickoff failed", payload, gin.H{
+			"rollout": "failed_to_start",
+			"reason":  rolloutErr.Error(),
+		})
+	}
 }

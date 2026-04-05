@@ -59,6 +59,17 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 				},
 			},
 			{
+				Kind: "start_candidate",
+				Command: AgentCommand{
+					Type:      "start_release_candidate",
+					ProjectID: req.ProjectID,
+					Source:    "standalone_driver",
+					Payload: map[string]any{
+						"revision_id": req.RevisionID,
+					},
+				},
+			},
+			{
 				Kind: "health_gate",
 				Command: AgentCommand{
 					Type:      "run_health_gate",

@@ -34,6 +34,7 @@ type Application struct {
 	ClusterRepo           *repository.ClusterRepository
 	TunnelSessionRepo     *repository.TunnelSessionRepository
 	TraceSummaryRepo      *repository.TraceSummaryRepository
+	LogStreamRepo         *repository.LogStreamRepository
 	TopologyStateRepo     *repository.TopologyStateRepository
 	TopologyNodeRepo      *repository.TopologyNodeRepository
 	TopologyEdgeRepo      *repository.TopologyEdgeRepository
@@ -62,10 +63,12 @@ type Application struct {
 	AgentEnrollmentSvc    *service.AgentEnrollmentService
 	UserService           *service.UserService
 	AgentService          *service.AgentService
+	ControlService        *service.ControlService
 	ControlHub            *service.ControlHub
 	OperatorStreamHub     *service.OperatorStreamHub
 	RuntimeRegistry       *runtime.Registry
 	RolloutPlanner        *service.RolloutPlanner
+	RolloutExecutionSvc   *service.RolloutExecutionService
 	IncidentRepo          *repository.RuntimeIncidentRepository
 	PreviewRepo           *repository.PreviewEnvironmentRepository
 	PreviewService        *service.PreviewEnvironmentService
@@ -100,6 +103,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	clusterRepo := repository.NewClusterRepository(db)
 	tunnelSessionRepo := repository.NewTunnelSessionRepository(db)
 	traceSummaryRepo := repository.NewTraceSummaryRepository(db)
+	logStreamRepo := repository.NewLogStreamRepository(db)
 	topologyStateRepo := repository.NewTopologyStateRepository(db)
 	topologyNodeRepo := repository.NewTopologyNodeRepository(db)
 	topologyEdgeRepo := repository.NewTopologyEdgeRepository(db)
@@ -146,7 +150,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
-	observabilitySvc := service.NewObservabilityService(traceSummaryRepo, incidentRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo)
+	observabilitySvc := service.NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo)
 	agentEnrollmentSvc := service.NewAgentEnrollmentService(agentRepo, instanceRepo, bootstrapTokenRepo, agentTokenRepo, cfg.Enrollment)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
@@ -162,6 +166,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	rtRegistry.Register(runtime.NewStandaloneDriver())
 	rtRegistry.Register(runtime.NewDistributedMeshDriver())
 	rtRegistry.Register(runtime.NewDistributedK3sDriver())
+	controlService := service.NewControlService(controlHub, rtRegistry, instanceRepo, agentRepo)
 
 	rolloutPlanner := service.NewRolloutPlanner(
 		rtRegistry,
@@ -169,6 +174,13 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		deploymentRepo,
 		incidentRepo,
 		deploymentBindingRepo,
+		operatorStreamHub,
+	)
+	rolloutExecutionSvc := service.NewRolloutExecutionService(
+		deploymentSvc,
+		rolloutPlanner,
+		instanceRepo,
+		controlService,
 		operatorStreamHub,
 	)
 
@@ -204,6 +216,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		ClusterRepo:           clusterRepo,
 		TunnelSessionRepo:     tunnelSessionRepo,
 		TraceSummaryRepo:      traceSummaryRepo,
+		LogStreamRepo:         logStreamRepo,
 		TopologyStateRepo:     topologyStateRepo,
 		TopologyNodeRepo:      topologyNodeRepo,
 		TopologyEdgeRepo:      topologyEdgeRepo,
@@ -232,10 +245,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		AgentEnrollmentSvc:    agentEnrollmentSvc,
 		UserService:           userService,
 		AgentService:          agentService,
+		ControlService:        controlService,
 		ControlHub:            controlHub,
 		OperatorStreamHub:     operatorStreamHub,
 		RuntimeRegistry:       rtRegistry,
 		RolloutPlanner:        rolloutPlanner,
+		RolloutExecutionSvc:   rolloutExecutionSvc,
 		IncidentRepo:          incidentRepo,
 		PreviewRepo:           previewRepo,
 		PreviewService:        previewService,

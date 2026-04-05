@@ -400,6 +400,8 @@ func mustCompiledRevisionJSON(t *testing.T, revisionID, blueprintID, projectID s
 		BlueprintID:         blueprintID,
 		DeploymentBindingID: "bind_123",
 		CommitSHA:           "abc123def456",
+		ArtifactRef:         "artifact://builds/123",
+		ImageRef:            "ghcr.io/lazyops/acme-api:abc123",
 		TriggerKind:         "manual",
 		RuntimeMode:         "standalone",
 		Services: []BlueprintServiceContractRecord{

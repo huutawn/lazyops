@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +37,7 @@ var (
 type ObservabilityService struct {
 	traces    TraceSummaryStore
 	incidents RuntimeIncidentStore
+	logs      LogStreamStore
 	topoNodes TopologyNodeStore
 	topoEdges TopologyEdgeStore
 	instances InstanceStore
@@ -61,6 +66,7 @@ type TopologyEdgeStore interface {
 func NewObservabilityService(
 	traces TraceSummaryStore,
 	incidents RuntimeIncidentStore,
+	logs LogStreamStore,
 	topoNodes TopologyNodeStore,
 	topoEdges TopologyEdgeStore,
 	instances InstanceStore,
@@ -70,6 +76,7 @@ func NewObservabilityService(
 	return &ObservabilityService{
 		traces:    traces,
 		incidents: incidents,
+		logs:      logs,
 		topoNodes: topoNodes,
 		topoEdges: topoEdges,
 		instances: instances,
@@ -166,6 +173,139 @@ func (s *ObservabilityService) ListIncidentsByProject(ctx context.Context, proje
 		out[i] = *r
 	}
 	return out, nil
+}
+
+func (s *ObservabilityService) IngestLogBatch(ctx context.Context, cmd IngestLogBatchCommand) (*LogBatchRecord, error) {
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	bindingID := strings.TrimSpace(cmd.BindingID)
+	if projectID == "" || bindingID == "" || len(cmd.Entries) == 0 {
+		return nil, ErrInvalidInput
+	}
+
+	collectedAt := cmd.CollectedAt
+	if collectedAt.IsZero() {
+		collectedAt = time.Now().UTC()
+	}
+
+	records := make([]models.LogStreamEntry, 0, len(cmd.Entries))
+	serviceName := strings.TrimSpace(cmd.ServiceName)
+	for _, entry := range cmd.Entries {
+		message := normalizeLogMessage(entry.Message, entry.Excerpt)
+		if message == "" {
+			continue
+		}
+
+		labels := cloneStringMap(entry.Labels)
+		resolvedService := normalizeLogServiceName(serviceName, entry.Source, labels)
+		if resolvedService == "" {
+			continue
+		}
+
+		labelsJSON, _ := json.Marshal(labels)
+		occurredAt := entry.Timestamp
+		if occurredAt.IsZero() {
+			occurredAt = collectedAt
+		}
+
+		records = append(records, models.LogStreamEntry{
+			ID:          utils.NewPrefixedID("log"),
+			ProjectID:   projectID,
+			BindingID:   bindingID,
+			RevisionID:  strings.TrimSpace(cmd.RevisionID),
+			ServiceName: resolvedService,
+			Source:      normalizeLogSource(entry.Source, resolvedService),
+			Level:       normalizeLogLevel(entry.Severity),
+			Node:        normalizeLogNode(labels),
+			Message:     message,
+			Excerpt:     strings.TrimSpace(entry.Excerpt),
+			LabelsJSON:  string(labelsJSON),
+			OccurredAt:  occurredAt.UTC(),
+			CollectedAt: collectedAt.UTC(),
+			CreatedAt:   time.Now().UTC(),
+		})
+	}
+
+	if len(records) == 0 {
+		return nil, ErrInvalidInput
+	}
+	if err := s.logs.CreateBatch(records); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].OccurredAt.Before(records[j].OccurredAt)
+	})
+
+	return &LogBatchRecord{
+		ProjectID:   projectID,
+		BindingID:   bindingID,
+		RevisionID:  strings.TrimSpace(cmd.RevisionID),
+		ServiceName: records[0].ServiceName,
+		EntryCount:  len(records),
+		CollectedAt: collectedAt.UTC(),
+	}, nil
+}
+
+func (s *ObservabilityService) PreviewLogs(ctx context.Context, cmd PreviewLogsCommand) (*LogsStreamPreview, error) {
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	serviceName := strings.TrimSpace(cmd.ServiceName)
+	if projectID == "" || serviceName == "" {
+		return nil, ErrInvalidInput
+	}
+
+	limit := cmd.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	level, err := validatePreviewLevel(cmd.Level)
+	if err != nil {
+		return nil, ErrInvalidInput
+	}
+
+	query := models.LogStreamQuery{
+		ProjectID:   projectID,
+		ServiceName: serviceName,
+		Level:       level,
+		Contains:    strings.TrimSpace(cmd.Contains),
+		Node:        strings.TrimSpace(cmd.Node),
+		Limit:       limit,
+	}
+	if cursor := strings.TrimSpace(cmd.Cursor); cursor != "" {
+		beforeAt, beforeID, err := decodeLogCursor(cursor)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		query.BeforeOccurredAt = beforeAt
+		query.BeforeID = beforeID
+	}
+
+	entries, err := s.logs.ListByQuery(query)
+	if err != nil {
+		return nil, err
+	}
+
+	preview := &LogsStreamPreview{
+		Service: serviceName,
+		Lines:   make([]LogLineRecord, 0, len(entries)),
+	}
+	for _, entry := range entries {
+		preview.Lines = append(preview.Lines, LogLineRecord{
+			Timestamp: entry.OccurredAt,
+			Level:     entry.Level,
+			Message:   entry.Message,
+			Node:      entry.Node,
+		})
+	}
+	if len(entries) > 0 {
+		last := entries[len(entries)-1]
+		preview.Cursor = encodeLogCursor(last.OccurredAt, last.ID)
+	}
+
+	return preview, nil
 }
 
 func (s *ObservabilityService) BuildTopologyGraph(ctx context.Context, projectID string) (*TopologyGraph, error) {
@@ -368,6 +508,56 @@ type TopologyEdgeRecord struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
+type IngestLogBatchCommand struct {
+	ProjectID   string
+	BindingID   string
+	RevisionID  string
+	ServiceName string
+	Entries     []LogBatchEntry
+	CollectedAt time.Time
+}
+
+type LogBatchEntry struct {
+	Timestamp time.Time
+	Severity  string
+	Source    string
+	Message   string
+	Excerpt   string
+	Labels    map[string]string
+}
+
+type LogBatchRecord struct {
+	ProjectID   string    `json:"project_id"`
+	BindingID   string    `json:"binding_id"`
+	RevisionID  string    `json:"revision_id,omitempty"`
+	ServiceName string    `json:"service_name"`
+	EntryCount  int       `json:"entry_count"`
+	CollectedAt time.Time `json:"collected_at"`
+}
+
+type PreviewLogsCommand struct {
+	ProjectID   string
+	ServiceName string
+	Level       string
+	Contains    string
+	Node        string
+	Cursor      string
+	Limit       int
+}
+
+type LogsStreamPreview struct {
+	Service string          `json:"service"`
+	Cursor  string          `json:"cursor,omitempty"`
+	Lines   []LogLineRecord `json:"lines"`
+}
+
+type LogLineRecord struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"`
+	Message   string    `json:"message"`
+	Node      string    `json:"node,omitempty"`
+}
+
 func toTraceRecord(item models.TraceSummary) *TraceRecord {
 	var metadata map[string]any
 	if item.MetadataJSON != "" {
@@ -453,4 +643,105 @@ func normalizeTopologyNodeStatus(raw string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func normalizeLogLevel(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "critical", "error":
+		return "error"
+	case "warning", "warn":
+		return "warn"
+	case "info":
+		return "info"
+	case "debug":
+		return "debug"
+	default:
+		return "info"
+	}
+}
+
+func normalizePreviewLevel(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug", "info", "warn", "error":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return ""
+	}
+}
+
+func validatePreviewLevel(raw string) (string, error) {
+	normalized := normalizePreviewLevel(raw)
+	if strings.TrimSpace(raw) != "" && normalized == "" {
+		return "", fmt.Errorf("invalid log level")
+	}
+	return normalized, nil
+}
+
+func normalizeLogServiceName(batchService, source string, labels map[string]string) string {
+	for _, candidate := range []string{
+		strings.TrimSpace(batchService),
+		strings.TrimSpace(labels["service"]),
+		strings.TrimSpace(labels["service_name"]),
+		strings.TrimSpace(source),
+	} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func normalizeLogSource(source, serviceName string) string {
+	if strings.TrimSpace(source) != "" {
+		return strings.TrimSpace(source)
+	}
+	return serviceName
+}
+
+func normalizeLogNode(labels map[string]string) string {
+	for _, key := range []string{"node", "node_name", "instance", "instance_id"} {
+		if value := strings.TrimSpace(labels[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeLogMessage(message, excerpt string) string {
+	if strings.TrimSpace(message) != "" {
+		return strings.TrimSpace(message)
+	}
+	return strings.TrimSpace(excerpt)
+}
+
+func cloneStringMap(items map[string]string) map[string]string {
+	if len(items) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(items))
+	for key, value := range items {
+		out[key] = value
+	}
+	return out
+}
+
+func encodeLogCursor(occurredAt time.Time, id string) string {
+	raw := fmt.Sprintf("%d|%s", occurredAt.UTC().UnixNano(), id)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeLogCursor(cursor string) (time.Time, string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return time.Time{}, "", fmt.Errorf("invalid cursor")
+	}
+	nanos, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	return time.Unix(0, nanos).UTC(), strings.TrimSpace(parts[1]), nil
 }

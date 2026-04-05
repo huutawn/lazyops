@@ -183,7 +183,7 @@ export default function ProjectIntegrationsPage() {
         description="Recent deployment activity for this project."
       >
         <div className="flex flex-col items-center gap-3 py-8 text-center">
-          <div className="text-3xl text-lazyops-muted/30">📦</div>
+          <div className="text-3xl text-lazyops-muted/30" aria-hidden="true">📦</div>
           <p className="text-sm text-lazyops-muted">
             No builds yet. Link a repository and push to your tracked branch to trigger your first deployment.
           </p>

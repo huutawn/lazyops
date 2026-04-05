@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -15,15 +16,17 @@ import (
 )
 
 type AgentControlController struct {
-	controlHub *service.ControlHub
-	cfg        config.Config
-	upgrader   websocket.Upgrader
+	controlHub    *service.ControlHub
+	observability *service.ObservabilityService
+	cfg           config.Config
+	upgrader      websocket.Upgrader
 }
 
-func NewAgentControlController(hub *service.ControlHub, cfg config.Config) *AgentControlController {
+func NewAgentControlController(hub *service.ControlHub, observability *service.ObservabilityService, cfg config.Config) *AgentControlController {
 	return &AgentControlController{
-		controlHub: hub,
-		cfg:        cfg,
+		controlHub:    hub,
+		observability: observability,
+		cfg:           cfg,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.WebSocket.ReadBufferSize,
 			WriteBufferSize: cfg.WebSocket.WriteBufferSize,
@@ -89,6 +92,8 @@ func (ctl *AgentControlController) runControlLoop(client *service.ControlClient,
 			_ = client.Conn.WriteMessage(1, []byte(`{"type":"pong"}`))
 		case "command_response":
 			ctl.handleCommandResponse(client.AgentID, message)
+		case "agent.log_batch":
+			ctl.handleLogBatch(client, message)
 		default:
 			_ = client.Conn.WriteMessage(1, []byte(`{"type":"error","message":"unsupported message type"}`))
 		}
@@ -114,6 +119,71 @@ func (ctl *AgentControlController) handleCommandResponse(agentID string, raw []b
 		})
 		return
 	}
+}
+
+func (ctl *AgentControlController) handleLogBatch(client *service.ControlClient, raw []byte) {
+	if ctl.observability == nil {
+		return
+	}
+
+	var envelope struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return
+	}
+
+	var payload struct {
+		ProjectID   string    `json:"project_id"`
+		BindingID   string    `json:"binding_id"`
+		RevisionID  string    `json:"revision_id"`
+		ServiceName string    `json:"service_name"`
+		CollectedAt time.Time `json:"collected_at"`
+		Entries     []struct {
+			Timestamp time.Time         `json:"timestamp"`
+			Severity  string            `json:"severity"`
+			Source    string            `json:"source"`
+			Message   string            `json:"message"`
+			Excerpt   string            `json:"excerpt"`
+			Labels    map[string]string `json:"labels"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		writeControlJSON(client.Conn, gin.H{"type": "error", "message": "invalid log batch payload"})
+		return
+	}
+
+	entries := make([]service.LogBatchEntry, 0, len(payload.Entries))
+	for _, entry := range payload.Entries {
+		entries = append(entries, service.LogBatchEntry{
+			Timestamp: entry.Timestamp,
+			Severity:  entry.Severity,
+			Source:    entry.Source,
+			Message:   entry.Message,
+			Excerpt:   entry.Excerpt,
+			Labels:    entry.Labels,
+		})
+	}
+
+	if _, err := ctl.observability.IngestLogBatch(context.Background(), service.IngestLogBatchCommand{
+		ProjectID:   payload.ProjectID,
+		BindingID:   payload.BindingID,
+		RevisionID:  payload.RevisionID,
+		ServiceName: payload.ServiceName,
+		Entries:     entries,
+		CollectedAt: payload.CollectedAt,
+	}); err != nil {
+		writeControlJSON(client.Conn, gin.H{"type": "error", "message": "failed to ingest log batch"})
+	}
+}
+
+func writeControlJSON(conn service.ControlConn, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_ = conn.WriteMessage(websocket.TextMessage, data)
 }
 
 func (ctl *AgentControlController) DispatchCommand(c *gin.Context) {

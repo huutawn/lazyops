@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -85,6 +86,61 @@ func (ctl *ObservabilityController) GetTopology(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, "topology loaded", graph)
+}
+
+func (ctl *ObservabilityController) StreamLogs(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Query("project"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load logs", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load logs", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load logs", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load logs", "internal_error", err.Error())
+		}
+		return
+	}
+
+	serviceName := strings.TrimSpace(c.Query("service"))
+	if serviceName == "" {
+		response.Error(c, http.StatusBadRequest, "failed to load logs", "missing_service", "service query parameter is required")
+		return
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsedLimit, convErr := strconv.Atoi(rawLimit)
+		if convErr != nil || parsedLimit <= 0 {
+			response.Error(c, http.StatusBadRequest, "failed to load logs", "invalid_limit", "limit query parameter must be a positive integer")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	preview, err := ctl.observability.PreviewLogs(c.Request.Context(), service.PreviewLogsCommand{
+		ProjectID:   project.ID,
+		ServiceName: serviceName,
+		Level:       c.Query("level"),
+		Contains:    c.Query("contains"),
+		Node:        c.Query("node"),
+		Cursor:      c.Query("cursor"),
+		Limit:       limit,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load logs", "invalid_logs_query", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load logs", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "logs loaded", preview)
 }
 
 func buildTraceServicePath(record service.TraceRecord) []string {

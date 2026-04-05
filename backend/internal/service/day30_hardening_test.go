@@ -229,6 +229,7 @@ func TestDay30AcceptanceMatrixObservabilityCorrelationIDPropagation(t *testing.T
 	svc := newTestObservabilityService(
 		traceStore,
 		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
 		newFakeTopologyNodeStore(),
 		newFakeTopologyEdgeStore(),
 		newFakeInstanceStore(),

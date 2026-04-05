@@ -16,3 +16,5 @@ export { UnauthorizedState } from './unauthorized-state';
 export { Skeleton, SkeletonLine, SkeletonCard, SkeletonPage } from './skeleton';
 
 export { Modal } from './modal';
+
+export { SummaryField } from './summary-field';

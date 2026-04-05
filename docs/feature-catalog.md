@@ -68,11 +68,11 @@ Mỗi tính năng bên dưới liệt kê tính năng là gì, luồng hoạt đ
 ## Triển khai Standalone
 
 - Là gì: Đường dẫn triển khai một máy cho việc khởi chạy ứng viên, health gate, thăng chức, rollback và dọn dẹp runtime.
-- Luồng công việc: tạo deployment xếp hàng một revision, rollout planner giải quyết chế độ target, operator dispatch gửi các lệnh chính xác, và instance agent thực hiện các hành động runtime.
-- Công nghệ: Registry runtime, rollout planner, bao lệnh, các module runtime instance agent.
+- Luồng công việc: tạo deployment sinh revision, rollout executor của backend tự động kickoff plan `standalone` khi artifact và agent đã sẵn sàng, rollout planner giải quyết chế độ target, dispatch gửi các lệnh chính xác, và instance agent thực hiện các hành động runtime.
+- Công nghệ: Registry runtime, rollout planner, rollout executor, bao lệnh, các module runtime instance agent.
 - Bề mặt sở hữu: backend, agent.
 - Hợp đồng chính thức: Bộ lệnh từ `reconcile_revision` đến `garbage_collect_runtime`.
-- Trạng thái hiện tại: `adapter/composed`.
+- Trạng thái hiện tại: `adapter/composed` vì `standalone` đã có auto-kickoff và regression tốt hơn, nhưng orchestration vẫn là best-effort và chưa có vòng phản hồi agent đầy đủ cho mọi bước.
 
 ## Mạng Mesh
 
@@ -94,12 +94,12 @@ Mỗi tính năng bên dưới liệt kê tính năng là gì, luồng hoạt đ
 
 ## Observability
 
-- Là gì: Tóm tắt trace, biểu đồ topology, luồng sự kiện operator, và luồng logs tương lai.
-- Luồng công việc: gateway hoặc agents truyền bá `X-Correlation-ID`, agents báo cáo tóm tắt trace và trạng thái topology, backend lưu trữ và phục vụ các API đọc topology và trace, operators tiêu thụ các API luồng và truy vấn.
+- Là gì: Tóm tắt trace, biểu đồ topology, luồng sự kiện operator, và logs preview phục vụ từ log batch thật.
+- Luồng công việc: gateway hoặc agents truyền bá `X-Correlation-ID`, agents báo cáo tóm tắt trace, trạng thái topology, và log batch, backend lưu trữ rồi phục vụ các API đọc topology, trace, và logs, còn operator stream phát sự kiện read-only và mang `correlation_id` khi payload có sẵn.
 - Công nghệ: Repository tóm tắt trace, kho lưu trữ node và edge topology, trung tâm luồng operator, các lệnh observability CLI.
 - Bề mặt sở hữu: backend, agent, CLI, frontend.
 - Hợp đồng chính thức: `GET /api/v1/traces/:correlation_id`, `GET /api/v1/projects/:id/topology`, `GET /ws/operators/stream`, `GET /ws/logs/stream`.
-- Trạng thái hiện tại: `adapter/composed` vì traces và topology đang hoạt động trong khi logs vẫn còn `missing`.
+- Trạng thái hiện tại: `adapter/composed` vì traces, topology, logs preview, và guard observability đã hoạt động ổn hơn, nhưng observability vẫn còn ghép từ nhiều bề mặt thay vì một pipeline thống nhất.
 
 ## Tunnels
 

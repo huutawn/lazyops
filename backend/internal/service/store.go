@@ -140,3 +140,8 @@ type RuntimeIncidentStore interface {
 	ListByDeployment(projectID, deploymentID string) ([]models.RuntimeIncident, error)
 	UpdateStatus(incidentID, status string, at time.Time) error
 }
+
+type LogStreamStore interface {
+	CreateBatch(entries []models.LogStreamEntry) error
+	ListByQuery(query models.LogStreamQuery) ([]models.LogStreamEntry, error)
+}

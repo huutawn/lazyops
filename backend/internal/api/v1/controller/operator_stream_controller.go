@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -92,15 +93,18 @@ func (ctl *OperatorStreamController) readLoop(conn *websocket.Conn, client *serv
 	})
 
 	for {
-		_, _, err := conn.ReadMessage()
+		messageType, payload, err := conn.ReadMessage()
 		if err != nil {
 			return
+		}
+		if messageType != websocket.TextMessage {
+			continue
 		}
 
 		var msg struct {
 			Type string `json:"type"`
 		}
-		if err := conn.ReadJSON(&msg); err != nil {
+		if err := json.Unmarshal(payload, &msg); err != nil {
 			continue
 		}
 

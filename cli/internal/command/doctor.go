@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,19 +16,7 @@ import (
 	"lazyops-cli/internal/gitrepo"
 	"lazyops-cli/internal/lazyyaml"
 	"lazyops-cli/internal/repo"
-	"lazyops-cli/internal/transport"
 )
-
-type doctorPreviewResponse struct {
-	Checks []doctorPreviewCheck `json:"checks"`
-}
-
-type doctorPreviewCheck struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Summary  string `json:"summary"`
-	NextStep string `json:"next_step"`
-}
 
 type repoInstallationAccess struct {
 	installation contracts.GitHubInstallation
@@ -61,13 +48,17 @@ func runDoctor(ctx context.Context, runtime *Runtime, args []string) error {
 	if metadataErr == nil {
 		report.ProjectSlug = metadata.ProjectSlug
 	}
+	document, documentErr := readDoctorDocument(repoRoot, repoRootErr)
+	if documentErr == nil && strings.TrimSpace(report.ProjectSlug) == "" {
+		report.ProjectSlug = document.ProjectSlug
+	}
 	linkFieldsValid := metadataErr == nil && metadata.ValidateLinkFields() == nil
-	contractValid := metadataErr == nil && metadata.ValidateDoctorContract() == nil
+	contractValid := documentErr == nil && document.Validate() == nil
 
 	report.Add(checkDoctorAuth(ctx, runtime))
 	authCheck := report.Checks[len(report.Checks)-1]
 
-	report.Add(checkDoctorLazyopsYAML(repoRootErr, metadata, metadataErr))
+	report.Add(checkDoctorLazyopsYAML(repoRootErr, document, documentErr))
 
 	var credentialRecord transportCredential
 	if authCheck.Status == doctorreport.StatusPass {
@@ -92,7 +83,7 @@ func runDoctor(ctx context.Context, runtime *Runtime, args []string) error {
 	report.Add(checkDoctorRepoLink(ctx, runtime, credentialRecord, repoRootErr, gitMetadata, gitMetadataErr))
 	report.Add(checkDoctorBinding(ctx, runtime, credentialRecord, metadata, metadataErr, linkFieldsValid, projects))
 	report.Add(checkDoctorDependencies(repoRootErr, repoRoot, metadata, metadataErr, contractValid))
-	report.Add(checkDoctorWebhook(ctx, runtime, credentialRecord, linkFieldsValid, projects))
+	report.Add(checkDoctorBackendValidation(ctx, runtime, credentialRecord, document, documentErr, projects))
 
 	printDoctorReport(runtime, report)
 	if report.HasFailures() {
@@ -131,6 +122,13 @@ func readDoctorMetadata(repoRoot string, repoRootErr error) (lazyyaml.DoctorMeta
 	return lazyyaml.ReadDoctorMetadata(repoRoot)
 }
 
+func readDoctorDocument(repoRoot string, repoRootErr error) (lazyyaml.Document, error) {
+	if repoRootErr != nil {
+		return lazyyaml.Document{}, repoRootErr
+	}
+	return lazyyaml.ReadDocument(repoRoot)
+}
+
 func checkDoctorAuth(ctx context.Context, runtime *Runtime) doctorreport.Check {
 	credential, err := requireAuth(ctx, runtime)
 	if err != nil {
@@ -155,24 +153,24 @@ func checkDoctorAuth(ctx context.Context, runtime *Runtime) doctorreport.Check {
 	return passDoctorCheck("auth", fmt.Sprintf("CLI session is active for %s and can reach %d project(s)", displayName, len(projectsResponse.Projects)))
 }
 
-func checkDoctorLazyopsYAML(repoRootErr error, metadata lazyyaml.DoctorMetadata, metadataErr error) doctorreport.Check {
+func checkDoctorLazyopsYAML(repoRootErr error, document lazyyaml.Document, documentErr error) doctorreport.Check {
 	if repoRootErr != nil {
 		if errors.Is(repoRootErr, repo.ErrRepoRootNotFound) {
 			return failDoctorCheck("lazyops_yaml", "repository root was not found", "run `lazyops doctor` from inside a git repository that contains lazyops.yaml")
 		}
 		return failDoctorCheck("lazyops_yaml", "repository root could not be resolved", "verify the working tree is readable and rerun `lazyops doctor`")
 	}
-	if metadataErr != nil {
-		if errors.Is(metadataErr, os.ErrNotExist) {
+	if documentErr != nil {
+		if errors.Is(documentErr, os.ErrNotExist) {
 			return failDoctorCheck("lazyops_yaml", "lazyops.yaml is missing at the repository root", "run `lazyops init` to generate the deploy contract before rerunning `lazyops doctor`")
 		}
-		summary, nextStep := splitNextStep(metadataErr.Error())
+		summary, nextStep := splitNextStep(documentErr.Error())
 		if nextStep == "" {
 			nextStep = "repair lazyops.yaml or rerun `lazyops init` before rerunning `lazyops doctor`"
 		}
 		return failDoctorCheck("lazyops_yaml", summary, nextStep)
 	}
-	if err := metadata.ValidateDoctorContract(); err != nil {
+	if err := document.Validate(); err != nil {
 		summary, nextStep := splitNextStep(err.Error())
 		if nextStep == "" {
 			nextStep = "repair lazyops.yaml or rerun `lazyops init` so the deploy contract is complete"
@@ -184,10 +182,10 @@ func checkDoctorLazyopsYAML(repoRootErr error, metadata lazyyaml.DoctorMetadata,
 		"lazyops_yaml",
 		fmt.Sprintf(
 			"lazyops.yaml declares project %s, runtime %s, target_ref %s, and %d service(s)",
-			metadata.ProjectSlug,
-			metadata.RuntimeMode,
-			metadata.TargetRef,
-			len(metadata.Services),
+			document.ProjectSlug,
+			document.RuntimeMode,
+			document.DeploymentBinding.TargetRef,
+			len(document.Services),
 		),
 	)
 }
@@ -405,56 +403,56 @@ func checkDoctorDependencies(
 	)
 }
 
-func checkDoctorWebhook(
+func checkDoctorBackendValidation(
 	ctx context.Context,
 	runtime *Runtime,
 	credential transportCredential,
-	linkFieldsValid bool,
+	document lazyyaml.Document,
+	documentErr error,
 	projects projectsSelection,
 ) doctorreport.Check {
-	if !linkFieldsValid {
-		return warnDoctorCheck("webhook_health", "webhook health was not checked because lazyops.yaml is missing project or binding metadata", "repair lazyops.yaml or rerun `lazyops init` before rerunning `lazyops doctor`")
+	if documentErr != nil {
+		return warnDoctorCheck("backend_validation", "control-plane validation was not checked because lazyops.yaml could not be parsed", "repair lazyops.yaml or rerun `lazyops init`, then rerun `lazyops doctor`")
+	}
+	if err := document.Validate(); err != nil {
+		return warnDoctorCheck("backend_validation", "control-plane validation was not checked because the local deploy contract is incomplete", "repair lazyops.yaml locally before rerunning `lazyops doctor`")
 	}
 	if !credential.ok {
-		return warnDoctorCheck("webhook_health", "webhook health was not checked because CLI auth is unhealthy", "run `lazyops login` first, then rerun `lazyops doctor`")
+		return warnDoctorCheck("backend_validation", "control-plane validation was not checked because CLI auth is unhealthy", "run `lazyops login` first, then rerun `lazyops doctor`")
 	}
 	if projects.err != nil || projects.selected == nil {
-		return warnDoctorCheck("webhook_health", "webhook health was not checked because the project could not be resolved from lazyops.yaml", "repair project_slug in lazyops.yaml or rerun `lazyops init --project <project-id-or-slug>`")
+		return warnDoctorCheck("backend_validation", "control-plane validation was not checked because the project could not be resolved from lazyops.yaml", "repair project_slug in lazyops.yaml or rerun `lazyops init --project <project-id-or-slug>`")
 	}
 
-	preview, err := fetchDoctorPreview(ctx, runtime, credential.record, projects.selected.ID)
+	validation, err := fetchValidateLazyopsYAML(ctx, runtime, credential.record, projects.selected.ID, document)
 	if err != nil {
-		return warnDoctorCheck("webhook_health", "webhook health preview is unavailable in the current transport mode", "retry `lazyops doctor` after the webhook health contract is exposed by the control plane")
+		summary, nextStep := splitNextStep(err.Error())
+		if nextStep == "" {
+			nextStep = "repair the lazyops.yaml validation route and rerun `lazyops doctor`"
+		}
+		return failDoctorCheck("backend_validation", summary, nextStep)
+	}
+	if validation.Project.Slug != document.ProjectSlug {
+		return failDoctorCheck("backend_validation", fmt.Sprintf("control-plane validation resolved project slug %s instead of %s", validation.Project.Slug, document.ProjectSlug), "repair project_slug in lazyops.yaml or rerun `lazyops init --project <project-id-or-slug>`")
+	}
+	if validation.DeploymentBinding.TargetRef != document.DeploymentBinding.TargetRef {
+		return failDoctorCheck("backend_validation", fmt.Sprintf("control-plane validation resolved target_ref %s instead of %s", validation.DeploymentBinding.TargetRef, document.DeploymentBinding.TargetRef), "repair deployment_binding.target_ref in lazyops.yaml or rerun `lazyops init`")
+	}
+	if validation.DeploymentBinding.RuntimeMode != string(document.RuntimeMode) {
+		return failDoctorCheck("backend_validation", fmt.Sprintf("control-plane validation resolved runtime mode %s instead of %s", validation.DeploymentBinding.RuntimeMode, document.RuntimeMode), "repair runtime_mode in lazyops.yaml or rerun `lazyops init`")
 	}
 
-	for _, check := range preview.Checks {
-		if strings.TrimSpace(check.Name) != "webhook_health" {
-			continue
-		}
-
-		status := doctorreport.NormalizeStatus(check.Status)
-		summary := strings.TrimSpace(check.Summary)
-		if summary == "" {
-			summary = "webhook health preview responded without a summary"
-		}
-		nextStep := strings.TrimSpace(check.NextStep)
-		switch status {
-		case doctorreport.StatusPass:
-			return passDoctorCheck("webhook_health", summary)
-		case doctorreport.StatusFail:
-			if nextStep == "" {
-				nextStep = "repair the control-plane webhook integration before the next deploy"
-			}
-			return failDoctorCheck("webhook_health", summary, nextStep)
-		default:
-			if nextStep == "" {
-				nextStep = "review the control-plane webhook integration before the next deploy"
-			}
-			return warnDoctorCheck("webhook_health", summary, nextStep)
-		}
-	}
-
-	return warnDoctorCheck("webhook_health", "webhook health preview did not return a dedicated webhook check", "retry `lazyops doctor` after the control-plane doctor contract exposes webhook health")
+	return passDoctorCheck(
+		"backend_validation",
+		fmt.Sprintf(
+			"control plane validated project %s, binding %s, and target %s %s [%s]",
+			validation.Project.Slug,
+			validation.DeploymentBinding.Name,
+			validation.TargetSummary.Kind,
+			validation.TargetSummary.Name,
+			validation.TargetSummary.Status,
+		),
+	)
 }
 
 func fetchTargetDiscovery(ctx context.Context, runtime *Runtime, credential credentials.Record) (initDiscovery, error) {
@@ -476,28 +474,6 @@ func fetchTargetDiscovery(ctx context.Context, runtime *Runtime, credential cred
 		meshNetworks: meshNetworksResponse.MeshNetworks,
 		clusters:     clustersResponse.Clusters,
 	}, nil
-}
-
-func fetchDoctorPreview(ctx context.Context, runtime *Runtime, credential credentials.Record, projectID string) (doctorPreviewResponse, error) {
-	response, err := runtime.Transport.Do(ctx, authorizeRequest(transport.Request{
-		Method: "GET",
-		Path:   "/mock/v1/doctor",
-		Query: map[string]string{
-			"project": projectID,
-		},
-	}, credential))
-	if err != nil {
-		return doctorPreviewResponse{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return doctorPreviewResponse{}, parseAPIError(response)
-	}
-
-	var preview doctorPreviewResponse
-	if err := json.Unmarshal(response.Body, &preview); err != nil {
-		return doctorPreviewResponse{}, fmt.Errorf("could not decode doctor preview response. next: verify the backend doctor preview contract returns valid JSON: %w", err)
-	}
-	return preview, nil
 }
 
 func selectDoctorProject(ctx context.Context, runtime *Runtime, credential credentials.Record, selector string) projectsSelection {

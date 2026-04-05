@@ -16,6 +16,7 @@ type Summary struct {
 	Project          ProjectRef
 	RuntimeMode      initplan.RuntimeMode
 	DeclaredServices int
+	Validation       ValidationState
 	Binding          BindingState
 	Topology         TopologyState
 	Deployment       DeploymentState
@@ -49,6 +50,12 @@ type DeploymentState struct {
 	NextStep string
 }
 
+type ValidationState struct {
+	State    string
+	Summary  string
+	NextStep string
+}
+
 type TargetSnapshot struct {
 	ID     string
 	Kind   string
@@ -57,10 +64,11 @@ type TargetSnapshot struct {
 }
 
 type Input struct {
-	Contract lazyyaml.DoctorMetadata
-	Project  contracts.Project
-	Binding  *contracts.DeploymentBinding
-	Target   *TargetSnapshot
+	Contract   lazyyaml.DoctorMetadata
+	Project    contracts.Project
+	Binding    *contracts.DeploymentBinding
+	Target     *TargetSnapshot
+	Validation ValidationState
 }
 
 func BuildAdapterSummary(input Input) (Summary, error) {
@@ -80,11 +88,12 @@ func BuildAdapterSummary(input Input) (Summary, error) {
 			Name: input.Project.Name,
 		},
 		DeclaredServices: len(input.Contract.Services),
+		Validation:       normalizeValidationState(input.Validation),
 	}
 
 	bindingState := buildBindingState(input.Contract, input.Binding)
 	topologyState := buildTopologyState(input.Contract.RuntimeMode, input.Project, input.Binding, input.Target)
-	deploymentState := buildDeploymentState(bindingState, topologyState)
+	deploymentState := buildDeploymentState(summary.Validation, bindingState, topologyState)
 
 	summary.Binding = bindingState
 	summary.Topology = topologyState
@@ -149,8 +158,23 @@ func buildTopologyState(mode initplan.RuntimeMode, project contracts.Project, bi
 	}
 }
 
-func buildDeploymentState(binding BindingState, topology TopologyState) DeploymentState {
+func buildDeploymentState(validation ValidationState, binding BindingState, topology TopologyState) DeploymentState {
 	switch {
+	case validation.State == "failed":
+		nextStep := validation.NextStep
+		if strings.TrimSpace(nextStep) == "" {
+			nextStep = "repair the deploy contract or rerun `lazyops init` before retrying `lazyops status`"
+		}
+		summary := validation.Summary
+		if strings.TrimSpace(summary) == "" {
+			summary = "control-plane validation failed"
+		}
+		return DeploymentState{
+			State:    "blocked",
+			Rollout:  "blocked",
+			Summary:  summary,
+			NextStep: nextStep,
+		}
 	case binding.State == "missing":
 		return DeploymentState{
 			State:    "blocked",
@@ -203,11 +227,28 @@ func buildDeploymentState(binding BindingState, topology TopologyState) Deployme
 	}
 }
 
+func normalizeValidationState(validation ValidationState) ValidationState {
+	state := strings.TrimSpace(validation.State)
+	if state == "" {
+		validation.State = "unavailable"
+		return validation
+	}
+	validation.State = state
+	return validation
+}
+
 func (binding BindingState) Detail() string {
 	if strings.TrimSpace(binding.Name) == "" {
 		return fmt.Sprintf("%s target_ref %s", binding.State, binding.TargetRef)
 	}
 	return fmt.Sprintf("%s (%s -> %s)", binding.State, binding.Name, binding.TargetRef)
+}
+
+func (validation ValidationState) Detail() string {
+	if strings.TrimSpace(validation.Summary) == "" {
+		return validation.State
+	}
+	return fmt.Sprintf("%s (%s)", validation.State, validation.Summary)
 }
 
 func (topology TopologyState) Detail() string {

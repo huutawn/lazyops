@@ -1,3 +1,4 @@
+import { useId, Children, cloneElement, isValidElement } from 'react';
 import { cn } from '@/lib/utils';
 
 type FormFieldProps = {
@@ -7,12 +8,32 @@ type FormFieldProps = {
   className?: string;
 };
 
+function addIdToFirstInput(children: React.ReactNode, id: string): React.ReactNode {
+  const childArray = Children.toArray(children);
+  const firstInputIndex = childArray.findIndex(
+    (child) => isValidElement(child) && typeof child.type === 'string' && child.type === 'input',
+  );
+
+  if (firstInputIndex === -1) return children;
+
+  const firstInput = childArray[firstInputIndex];
+  if (!isValidElement(firstInput)) return children;
+
+  const updatedInput = cloneElement(firstInput as React.ReactElement<{ id?: string }>, { id });
+  const updatedChildren = [...childArray];
+  updatedChildren[firstInputIndex] = updatedInput;
+
+  return updatedChildren;
+}
+
 export function FormField({ label, error, children, className }: FormFieldProps) {
+  const id = useId();
+
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      <label className="text-sm font-medium text-lazyops-text">{label}</label>
-      {children}
-      {error && <p className="text-xs text-health-unhealthy">{error}</p>}
+      <label htmlFor={id} className="text-sm font-medium text-lazyops-text">{label}</label>
+      {addIdToFirstInput(children, id)}
+      {error && <p className="text-xs text-health-unhealthy" role="alert">{error}</p>}
     </div>
   );
 }
@@ -40,7 +61,7 @@ type FormButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   loading?: boolean;
 };
 
-export function FormButton({ children, loading, disabled, className, ...props }: FormButtonProps) {
+export function FormButton({ children, loading, disabled, className, type = 'submit', ...props }: FormButtonProps) {
   return (
     <button
       className={cn(
@@ -49,6 +70,7 @@ export function FormButton({ children, loading, disabled, className, ...props }:
         'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
+      type={type}
       disabled={disabled || loading}
       {...props}
     >

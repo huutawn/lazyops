@@ -1648,14 +1648,15 @@ func TestDoctorHappyPath(t *testing.T) {
 		"pass repo_link:",
 		"pass binding:",
 		"pass dependency_declarations:",
-		"summary: 5 pass, 1 warn, 0 fail",
+		"pass backend_validation:",
+		"summary: 6 pass, 0 warn, 0 fail",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected doctor output to contain %q, got %q", expected, output)
 		}
 	}
-	if !strings.Contains(stderr.String(), "webhook_health") {
-		t.Fatalf("expected webhook_health warning in stderr, got %q", stderr.String())
+	if stderr.String() != "" {
+		t.Fatalf("expected no warnings or errors, got stderr %q", stderr.String())
 	}
 }
 
@@ -1702,7 +1703,11 @@ func TestDoctorFailsWhenBindingIsMissing(t *testing.T) {
 		"  target_ref: missing-binding\n\n"+
 		"services:\n"+
 		"  - name: api\n"+
-		"    path: apps/api\n")
+		"    path: apps/api\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
 	restore := mustChdir(t, repoRoot)
 	defer restore()
 
@@ -1745,7 +1750,11 @@ func TestDoctorFailsWhenServiceDeclarationIsMissing(t *testing.T) {
 		"  target_ref: prod-ap\n\n"+
 		"services:\n"+
 		"  - name: api\n"+
-		"    path: apps/api\n")
+		"    path: apps/api\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
 	restore := mustChdir(t, repoRoot)
 	defer restore()
 
@@ -1774,6 +1783,162 @@ func TestDoctorFailsWhenServiceDeclarationIsMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "apps/web") {
 		t.Fatalf("expected missing service path in failure output, got stderr %q", stderr.String())
+	}
+}
+
+func TestDoctorFailsOutsideRepositoryRoot(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	restore := mustChdir(t, t.TempDir())
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail outside a repository root")
+	}
+	if !strings.Contains(stderr.String(), "fail lazyops_yaml: repository root was not found") {
+		t.Fatalf("expected repository root failure, got stderr %q", stderr.String())
+	}
+}
+
+func TestDoctorFailsWhenLazyopsYAMLIsMissing(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareInitRepo(t)
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "config"), "[remote \"origin\"]\n\turl = git@github.com:lazyops/acme-shop.git\n")
+	mustWriteTestFile(t, filepath.Join(repoRoot, ".git", "HEAD"), "ref: refs/heads/main\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail when lazyops.yaml is missing")
+	}
+	if !strings.Contains(stderr.String(), "fail lazyops_yaml: lazyops.yaml is missing at the repository root") {
+		t.Fatalf("expected lazyops.yaml missing failure, got stderr %q", stderr.String())
+	}
+}
+
+func TestDoctorFailsWhenRuntimeModeMismatchesBinding(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: distributed-mesh\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: prod-solo-1\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail when runtime mode mismatches the binding")
+	}
+	if !strings.Contains(stderr.String(), "fail backend_validation: binding \"prod-solo-1\" uses runtime mode \"standalone\"") {
+		t.Fatalf("expected backend validation runtime mismatch failure, got stderr %q", stderr.String())
+	}
+}
+
+func TestDoctorFailsWhenDependencyBindingIsInvalid(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: standalone\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: prod-solo-1\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n\n"+
+		"dependency_bindings:\n"+
+		"  - service: worker\n"+
+		"    alias: api\n"+
+		"    target_service: api\n"+
+		"    protocol: http\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	err := root.Execute(context.Background(), runtime, []string{"doctor"})
+	if err == nil {
+		t.Fatal("expected doctor to fail when dependency bindings are invalid")
+	}
+	if !strings.Contains(stderr.String(), `fail lazyops_yaml: lazyops.yaml dependency_bindings[0]: service "worker" is not declared in services`) {
+		t.Fatalf("expected dependency binding validation failure, got stderr %q", stderr.String())
 	}
 }
 
@@ -1809,6 +1974,7 @@ func TestStatusHappyPath(t *testing.T) {
 		"status summary",
 		"source: existing-api-composition/v1",
 		"project: Acme Shop (acme-shop)",
+		"control-plane: validated (binding prod-solo-binding and target instance prod-solo-1 [online] validated)",
 		"binding state: attached (prod-solo-binding -> prod-solo-1)",
 		"topology state: healthy (instance prod-solo-1, status=online)",
 		"deployment state: ready (deploy contract, binding, and topology are aligned)",
@@ -1835,7 +2001,11 @@ func TestStatusReportsMissingBindingAsBlocked(t *testing.T) {
 		"  target_ref: missing-binding\n\n"+
 		"services:\n"+
 		"  - name: api\n"+
-		"    path: apps/api\n")
+		"    path: apps/api\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
 	restore := mustChdir(t, repoRoot)
 	defer restore()
 
@@ -1858,13 +2028,16 @@ func TestStatusReportsMissingBindingAsBlocked(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
+	if !strings.Contains(stderr.String(), `control-plane: failed (deployment_binding.target_ref "missing-binding" is not registered for project "acme-shop"`) {
+		t.Fatalf("expected control-plane validation failure, got stderr %q", stderr.String())
+	}
 	if !strings.Contains(stdout.String(), "binding state: missing target_ref missing-binding") {
 		t.Fatalf("expected missing binding output, got %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "deployment state: blocked (deploy contract is missing a compatible deployment binding)") {
+	if !strings.Contains(stderr.String(), `deployment state: blocked (deployment_binding.target_ref "missing-binding" is not registered for project "acme-shop"`) {
 		t.Fatalf("expected blocked deployment output, got stderr %q", stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "next: rerun `lazyops init` to create or reuse a compatible deployment binding") {
+	if !strings.Contains(stdout.String(), "next: create or reuse a compatible deployment binding and retry validation") {
 		t.Fatalf("expected blocked next-step output, got %q", stdout.String())
 	}
 }
@@ -1934,6 +2107,9 @@ func TestStatusReportsOfflineTargetAsDegraded(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
+	if !strings.Contains(stderr.String(), "control-plane: unavailable") {
+		t.Fatalf("expected control-plane fallback warning, got stderr %q", stderr.String())
+	}
 	if !strings.Contains(stdout.String(), "topology state: degraded (instance prod-solo-1, status=offline)") {
 		t.Fatalf("expected degraded topology output, got %q", stdout.String())
 	}
@@ -1942,6 +2118,52 @@ func TestStatusReportsOfflineTargetAsDegraded(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "rollout: paused") {
 		t.Fatalf("expected paused rollout output, got %q", stdout.String())
+	}
+}
+
+func TestStatusBlocksWhenControlPlaneValidationDetectsRuntimeMismatch(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	repoRoot := mustPrepareDoctorRepoWithYAML(t, ""+
+		"project_slug: acme-shop\n"+
+		"runtime_mode: distributed-mesh\n\n"+
+		"deployment_binding:\n"+
+		"  target_ref: prod-solo-1\n\n"+
+		"services:\n"+
+		"  - name: api\n"+
+		"    path: apps/api\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
+	restore := mustChdir(t, repoRoot)
+	defer restore()
+
+	store := mustTestStore(t)
+	mustSeedCredential(t, store, credentials.Record{
+		Token:       "lazyops_pat_mock_secret_value",
+		UserID:      "usr_demo",
+		DisplayName: "CLI Demo User",
+	})
+
+	runtime := &Runtime{
+		Output:         ui.NewConsoleOutput(&stdout, &stderr),
+		SpinnerFactory: ui.NewSpinnerFactory(&stderr),
+		Transport:      transport.NewMockTransport(transport.DefaultFixtures()),
+		Credentials:    store,
+	}
+
+	root := NewRootCommand()
+	if err := root.Execute(context.Background(), runtime, []string{"status"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), `control-plane: failed (binding "prod-solo-1" uses runtime mode "standalone"`) {
+		t.Fatalf("expected control-plane runtime mismatch failure, got stderr %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `deployment state: blocked (binding "prod-solo-1" uses runtime mode "standalone"`) {
+		t.Fatalf("expected blocked deployment on runtime mismatch, got stderr %q", stderr.String())
 	}
 }
 
@@ -2720,7 +2942,11 @@ func mustPrepareDoctorRepo(t *testing.T) string {
 		"  target_ref: prod-solo-1\n\n"+
 		"services:\n"+
 		"  - name: api\n"+
-		"    path: apps/api\n")
+		"    path: apps/api\n\n"+
+		"compatibility_policy:\n"+
+		"  env_injection: true\n"+
+		"  managed_credentials: true\n"+
+		"  localhost_rescue: true\n")
 }
 
 func mustPrepareDoctorRepoWithYAML(t *testing.T, lazyopsYAML string) string {

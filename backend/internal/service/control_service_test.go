@@ -239,3 +239,21 @@ func TestSerializeOperatorEvent(t *testing.T) {
 		t.Fatal("expected occurred_at to be set")
 	}
 }
+
+func TestSerializeOperatorEventCarriesCorrelationID(t *testing.T) {
+	data, err := serializeOperatorEvent("trace.recorded", map[string]any{
+		"correlation_id": "corr_123",
+		"trace_id":       "trc_123",
+	})
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded["correlation_id"] != "corr_123" {
+		t.Fatalf("expected correlation_id corr_123, got %v", decoded["correlation_id"])
+	}
+}

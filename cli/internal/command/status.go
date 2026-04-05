@@ -11,6 +11,7 @@ import (
 
 	"lazyops-cli/internal/contracts"
 	"lazyops-cli/internal/credentials"
+	"lazyops-cli/internal/lazyyaml"
 	"lazyops-cli/internal/repo"
 	lazystatus "lazyops-cli/internal/status"
 )
@@ -37,16 +38,17 @@ func runStatus(ctx context.Context, runtime *Runtime, args []string, credential 
 		return fmt.Errorf("could not determine the repository root. next: verify the working tree is readable and retry `lazyops status`: %w", err)
 	}
 
-	metadata, err := readDoctorMetadata(repoRoot, nil)
+	document, err := readDoctorDocument(repoRoot, nil)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("lazyops.yaml was not found at the repo root. next: run `lazyops init` before `lazyops status`")
 		}
 		return fmt.Errorf("could not read lazyops.yaml. next: repair the deploy contract or rerun `lazyops init`: %w", err)
 	}
-	if err := metadata.ValidateDoctorContract(); err != nil {
+	if err := document.Validate(); err != nil {
 		return fmt.Errorf("lazyops.yaml is incomplete. next: repair the deploy contract or rerun `lazyops init`: %w", err)
 	}
+	metadata := doctorMetadataFromDocument(document)
 
 	projectsResponse, err := fetchProjects(ctx, runtime, credential)
 	if err != nil {
@@ -84,11 +86,47 @@ func runStatus(ctx context.Context, runtime *Runtime, args []string, credential 
 		}
 	}
 
+	validationState := lazystatus.ValidationState{
+		State:   "unavailable",
+		Summary: "control-plane validation was not available; status is using adapter composition",
+	}
+	if validation, validationErr := fetchValidateLazyopsYAML(ctx, runtime, credential, project.ID, document); validationErr == nil {
+		selectedBinding = &validation.DeploymentBinding
+		targetSnapshot = &lazystatus.TargetSnapshot{
+			ID:     validation.TargetSummary.ID,
+			Kind:   validation.TargetSummary.Kind,
+			Name:   validation.TargetSummary.Name,
+			Status: validation.TargetSummary.Status,
+		}
+		validationState = lazystatus.ValidationState{
+			State:   "validated",
+			Summary: fmt.Sprintf("binding %s and target %s %s [%s] validated", validation.DeploymentBinding.Name, validation.TargetSummary.Kind, validation.TargetSummary.Name, validation.TargetSummary.Status),
+		}
+	} else {
+		summary, nextStep := splitNextStep(validationErr.Error())
+		switch {
+		case statusValidationFallback(validationErr):
+			if strings.TrimSpace(summary) != "" {
+				validationState.Summary = summary
+			}
+			if strings.TrimSpace(nextStep) != "" {
+				validationState.NextStep = nextStep
+			}
+		default:
+			validationState = lazystatus.ValidationState{
+				State:    "failed",
+				Summary:  summary,
+				NextStep: nextStep,
+			}
+		}
+	}
+
 	summary, err := lazystatus.BuildAdapterSummary(lazystatus.Input{
-		Contract: metadata,
-		Project:  project,
-		Binding:  selectedBinding,
-		Target:   targetSnapshot,
+		Contract:   metadata,
+		Project:    project,
+		Binding:    selectedBinding,
+		Target:     targetSnapshot,
+		Validation: validationState,
 	})
 	if err != nil {
 		return fmt.Errorf("could not build the status summary. next: verify lazyops.yaml and backend contracts, then retry `lazyops status`: %w", err)
@@ -116,6 +154,17 @@ func printStatusSummary(runtime *Runtime, summary lazystatus.Summary) {
 	runtime.Output.Info("project: %s (%s)", summary.Project.Name, summary.Project.Slug)
 	runtime.Output.Info("runtime mode: %s", summary.RuntimeMode)
 	runtime.Output.Info("declared services: %d", summary.DeclaredServices)
+	switch summary.Validation.State {
+	case "validated":
+		runtime.Output.Success("control-plane: %s", summary.Validation.Detail())
+	case "failed":
+		runtime.Output.Error("control-plane: %s", summary.Validation.Detail())
+	default:
+		runtime.Output.Warn("control-plane: %s", summary.Validation.Detail())
+		if strings.TrimSpace(summary.Validation.NextStep) != "" {
+			runtime.Output.Info("control-plane next: %s", summary.Validation.NextStep)
+		}
+	}
 	runtime.Output.Info("binding state: %s", summary.Binding.Detail())
 	runtime.Output.Info("topology state: %s", summary.Topology.Detail())
 
@@ -130,4 +179,41 @@ func printStatusSummary(runtime *Runtime, summary lazystatus.Summary) {
 
 	runtime.Output.Info("rollout: %s", summary.Deployment.Rollout)
 	runtime.Output.Info("next: %s", summary.Deployment.NextStep)
+}
+
+func doctorMetadataFromDocument(document lazyyaml.Document) lazyyaml.DoctorMetadata {
+	metadata := lazyyaml.DoctorMetadata{
+		ProjectSlug:        document.ProjectSlug,
+		RuntimeMode:        document.RuntimeMode,
+		TargetRef:          document.DeploymentBinding.TargetRef,
+		Services:           make([]lazyyaml.DoctorService, 0, len(document.Services)),
+		DependencyBindings: make([]lazyyaml.DoctorDependencyBinding, 0, len(document.DependencyBindings)),
+	}
+	for _, service := range document.Services {
+		metadata.Services = append(metadata.Services, lazyyaml.DoctorService{
+			Name: service.Name,
+			Path: service.Path,
+		})
+	}
+	for _, binding := range document.DependencyBindings {
+		metadata.DependencyBindings = append(metadata.DependencyBindings, lazyyaml.DoctorDependencyBinding{
+			Service:       binding.Service,
+			Alias:         binding.Alias,
+			TargetService: binding.TargetService,
+			Protocol:      binding.Protocol,
+			LocalEndpoint: binding.LocalEndpoint,
+		})
+	}
+	return metadata
+}
+
+func statusValidationFallback(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "request failed with status 0") ||
+		strings.Contains(message, "fixture not found") ||
+		strings.Contains(message, "internal_error") ||
+		strings.Contains(message, "validation route")
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -126,9 +127,42 @@ func (h *OperatorStreamHub) run() {
 }
 
 func serializeOperatorEvent(eventType string, payload any) ([]byte, error) {
-	return json.Marshal(map[string]any{
+	event := map[string]any{
 		"type":        eventType,
 		"payload":     payload,
 		"occurred_at": time.Now().UTC(),
-	})
+	}
+	if correlationID := extractOperatorCorrelationID(payload); correlationID != "" {
+		event["correlation_id"] = correlationID
+	}
+	return json.Marshal(event)
+}
+
+func extractOperatorCorrelationID(payload any) string {
+	if payload == nil {
+		return ""
+	}
+	switch value := payload.(type) {
+	case map[string]any:
+		for _, key := range []string{"correlation_id", "x_correlation_id"} {
+			if raw, ok := value[key].(string); ok && raw != "" {
+				return raw
+			}
+		}
+	}
+
+	ref := reflect.ValueOf(payload)
+	if ref.Kind() == reflect.Pointer && !ref.IsNil() {
+		ref = ref.Elem()
+	}
+	if ref.Kind() != reflect.Struct {
+		return ""
+	}
+	for _, fieldName := range []string{"CorrelationID", "XCorrelationID"} {
+		field := ref.FieldByName(fieldName)
+		if field.IsValid() && field.Kind() == reflect.String && field.String() != "" {
+			return field.String()
+		}
+	}
+	return ""
 }

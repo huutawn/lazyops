@@ -57,5 +57,9 @@ func Migrate(db *gorm.DB) error {
 		&models.PreviewEnvironment{},
 		&models.TunnelSession{},
 		&models.TopologyState{},
+		&models.TraceSummary{},
+		&models.TopologyNode{},
+		&models.TopologyEdge{},
+		&models.LogStreamEntry{},
 	)
 }
