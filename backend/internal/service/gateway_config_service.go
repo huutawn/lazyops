@@ -49,6 +49,7 @@ type GatewayConfigService struct {
 	routes         PublicRouteStore
 	gatewayIntents GatewayConfigIntentStore
 	releases       ReleaseHistoryStore
+	instances      InstanceStore
 }
 
 type PublicRouteStore interface {
@@ -78,6 +79,7 @@ func NewGatewayConfigService(
 	routes PublicRouteStore,
 	gatewayIntents GatewayConfigIntentStore,
 	releases ReleaseHistoryStore,
+	instances InstanceStore,
 ) *GatewayConfigService {
 	return &GatewayConfigService{
 		revisions:      revisions,
@@ -86,6 +88,7 @@ func NewGatewayConfigService(
 		routes:         routes,
 		gatewayIntents: gatewayIntents,
 		releases:       releases,
+		instances:      instances,
 	}
 }
 
@@ -158,7 +161,7 @@ func (s *GatewayConfigService) GenerateGatewayConfig(ctx context.Context, projec
 
 	for _, svc := range compiled.Services {
 		if svc.Public && !routeExists(routeConfigs, svc.Name) {
-			domain := fmt.Sprintf("%s.%s.sslip.io", svc.Name, strings.ReplaceAll(publicIPFromPlacement(compiled.PlacementAssignments, svc.Name), ".", "-"))
+			domain := fmt.Sprintf("%s.%s.sslip.io", svc.Name, strings.ReplaceAll(publicIPFromPlacement(ctx, s.instances, compiled.PlacementAssignments, svc.Name), ".", "-"))
 			routeConfigs = append(routeConfigs, RouteConfig{
 				Domain:       domain,
 				ServiceName:  svc.Name,
@@ -462,9 +465,15 @@ func extractPortFromHealthcheck(hc map[string]any) int {
 	return 8080
 }
 
-func publicIPFromPlacement(assignments []PlacementAssignmentRecord, serviceName string) string {
+func publicIPFromPlacement(ctx context.Context, instances InstanceStore, assignments []PlacementAssignmentRecord, serviceName string) string {
 	for _, a := range assignments {
 		if a.ServiceName == serviceName {
+			if a.TargetID != "" && instances != nil {
+				instance, err := instances.GetByID(a.TargetID)
+				if err == nil && instance != nil && instance.PublicIP != nil && *instance.PublicIP != "" {
+					return *instance.PublicIP
+				}
+			}
 			return "127.0.0.1"
 		}
 	}

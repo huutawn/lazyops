@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"lazyops-server/internal/runtime"
 	"lazyops-server/pkg/utils"
@@ -19,7 +20,8 @@ var (
 )
 
 type RolloutCommandDispatcher interface {
-	DispatchCommand(ctx context.Context, agentID string, cmd runtime.AgentCommand) error
+	DispatchCommand(ctx context.Context, agentID string, cmd runtime.AgentCommand) (*runtime.CommandResult, error)
+	WaitForCommand(ctx context.Context, requestID string) (*TrackedCommand, error)
 }
 
 type HealthGateEvaluator func(ctx context.Context, projectID, deploymentID, revisionID string) (*HealthGateResult, error)
@@ -167,11 +169,46 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 
 	for _, step := range plan.Steps {
 		cmd := enrichRolloutCommand(step.Command, projectID, revision.ID, correlationID)
-		if err := s.dispatcher.DispatchCommand(ctx, agentID, cmd); err != nil {
+		cmdResult, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd)
+		if err != nil {
 			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
 			return result, err
 		}
 		result.DispatchedCommands = append(result.DispatchedCommands, cmd.Type)
+
+		waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Minute)
+		tracked, waitErr := s.dispatcher.WaitForCommand(waitCtx, cmdResult.RequestID)
+		waitCancel()
+
+		if waitErr != nil {
+			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
+			_, _ = s.planner.RecordIncident(projectID, deployment.ID, revision.ID, IncidentKindHealthGateTimeout, IncidentSeverityCritical, "command execution timed out or failed", map[string]any{
+				"command_type": cmd.Type,
+				"request_id":   cmdResult.RequestID,
+				"error":        waitErr.Error(),
+			}, "command_dispatch")
+			rollbackResult, rollbackErr := s.rollbackDeployment(ctx, projectID, deployment.ID, revision.ID, agentID, correlationID, result)
+			result.Rollback = rollbackResult
+			if rollbackErr != nil {
+				return result, rollbackErr
+			}
+			return result, fmt.Errorf("command %q failed: %w", cmd.Type, waitErr)
+		}
+
+		if tracked.State == CommandStateFailed {
+			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
+			_, _ = s.planner.RecordIncident(projectID, deployment.ID, revision.ID, IncidentKindUnhealthyCandidate, IncidentSeverityCritical, "command execution failed", map[string]any{
+				"command_type": cmd.Type,
+				"request_id":   cmdResult.RequestID,
+				"error":        tracked.Error,
+			}, "command_dispatch")
+			rollbackResult, rollbackErr := s.rollbackDeployment(ctx, projectID, deployment.ID, revision.ID, agentID, correlationID, result)
+			result.Rollback = rollbackResult
+			if rollbackErr != nil {
+				return result, rollbackErr
+			}
+			return result, fmt.Errorf("command %q failed: %s", cmd.Type, tracked.Error)
+		}
 
 		switch cmd.Type {
 		case runtime.CommandTypeStartReleaseCandidate:
@@ -246,7 +283,7 @@ func (s *RolloutExecutionService) rollbackDeployment(ctx context.Context, projec
 			"revision_id":   revisionID,
 		},
 	}, projectID, revisionID, correlationID)
-	if err := s.dispatcher.DispatchCommand(ctx, agentID, cmd); err != nil {
+	if _, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd); err != nil {
 		_ = s.failDeployment(projectID, deploymentID, revisionID)
 		return nil, err
 	}
@@ -272,7 +309,7 @@ func (s *RolloutExecutionService) dispatchGarbageCollect(ctx context.Context, pr
 			"revision_id": revisionID,
 		},
 	}, projectID, revisionID, correlationID)
-	if err := s.dispatcher.DispatchCommand(ctx, agentID, cmd); err != nil {
+	if _, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd); err != nil {
 		return err
 	}
 	result.DispatchedCommands = append(result.DispatchedCommands, cmd.Type)

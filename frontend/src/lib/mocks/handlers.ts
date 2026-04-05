@@ -58,4 +58,22 @@ export const mockHandlers = [
       data: { nodes: topologyNodes, edges: topologyEdges },
     });
   }),
+
+  // Auth Mocks (mocking the Next.js API Routes / BFF)
+  http.post('/api/auth/login', () => {
+    document.cookie = 'lazyops_session=mock-token; path=/; max-age=86400';
+    const user = { id: 'usr-123', email: 'operator@lazyops.io', display_name: 'Lead Operator', role: 'admin' };
+    return HttpResponse.json({ user });
+  }),
+
+  http.post('/api/auth/register', () => {
+    document.cookie = 'lazyops_session=mock-token; path=/; max-age=86400';
+    const user = { id: 'usr-123', email: 'operator@lazyops.io', display_name: 'Lead Operator', role: 'admin' };
+    return HttpResponse.json({ user });
+  }),
+
+  http.get('/api/auth/me', () => {
+    const user = { id: 'usr-123', email: 'operator@lazyops.io', display_name: 'Lead Operator', role: 'admin' };
+    return HttpResponse.json({ user });
+  }),
 ];

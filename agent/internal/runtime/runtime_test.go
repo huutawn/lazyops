@@ -3976,3 +3976,154 @@ func TestReportMetricRollupHandlerWithNodeMetrics(t *testing.T) {
 		t.Fatalf("expected ram count >= 1 from node metrics, got %d", loaded.RAM.Count)
 	}
 }
+
+func TestNodeAgentGuardBlocksWorkloadHandlers(t *testing.T) {
+	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
+	service.WithNodeAgentGuard(NewNodeAgentGuard(nil, nil, contracts.RuntimeModeDistributedK3s))
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	envelope := contracts.CommandEnvelope{
+		Type:          contracts.CommandPrepareReleaseWorkspace,
+		RequestID:     "req_guard",
+		CorrelationID: "corr_guard",
+		AgentID:       "agt_node",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}
+
+	result := service.handlePrepareReleaseWorkspace(context.Background(), envelope)
+	if result.Error == nil {
+		t.Fatal("expected prepare_release_workspace to be blocked by NodeAgentGuard")
+	}
+	if result.Error.Code != "node_agent_guard_blocked" {
+		t.Fatalf("expected node_agent_guard_blocked error, got %s", result.Error.Code)
+	}
+}
+
+func TestNodeAgentGuardAllowsTelemetryHandlers(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithNodeAgentGuard(NewNodeAgentGuard(nil, nil, contracts.RuntimeModeStandalone))
+
+	payload := ReportLogBatchPayload{
+		ProjectID: "prj_123",
+		BindingID: "bind_123",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	envelope := contracts.CommandEnvelope{
+		Type:          contracts.CommandReportLogBatch,
+		RequestID:     "req_telemetry",
+		CorrelationID: "corr_telemetry",
+		AgentID:       "agt_node",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}
+
+	result := service.handleReportLogBatch(context.Background(), envelope)
+	if result.Error != nil && result.Error.Code == "node_agent_guard_blocked" {
+		t.Fatal("expected report_log_batch to pass guard check in standalone mode")
+	}
+	if result.Error == nil {
+		t.Fatal("expected log_collector_not_configured error since collector is nil")
+	}
+	if result.Error.Code != "log_collector_not_configured" {
+		t.Fatalf("expected log_collector_not_configured error, got %s", result.Error.Code)
+	}
+}
+
+func TestNodeAgentGuardNotInstantiatedInStandaloneMode(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+
+	if service.nodeAgentGuard != nil {
+		t.Fatal("expected nodeAgentGuard to be nil when not explicitly set")
+	}
+}
+
+func TestNodeAgentGuardWithBuilder(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	guard := NewNodeAgentGuard(nil, nil, contracts.RuntimeModeDistributedK3s)
+	service.WithNodeAgentGuard(guard)
+
+	if service.nodeAgentGuard != guard {
+		t.Fatal("expected nodeAgentGuard to be set via builder")
+	}
+}
+
+func TestNodeAgentGuardBlocksSleepWakeInK3sMode(t *testing.T) {
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service.WithNodeAgentGuard(NewNodeAgentGuard(nil, nil, contracts.RuntimeModeDistributedK3s))
+	service.WithAutosleepManager(NewAutosleepManager(nil, AutosleepConfig{}))
+
+	payload := SleepServicePayload{
+		ProjectID:   "prj_123",
+		BindingID:   "bind_123",
+		RevisionID:  "rev_123",
+		RuntimeMode: contracts.RuntimeModeStandalone,
+		ServiceName: "web",
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	envelope := contracts.CommandEnvelope{
+		Type:          contracts.CommandSleepService,
+		RequestID:     "req_sleep_guard",
+		CorrelationID: "corr_sleep_guard",
+		AgentID:       "agt_node",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       raw,
+	}
+
+	result := service.handleSleepService(context.Background(), envelope)
+	if result.Error == nil {
+		t.Fatal("expected sleep_service to be blocked by NodeAgentGuard")
+	}
+	if result.Error.Code != "node_agent_guard_blocked" {
+		t.Fatalf("expected node_agent_guard_blocked error, got %s", result.Error.Code)
+	}
+
+	wakePayload := WakeServicePayload{
+		ProjectID:         "prj_123",
+		BindingID:         "bind_123",
+		RevisionID:        "rev_123",
+		RuntimeMode:       contracts.RuntimeModeStandalone,
+		ServiceName:       "web",
+		ScaleToZeroPolicy: contracts.ScaleToZeroPolicy{},
+	}
+	wakeRaw, err := json.Marshal(wakePayload)
+	if err != nil {
+		t.Fatalf("marshal wake payload: %v", err)
+	}
+
+	wakeEnvelope := contracts.CommandEnvelope{
+		Type:          contracts.CommandWakeService,
+		RequestID:     "req_wake_guard",
+		CorrelationID: "corr_wake_guard",
+		AgentID:       "agt_node",
+		Source:        contracts.EnvelopeSourceBackend,
+		OccurredAt:    time.Now().UTC(),
+		Payload:       wakeRaw,
+	}
+
+	result = service.handleWakeService(context.Background(), wakeEnvelope)
+	if result.Error == nil {
+		t.Fatal("expected wake_service to be blocked by NodeAgentGuard")
+	}
+	if result.Error.Code != "node_agent_guard_blocked" {
+		t.Fatalf("expected node_agent_guard_blocked error, got %s", result.Error.Code)
+	}
+}

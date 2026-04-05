@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"lazyops-agent/internal/contracts"
 )
 
 func testGatewayHoldManager() *GatewayHoldManager {
@@ -196,5 +198,49 @@ func TestGatewayHoldManagerPersistHoldState(t *testing.T) {
 	}
 	if len(loaded["api"]) != 1 {
 		t.Fatalf("expected 1 hold for api, got %d", len(loaded["api"]))
+	}
+}
+
+func TestGatewayHoldManagerBackgroundLoopStartsAndStops(t *testing.T) {
+	mgr := NewGatewayHoldManager(nil, GatewayHoldConfig{})
+	mgr.StartBackgroundLoop()
+	mgr.StopBackgroundLoop()
+}
+
+func TestGatewayHoldManagerHoldTimeoutFromPolicy(t *testing.T) {
+	mgr := NewGatewayHoldManager(nil, GatewayHoldConfig{DefaultHoldTimeout: 30 * time.Second})
+
+	tests := []struct {
+		policy   contracts.ScaleToZeroPolicy
+		expected time.Duration
+	}{
+		{contracts.ScaleToZeroPolicy{GatewayHoldTimeout: "1m"}, 1 * time.Minute},
+		{contracts.ScaleToZeroPolicy{GatewayHoldTimeout: "invalid"}, 30 * time.Second},
+		{contracts.ScaleToZeroPolicy{GatewayHoldTimeout: ""}, 30 * time.Second},
+		{contracts.ScaleToZeroPolicy{}, 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		got := mgr.HoldTimeoutFromPolicy(tt.policy)
+		if got != tt.expected {
+			t.Errorf("HoldTimeoutFromPolicy(%v) = %v, want %v", tt.policy, got, tt.expected)
+		}
+	}
+}
+
+func TestGatewayHoldManagerBackgroundLoopCollectsExpired(t *testing.T) {
+	fakeNow := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mgr := NewGatewayHoldManager(nil, GatewayHoldConfig{DefaultHoldTimeout: 100 * time.Millisecond})
+	mgr.now = func() time.Time { return fakeNow }
+
+	_, _ = mgr.HoldRequest("web", "req_1", "corr_1", 50*time.Millisecond)
+
+	fakeNow = fakeNow.Add(60 * time.Millisecond)
+	expired := mgr.CollectExpiredHolds()
+	if len(expired) != 1 {
+		t.Fatalf("expected 1 expired hold, got %d", len(expired))
+	}
+	if expired[0].Status != "expired" {
+		t.Fatalf("expected expired status, got %s", expired[0].Status)
 	}
 }

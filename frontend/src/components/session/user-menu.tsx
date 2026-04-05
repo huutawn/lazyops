@@ -1,5 +1,6 @@
 'use client';
 
+import { LogOut } from 'lucide-react';
 import { useSession, useLogout } from '@/lib/auth/auth-hooks';
 import { StatusBadge } from '@/components/primitives/status-badge';
 
@@ -10,19 +11,27 @@ export function UserMenu() {
   if (!session) return null;
 
   return (
-    <div className="flex items-center gap-3">
-      <StatusBadge label={session.role} variant="info" size="sm" dot={false} />
-      <div className="flex flex-col">
-        <span className="text-sm font-medium text-lazyops-text">{session.display_name}</span>
-        <span className="text-xs text-lazyops-muted">{session.email}</span>
+    <div className="flex items-center gap-4">
+      <div className="hidden lg:flex items-center gap-3 border-r border-border/50 pr-4">
+        <div className="flex flex-col items-end">
+          <span className="text-sm font-semibold tracking-tight text-foreground">{session.display_name}</span>
+          <span className="text-xs text-muted-foreground">{session.email}</span>
+        </div>
+        <div className="flex size-9 items-center justify-center rounded-full bg-primary/20 text-primary font-bold shadow-inner">
+          {session.display_name.charAt(0).toUpperCase()}
+        </div>
       </div>
+      
+      <StatusBadge label={session.role} variant="info" size="sm" dot={true} className="hidden sm:inline-flex" />
+      
       <button
         type="button"
-        className="ml-2 rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 px-3 py-1.5 text-xs text-lazyops-muted transition-colors hover:text-lazyops-text disabled:opacity-50"
+        className="group flex size-9 items-center justify-center rounded-lg border border-border/50 bg-card transition-all hover:bg-destructive/10 hover:border-destructive/30 hover:text-destructive disabled:opacity-50 shadow-sm"
         onClick={() => logout.mutate()}
         disabled={logout.isPending}
+        title="Sign out"
       >
-        {logout.isPending ? 'Signing out…' : 'Sign out'}
+        <LogOut className="size-4 text-muted-foreground transition-colors group-hover:text-destructive" />
       </button>
     </div>
   );

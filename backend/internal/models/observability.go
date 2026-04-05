@@ -8,6 +8,7 @@ type LogStreamQuery struct {
 	Level            string
 	Contains         string
 	Node             string
+	CorrelationID    string
 	Limit            int
 	BeforeOccurredAt time.Time
 	BeforeID         string
@@ -70,18 +71,19 @@ type MetricRollup struct {
 }
 
 type LogStreamEntry struct {
-	ID          string    `json:"id" gorm:"primaryKey;size:64"`
-	ProjectID   string    `json:"project_id" gorm:"size:64;not null;index:idx_log_stream_project_service_time,priority:1"`
-	BindingID   string    `json:"binding_id" gorm:"size:64;not null;index"`
-	RevisionID  string    `json:"revision_id" gorm:"size:64;index"`
-	ServiceName string    `json:"service_name" gorm:"size:255;not null;index:idx_log_stream_project_service_time,priority:2"`
-	Source      string    `json:"source" gorm:"size:255;not null"`
-	Level       string    `json:"level" gorm:"size:32;not null;index"`
-	Node        string    `json:"node" gorm:"size:255;index"`
-	Message     string    `json:"message" gorm:"type:text;not null"`
-	Excerpt     string    `json:"excerpt" gorm:"type:text"`
-	LabelsJSON  string    `json:"labels_json" gorm:"type:jsonb;not null;default:'{}'"`
-	OccurredAt  time.Time `json:"occurred_at" gorm:"not null;index:idx_log_stream_project_service_time,priority:3,sort:desc"`
-	CollectedAt time.Time `json:"collected_at" gorm:"not null"`
-	CreatedAt   time.Time `json:"created_at" gorm:"index"`
+	ID            string    `json:"id" gorm:"primaryKey;size:64"`
+	ProjectID     string    `json:"project_id" gorm:"size:64;not null;index:idx_log_stream_project_service_time,priority:1"`
+	BindingID     string    `json:"binding_id" gorm:"size:64;not null;index"`
+	RevisionID    string    `json:"revision_id" gorm:"size:64;index"`
+	ServiceName   string    `json:"service_name" gorm:"size:255;not null;index:idx_log_stream_project_service_time,priority:2"`
+	Source        string    `json:"source" gorm:"size:255;not null"`
+	Level         string    `json:"level" gorm:"size:32;not null;index"`
+	Node          string    `json:"node" gorm:"size:255;index"`
+	CorrelationID string    `json:"correlation_id" gorm:"size:255;index"`
+	Message       string    `json:"message" gorm:"type:text;not null"`
+	Excerpt       string    `json:"excerpt" gorm:"type:text"`
+	LabelsJSON    string    `json:"labels_json" gorm:"type:jsonb;not null;default:'{}'"`
+	OccurredAt    time.Time `json:"occurred_at" gorm:"not null;index:idx_log_stream_project_service_time,priority:3,sort:desc"`
+	CollectedAt   time.Time `json:"collected_at" gorm:"not null"`
+	CreatedAt     time.Time `json:"created_at" gorm:"index"`
 }

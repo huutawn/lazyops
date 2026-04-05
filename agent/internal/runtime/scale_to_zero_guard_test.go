@@ -458,3 +458,53 @@ func TestScaleToZeroGuardCanBeRegistered(t *testing.T) {
 		t.Fatal("expected wake_service handler to be registered")
 	}
 }
+
+func TestScaleToZeroGuardHoldIncomingRequest(t *testing.T) {
+	guard := testScaleToZeroGuard()
+
+	req, err := guard.HoldIncomingRequest("web", "req_1", "corr_1", contracts.ScaleToZeroPolicy{})
+	if err != nil {
+		t.Fatalf("hold incoming request: %v", err)
+	}
+	if req.RequestID != "req_1" {
+		t.Fatalf("expected request id req_1, got %s", req.RequestID)
+	}
+	if req.Status != "held" {
+		t.Fatalf("expected status held, got %s", req.Status)
+	}
+}
+
+func TestScaleToZeroGuardHoldIncomingRequestUsesPolicyTimeout(t *testing.T) {
+	guard := testScaleToZeroGuard()
+
+	req, err := guard.HoldIncomingRequest("web", "req_1", "corr_1", contracts.ScaleToZeroPolicy{
+		GatewayHoldTimeout: "5m",
+	})
+	if err != nil {
+		t.Fatalf("hold incoming request: %v", err)
+	}
+
+	expectedExpires := req.HeldAt.Add(5 * time.Minute)
+	if !req.ExpiresAt.Equal(expectedExpires) {
+		t.Fatalf("expected expires at %v, got %v", expectedExpires, req.ExpiresAt)
+	}
+}
+
+func TestScaleToZeroGuardSleepServiceResumesHeldRequests(t *testing.T) {
+	guard := testScaleToZeroGuard()
+
+	_, _ = guard.HoldIncomingRequest("web", "req_1", "corr_1", contracts.ScaleToZeroPolicy{})
+
+	_, err := guard.SleepService("web", "rev_1", contracts.RuntimeModeStandalone)
+	if err != nil {
+		t.Fatalf("sleep service: %v", err)
+	}
+
+	_, active, _, resumed := guard.gatewayHold.Stats()
+	if active != 0 {
+		t.Fatalf("expected 0 active holds after sleep, got %d", active)
+	}
+	if resumed != 1 {
+		t.Fatalf("expected 1 resumed hold after sleep, got %d", resumed)
+	}
+}

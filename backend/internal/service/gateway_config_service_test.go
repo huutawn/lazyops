@@ -150,8 +150,9 @@ func newTestGatewayConfigService(
 	routeStore PublicRouteStore,
 	intentStore GatewayConfigIntentStore,
 	releaseStore ReleaseHistoryStore,
+	instances InstanceStore,
 ) *GatewayConfigService {
-	return NewGatewayConfigService(revisionStore, deploymentStore, bindingStore, routeStore, intentStore, releaseStore)
+	return NewGatewayConfigService(revisionStore, deploymentStore, bindingStore, routeStore, intentStore, releaseStore, instances)
 }
 
 func TestGatewayConfigServiceAllocateMagicDomainSuccessSSLIP(t *testing.T) {
@@ -162,6 +163,7 @@ func TestGatewayConfigServiceAllocateMagicDomainSuccessSSLIP(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	domain, err := svc.AllocateMagicDomain("prj_123", "api", "203.0.113.10", "sslip.io")
@@ -183,6 +185,7 @@ func TestGatewayConfigServiceAllocateMagicDomainDefaultSSLIP(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	domain, err := svc.AllocateMagicDomain("prj_123", "api", "203.0.113.10", "")
@@ -204,6 +207,7 @@ func TestGatewayConfigServiceAllocateMagicDomainFallbackNipIO(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	domain, err := svc.AllocateMagicDomain("prj_123", "api", "203.0.113.10", "nip.io")
@@ -225,6 +229,7 @@ func TestGatewayConfigServiceRejectsPrivateIPForMagicDomain(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	privateIPs := []string{"192.168.1.1", "10.0.0.1", "172.16.0.1", "127.0.0.1"}
@@ -244,6 +249,7 @@ func TestGatewayConfigServiceRejectsInvalidIPForMagicDomain(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	_, err := svc.AllocateMagicDomain("prj_123", "api", "not-an-ip", "")
@@ -299,6 +305,7 @@ func TestGatewayConfigServiceGenerateGatewayConfigSuccess(t *testing.T) {
 		routeStore,
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	config, err := svc.GenerateGatewayConfig(context.Background(), "prj_123", "dep_123", "rev_123")
@@ -354,6 +361,7 @@ func TestGatewayConfigServiceDispatchGatewayConfigSuccess(t *testing.T) {
 		newFakePublicRouteStore(),
 		intentStore,
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	result, err := svc.DispatchGatewayConfig(context.Background(), "prj_123", "dep_123", "rev_123")
@@ -383,6 +391,7 @@ func TestGatewayConfigServiceRecordReleaseSuccess(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		releaseStore,
+		nil,
 	)
 
 	record, err := svc.RecordRelease("prj_123", "dep_123", "rev_123", "abc123", "push", "standalone", ReleaseStatusDeployed)
@@ -439,6 +448,7 @@ func TestGatewayConfigServiceListReleaseHistory(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		releaseStore,
+		nil,
 	)
 
 	history, err := svc.ListReleaseHistory("prj_123", 10)
@@ -474,6 +484,7 @@ func TestGatewayConfigServiceGetReleaseDetail(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		releaseStore,
+		nil,
 	)
 
 	detail, err := svc.GetReleaseDetail("prj_123", "rel_123")
@@ -500,6 +511,7 @@ func TestGatewayConfigServiceGetReleaseDetailNotFound(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	_, err := svc.GetReleaseDetail("prj_123", "rel_missing")
@@ -518,6 +530,7 @@ func TestGatewayConfigServiceCreatePublicRoute(t *testing.T) {
 		routeStore,
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	route, err := svc.CreatePublicRoute("prj_123", "dep_123", "api", "api.203-0-113-10.sslip.io", DomainKindMagic, "/", 8080, true)
@@ -550,6 +563,7 @@ func TestGatewayConfigServiceRejectsEmptyDomain(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+		nil,
 	)
 
 	_, err := svc.CreatePublicRoute("prj_123", "dep_123", "api", "", DomainKindMagic, "/", 8080, true)

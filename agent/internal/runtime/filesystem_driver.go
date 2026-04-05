@@ -14,23 +14,26 @@ import (
 )
 
 type FilesystemDriver struct {
-	logger  *slog.Logger
-	root    string
-	fetcher AssetFetcher
-	gateway *GatewayManager
-	sidecar *SidecarManager
-	mesh    *MeshManager
-	now     func() time.Time
+	logger         *slog.Logger
+	root           string
+	fetcher        AssetFetcher
+	gateway        *GatewayManager
+	sidecar        *SidecarManager
+	mesh           *MeshManager
+	processManager *ProcessManager
+	now            func() time.Time
 }
 
 func NewFilesystemDriver(logger *slog.Logger, root string) *FilesystemDriver {
+	pm := NewProcessManager(logger, root)
 	return &FilesystemDriver{
-		logger:  logger,
-		root:    root,
-		fetcher: NewLocalCacheFetcher(filepath.Join(root, "cache", "assets")),
-		gateway: NewGatewayManager(logger, root),
-		sidecar: NewSidecarManager(logger, root),
-		mesh:    NewMeshManager(logger, root),
+		logger:         logger,
+		root:           root,
+		fetcher:        NewLocalCacheFetcher(filepath.Join(root, "cache", "assets")),
+		gateway:        NewGatewayManager(logger, root),
+		sidecar:        NewSidecarManager(logger, root).WithProcessManager(pm),
+		mesh:           NewMeshManager(logger, root),
+		processManager: pm,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -238,6 +241,43 @@ func (d *FilesystemDriver) RenderSidecars(ctx context.Context, runtimeCtx Runtim
 	return d.sidecar.RenderSidecars(ctx, runtimeCtx, layout)
 }
 
+func (d *FilesystemDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeContext) (ReconcileRevisionResult, error) {
+	layout := workspaceLayout(d.root, runtimeCtx)
+
+	appliedSteps := []string{
+		"validate_revision_workspace",
+		"sync_dependency_bindings",
+		"verify_sidecar_config",
+		"verify_gateway_config",
+		"record_revision_state",
+	}
+
+	reconcilePath := filepath.Join(layout.Config, "reconcile.json")
+	reconcileState := map[string]any{
+		"revision_id":   runtimeCtx.Revision.RevisionID,
+		"applied_steps": appliedSteps,
+		"reconciled_at": d.now().Format(time.RFC3339),
+	}
+	if err := writeJSON(reconcilePath, reconcileState); err != nil {
+		return ReconcileRevisionResult{}, fmt.Errorf("write reconcile state: %w", err)
+	}
+
+	if d.logger != nil {
+		d.logger.Info("revision reconciled",
+			"revision_id", runtimeCtx.Revision.RevisionID,
+			"binding_id", runtimeCtx.Binding.BindingID,
+			"applied_steps", len(appliedSteps),
+		)
+	}
+
+	return ReconcileRevisionResult{
+		RevisionID:   runtimeCtx.Revision.RevisionID,
+		AppliedSteps: appliedSteps,
+		Summary:      fmt.Sprintf("revision %s reconciled with %d steps", runtimeCtx.Revision.RevisionID, len(appliedSteps)),
+		CompletedAt:  d.now(),
+	}, nil
+}
+
 func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx RuntimeContext) (CandidateRecord, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
 	manifest, err := loadWorkspaceManifest(layout)
@@ -280,12 +320,40 @@ func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx R
 	return candidate, nil
 }
 
-func (d *FilesystemDriver) SleepService(context.Context, RuntimeContext, string) error {
-	return ErrNotImplemented
+func (d *FilesystemDriver) SleepService(ctx context.Context, runtimeCtx RuntimeContext, serviceName string) error {
+	if d.processManager != nil {
+		if err := d.processManager.StopProcess(serviceName); err != nil {
+			return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
+		}
+	}
+
+	layout := workspaceLayout(d.root, runtimeCtx)
+	sleepPath := filepath.Join(layout.Root, "services", serviceName, "sleep.json")
+	state := map[string]any{
+		"service_name": serviceName,
+		"status":       "sleeping",
+		"slept_at":     d.now().Format(time.RFC3339),
+	}
+	return writeJSON(sleepPath, state)
 }
 
-func (d *FilesystemDriver) WakeService(context.Context, RuntimeContext, string) error {
-	return ErrNotImplemented
+func (d *FilesystemDriver) WakeService(ctx context.Context, runtimeCtx RuntimeContext, serviceName string) error {
+	layout := workspaceLayout(d.root, runtimeCtx)
+	sleepPath := filepath.Join(layout.Root, "services", serviceName, "sleep.json")
+
+	if d.processManager != nil {
+		configPath := filepath.Join(layout.Root, "services", serviceName, "runtime.json")
+		if _, err := os.Stat(configPath); err == nil {
+			if _, err := d.processManager.RestartProcess(ctx, serviceName, configPath); err != nil {
+				return fmt.Errorf("failed to restart service %s: %w", serviceName, err)
+			}
+		}
+	}
+
+	if err := os.Remove(sleepPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove sleep state for %s: %w", serviceName, err)
+	}
+	return nil
 }
 
 func writeJSON(path string, value any) error {

@@ -82,7 +82,22 @@ func (g *ScaleToZeroGuard) SleepService(serviceName, revisionID string, runtimeM
 		return nil, fmt.Errorf("scale-to-zero is not supported in distributed-k3s mode")
 	}
 
-	return g.autosleep.SleepService(serviceName, revisionID)
+	state, err := g.autosleep.SleepService(serviceName, revisionID)
+	if err != nil {
+		return nil, err
+	}
+
+	if g.gatewayHold != nil {
+		resumed := g.gatewayHold.ResumeRequests(serviceName)
+		if g.logger != nil && len(resumed) > 0 {
+			g.logger.Info("scale-to-zero resumed held requests on sleep",
+				"service", serviceName,
+				"count", len(resumed),
+			)
+		}
+	}
+
+	return state, nil
 }
 
 func (g *ScaleToZeroGuard) WakeService(serviceName string, runtimeMode contracts.RuntimeMode) (*ServiceSleepState, error) {
@@ -101,6 +116,14 @@ func (g *ScaleToZeroGuard) WakeService(serviceName string, runtimeMode contracts
 	g.mu.Unlock()
 
 	return state, nil
+}
+
+func (g *ScaleToZeroGuard) HoldIncomingRequest(serviceName, requestID, correlationID string, policy contracts.ScaleToZeroPolicy) (*HeldRequest, error) {
+	if g.gatewayHold == nil {
+		return nil, fmt.Errorf("gateway hold manager not configured")
+	}
+	holdTimeout := g.gatewayHold.HoldTimeoutFromPolicy(policy)
+	return g.gatewayHold.HoldRequest(serviceName, requestID, correlationID, holdTimeout)
 }
 
 func (g *ScaleToZeroGuard) MarkActive(serviceName string) {

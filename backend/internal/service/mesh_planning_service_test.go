@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -577,18 +578,323 @@ func TestNormalizeTopologyState(t *testing.T) {
 
 func TestExtractPortFromDependencyBinding(t *testing.T) {
 	tests := []struct {
-		binding  LazyopsYAMLDependencyBinding
-		expected int
+		binding                LazyopsYAMLDependencyBinding
+		serviceHealthcheckPort int
+		expected               int
 	}{
-		{LazyopsYAMLDependencyBinding{LocalEndpoint: "localhost:8080"}, 8080},
-		{LazyopsYAMLDependencyBinding{LocalEndpoint: "localhost:5432"}, 5432},
-		{LazyopsYAMLDependencyBinding{LocalEndpoint: ""}, 8080},
+		{LazyopsYAMLDependencyBinding{LocalEndpoint: "localhost:8080"}, 0, 8080},
+		{LazyopsYAMLDependencyBinding{LocalEndpoint: "localhost:5432"}, 0, 5432},
+		{LazyopsYAMLDependencyBinding{LocalEndpoint: ""}, 3000, 3000},
+		{LazyopsYAMLDependencyBinding{LocalEndpoint: ""}, 0, 0},
 	}
 
 	for _, tt := range tests {
-		got := extractPortFromDependencyBinding(tt.binding)
+		got := extractPortFromDependencyBinding(tt.binding, tt.serviceHealthcheckPort)
 		if got != tt.expected {
-			t.Errorf("extractPortFromDependencyBinding(%v) = %d, want %d", tt.binding, got, tt.expected)
+			t.Errorf("extractPortFromDependencyBinding(%v, %d) = %d, want %d", tt.binding, tt.serviceHealthcheckPort, got, tt.expected)
 		}
 	}
+}
+
+func TestMeshPlanningServiceResolvesCorrectInstanceForService(t *testing.T) {
+	apiIP := "10.0.1.10"
+	workerIP := "10.0.1.20"
+	instanceStore := newFakeInstanceStore(
+		&models.Instance{
+			ID:         "inst_api",
+			UserID:     "usr_123",
+			Name:       "api-server",
+			PublicIP:   ptrString("203.0.113.20"),
+			PrivateIP:  &apiIP,
+			Status:     "online",
+			LabelsJSON: `{"services":["api"]}`,
+		},
+		&models.Instance{
+			ID:         "inst_worker",
+			UserID:     "usr_123",
+			Name:       "worker",
+			PublicIP:   ptrString("203.0.113.21"),
+			PrivateIP:  &workerIP,
+			Status:     "online",
+			LabelsJSON: `{"services":["worker"]}`,
+		},
+	)
+
+	topologyStore := newFakeTopologyStateStore(
+		models.TopologyState{
+			ID:           "topo_api",
+			InstanceID:   "inst_api",
+			MeshID:       "mesh_123",
+			State:        TopologyStateOnline,
+			MetadataJSON: `{}`,
+			LastSeenAt:   time.Now().UTC(),
+		},
+		models.TopologyState{
+			ID:           "topo_worker",
+			InstanceID:   "inst_worker",
+			MeshID:       "mesh_123",
+			State:        TopologyStateOnline,
+			MetadataJSON: `{}`,
+			LastSeenAt:   time.Now().UTC(),
+		},
+	)
+
+	bindingStore := newFakeDeploymentBindingStore(
+		&models.DeploymentBinding{
+			ID:         "bind_api",
+			ProjectID:  "prj_123",
+			Name:       "api",
+			TargetRef:  "api-main",
+			TargetKind: "instance",
+			TargetID:   "inst_api",
+		},
+		&models.DeploymentBinding{
+			ID:         "bind_worker",
+			ProjectID:  "prj_123",
+			Name:       "worker",
+			TargetRef:  "worker-main",
+			TargetKind: "instance",
+			TargetID:   "inst_worker",
+		},
+	)
+
+	revisionStore := newFakeDesiredStateRevisionStore(
+		&models.DesiredStateRevision{
+			ID:                   "rev_api",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_api",
+			CommitSHA:            "abc123",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustCompiledRevisionJSONWithPlacement(t, "rev_api", "bp_123", "prj_123", "bind_api", []PlacementAssignmentRecord{{ServiceName: "api", TargetID: "inst_api", TargetKind: "instance"}}),
+		},
+		&models.DesiredStateRevision{
+			ID:                   "rev_worker",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_worker",
+			CommitSHA:            "def456",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustCompiledRevisionJSONWithPlacement(t, "rev_worker", "bp_123", "prj_123", "bind_worker", []PlacementAssignmentRecord{{ServiceName: "worker", TargetID: "inst_worker", TargetKind: "instance"}}),
+		},
+	)
+
+	svc := newTestMeshPlanningService(
+		instanceStore,
+		bindingStore,
+		revisionStore,
+		newFakeTunnelSessionStore(),
+		topologyStore,
+	)
+
+	result, err := svc.ResolveDependencyBinding(context.Background(), "prj_123", "web", LazyopsYAMLDependencyBinding{
+		Service:       "web",
+		Alias:         "api",
+		TargetService: "api",
+		Protocol:      "http",
+		LocalEndpoint: "localhost:3000",
+	})
+	if err != nil {
+		t.Fatalf("resolve dependency api: %v", err)
+	}
+	if result.TargetID != "inst_api" {
+		t.Fatalf("expected target instance inst_api, got %q", result.TargetID)
+	}
+	if result.TargetEndpoint != "10.0.1.10:3000" {
+		t.Fatalf("expected target endpoint 10.0.1.10:3000, got %q", result.TargetEndpoint)
+	}
+}
+
+func TestMeshPlanningServicePreventsWrongServiceResolution(t *testing.T) {
+	apiIP := "10.0.1.10"
+	workerIP := "10.0.1.20"
+	instanceStore := newFakeInstanceStore(
+		&models.Instance{
+			ID:         "inst_api",
+			UserID:     "usr_123",
+			Name:       "api-server",
+			PublicIP:   ptrString("203.0.113.20"),
+			PrivateIP:  &apiIP,
+			Status:     "online",
+			LabelsJSON: `{"services":["api"]}`,
+		},
+		&models.Instance{
+			ID:         "inst_worker",
+			UserID:     "usr_123",
+			Name:       "worker",
+			PublicIP:   ptrString("203.0.113.21"),
+			PrivateIP:  &workerIP,
+			Status:     "online",
+			LabelsJSON: `{"services":["worker"]}`,
+		},
+	)
+
+	topologyStore := newFakeTopologyStateStore(
+		models.TopologyState{
+			ID:           "topo_api",
+			InstanceID:   "inst_api",
+			MeshID:       "mesh_123",
+			State:        TopologyStateOnline,
+			MetadataJSON: `{}`,
+			LastSeenAt:   time.Now().UTC(),
+		},
+		models.TopologyState{
+			ID:           "topo_worker",
+			InstanceID:   "inst_worker",
+			MeshID:       "mesh_123",
+			State:        TopologyStateOnline,
+			MetadataJSON: `{}`,
+			LastSeenAt:   time.Now().UTC(),
+		},
+	)
+
+	bindingStore := newFakeDeploymentBindingStore(
+		&models.DeploymentBinding{
+			ID:         "bind_api",
+			ProjectID:  "prj_123",
+			Name:       "api",
+			TargetRef:  "api-main",
+			TargetKind: "instance",
+			TargetID:   "inst_api",
+		},
+		&models.DeploymentBinding{
+			ID:         "bind_worker",
+			ProjectID:  "prj_123",
+			Name:       "worker",
+			TargetRef:  "worker-main",
+			TargetKind: "instance",
+			TargetID:   "inst_worker",
+		},
+	)
+
+	revisionStore := newFakeDesiredStateRevisionStore(
+		&models.DesiredStateRevision{
+			ID:                   "rev_api",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_api",
+			CommitSHA:            "abc123",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustCompiledRevisionJSONWithPlacement(t, "rev_api", "bp_123", "prj_123", "bind_api", []PlacementAssignmentRecord{{ServiceName: "api", TargetID: "inst_api", TargetKind: "instance"}}),
+		},
+		&models.DesiredStateRevision{
+			ID:                   "rev_worker",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_worker",
+			CommitSHA:            "def456",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustCompiledRevisionJSONWithPlacement(t, "rev_worker", "bp_123", "prj_123", "bind_worker", []PlacementAssignmentRecord{{ServiceName: "worker", TargetID: "inst_worker", TargetKind: "instance"}}),
+		},
+	)
+
+	svc := newTestMeshPlanningService(
+		instanceStore,
+		bindingStore,
+		revisionStore,
+		newFakeTunnelSessionStore(),
+		topologyStore,
+	)
+
+	result, err := svc.ResolveDependencyBinding(context.Background(), "prj_123", "web", LazyopsYAMLDependencyBinding{
+		Service:       "web",
+		Alias:         "worker",
+		TargetService: "worker",
+		Protocol:      "http",
+		LocalEndpoint: "localhost:9000",
+	})
+	if err != nil {
+		t.Fatalf("resolve dependency worker: %v", err)
+	}
+	if result.TargetID != "inst_worker" {
+		t.Fatalf("expected target instance inst_worker, got %q", result.TargetID)
+	}
+	if result.TargetEndpoint != "10.0.1.20:9000" {
+		t.Fatalf("expected target endpoint 10.0.1.20:9000, got %q", result.TargetEndpoint)
+	}
+}
+
+func TestMeshPlanningServiceFallbackToFirstOnlineInstanceWhenNameNotMatched(t *testing.T) {
+	apiIP := "10.0.1.10"
+	instanceStore := newFakeInstanceStore(
+		&models.Instance{
+			ID:         "inst_api",
+			UserID:     "usr_123",
+			Name:       "api-server",
+			PublicIP:   ptrString("203.0.113.20"),
+			PrivateIP:  &apiIP,
+			Status:     "online",
+			LabelsJSON: `{"services":["api"]}`,
+		},
+	)
+
+	topologyStore := newFakeTopologyStateStore(
+		models.TopologyState{
+			ID:           "topo_api",
+			InstanceID:   "inst_api",
+			MeshID:       "mesh_123",
+			State:        TopologyStateOnline,
+			MetadataJSON: `{}`,
+			LastSeenAt:   time.Now().UTC(),
+		},
+	)
+
+	bindingStore := newFakeDeploymentBindingStore(
+		&models.DeploymentBinding{
+			ID:         "bind_api",
+			ProjectID:  "prj_123",
+			Name:       "api",
+			TargetRef:  "api-main",
+			TargetKind: "instance",
+			TargetID:   "inst_api",
+		},
+	)
+
+	svc := newTestMeshPlanningService(
+		instanceStore,
+		bindingStore,
+		newFakeDesiredStateRevisionStore(),
+		newFakeTunnelSessionStore(),
+		topologyStore,
+	)
+
+	result, err := svc.ResolveDependencyBinding(context.Background(), "prj_123", "web", LazyopsYAMLDependencyBinding{
+		Service:       "web",
+		Alias:         "unknown-svc",
+		TargetService: "unknown-svc",
+		Protocol:      "http",
+		LocalEndpoint: "localhost:8080",
+	})
+	if err != nil {
+		t.Fatalf("expected fallback to first online instance, got error: %v", err)
+	}
+	if result.TargetID != "inst_api" {
+		t.Fatalf("expected fallback target instance inst_api, got %q", result.TargetID)
+	}
+}
+
+func mustCompiledRevisionJSONWithPlacement(t *testing.T, revisionID, blueprintID, projectID, bindingID string, placements []PlacementAssignmentRecord) string {
+	t.Helper()
+
+	raw, err := json.Marshal(desiredStateRevisionCompiledRecord{
+		RevisionID:           revisionID,
+		ProjectID:            projectID,
+		BlueprintID:          blueprintID,
+		DeploymentBindingID:  bindingID,
+		CommitSHA:            "abc123def456",
+		ArtifactRef:          "artifact://builds/123",
+		ImageRef:             "ghcr.io/lazyops/acme-api:abc123",
+		TriggerKind:          "manual",
+		RuntimeMode:          "standalone",
+		Services:             []BlueprintServiceContractRecord{{Name: "api", Path: "apps/api", RuntimeProfile: "service", Healthcheck: map[string]any{"path": "/healthz", "port": 8080, "protocol": "http"}}},
+		CompatibilityPolicy:  LazyopsYAMLCompatibilityPolicy{EnvInjection: true},
+		MagicDomainPolicy:    LazyopsYAMLMagicDomainPolicy{Enabled: true, Provider: "sslip.io"},
+		ScaleToZeroPolicy:    LazyopsYAMLScaleToZeroPolicy{Enabled: false},
+		PlacementAssignments: placements,
+	})
+	if err != nil {
+		t.Fatalf("marshal compiled revision json: %v", err)
+	}
+
+	return string(raw)
 }

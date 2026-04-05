@@ -16,17 +16,19 @@ import (
 )
 
 type AgentControlController struct {
-	controlHub    *service.ControlHub
-	observability *service.ObservabilityService
-	cfg           config.Config
-	upgrader      websocket.Upgrader
+	controlHub     *service.ControlHub
+	commandTracker *service.CommandTracker
+	observability  *service.ObservabilityService
+	cfg            config.Config
+	upgrader       websocket.Upgrader
 }
 
-func NewAgentControlController(hub *service.ControlHub, observability *service.ObservabilityService, cfg config.Config) *AgentControlController {
+func NewAgentControlController(hub *service.ControlHub, commandTracker *service.CommandTracker, observability *service.ObservabilityService, cfg config.Config) *AgentControlController {
 	return &AgentControlController{
-		controlHub:    hub,
-		observability: observability,
-		cfg:           cfg,
+		controlHub:     hub,
+		commandTracker: commandTracker,
+		observability:  observability,
+		cfg:            cfg,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.WebSocket.ReadBufferSize,
 			WriteBufferSize: cfg.WebSocket.WriteBufferSize,
@@ -92,8 +94,14 @@ func (ctl *AgentControlController) runControlLoop(client *service.ControlClient,
 			_ = client.Conn.WriteMessage(1, []byte(`{"type":"pong"}`))
 		case "command_response":
 			ctl.handleCommandResponse(client.AgentID, message)
+		case "command.ack":
+			ctl.handleCommandAck(client.AgentID, message)
+		case "command.error":
+			ctl.handleCommandError(client.AgentID, message)
 		case "agent.log_batch":
 			ctl.handleLogBatch(client, message)
+		case "agent.topology":
+			ctl.handleTopologyReport(client, message)
 		default:
 			_ = client.Conn.WriteMessage(1, []byte(`{"type":"error","message":"unsupported message type"}`))
 		}
@@ -119,6 +127,82 @@ func (ctl *AgentControlController) handleCommandResponse(agentID string, raw []b
 		})
 		return
 	}
+
+	if ctl.commandTracker != nil {
+		state := service.CommandState(response.Status)
+		if state == "" {
+			state = service.CommandStateDone
+		}
+		_ = ctl.commandTracker.UpdateState(response.RequestID, state, response.Output, response.Error)
+	}
+}
+
+func (ctl *AgentControlController) handleCommandAck(agentID string, raw []byte) {
+	var ack struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+		Status    string `json:"status"`
+		Summary   string `json:"summary,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &ack); err != nil {
+		return
+	}
+
+	if ack.RequestID == "" {
+		return
+	}
+
+	if ctl.commandTracker == nil {
+		return
+	}
+
+	state := service.CommandStateRunning
+	if ack.Status == "done" {
+		state = service.CommandStateDone
+	} else if ack.Status == "accepted" {
+		state = service.CommandStateRunning
+	}
+
+	output := map[string]any{}
+	if ack.Summary != "" {
+		output["summary"] = ack.Summary
+	}
+
+	_ = ctl.commandTracker.UpdateState(ack.RequestID, state, output, "")
+}
+
+func (ctl *AgentControlController) handleCommandError(agentID string, raw []byte) {
+	var errResp struct {
+		Type      string         `json:"type"`
+		RequestID string         `json:"request_id"`
+		Code      string         `json:"code,omitempty"`
+		Message   string         `json:"message"`
+		Retryable bool           `json:"retryable,omitempty"`
+		Details   map[string]any `json:"details,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &errResp); err != nil {
+		return
+	}
+
+	if errResp.RequestID == "" {
+		return
+	}
+
+	if ctl.commandTracker == nil {
+		return
+	}
+
+	output := map[string]any{
+		"code":      errResp.Code,
+		"retryable": errResp.Retryable,
+	}
+	if errResp.Details != nil {
+		for k, v := range errResp.Details {
+			output[k] = v
+		}
+	}
+
+	_ = ctl.commandTracker.UpdateState(errResp.RequestID, service.CommandStateFailed, output, errResp.Message)
 }
 
 func (ctl *AgentControlController) handleLogBatch(client *service.ControlClient, raw []byte) {
@@ -175,6 +259,72 @@ func (ctl *AgentControlController) handleLogBatch(client *service.ControlClient,
 		CollectedAt: payload.CollectedAt,
 	}); err != nil {
 		writeControlJSON(client.Conn, gin.H{"type": "error", "message": "failed to ingest log batch"})
+	}
+}
+
+func (ctl *AgentControlController) handleTopologyReport(client *service.ControlClient, raw []byte) {
+	if ctl.observability == nil {
+		return
+	}
+
+	var envelope struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return
+	}
+
+	var payload struct {
+		ProjectID  string    `json:"project_id"`
+		SnapshotAt time.Time `json:"snapshot_at"`
+		Nodes      []struct {
+			NodeRef  string         `json:"node_ref"`
+			NodeType string         `json:"node_type"`
+			Status   string         `json:"status"`
+			Metadata map[string]any `json:"metadata,omitempty"`
+		} `json:"nodes"`
+		Edges []struct {
+			SourceNodeRef string `json:"source_node_ref"`
+			TargetNodeRef string `json:"target_node_ref"`
+			EdgeType      string `json:"edge_type"`
+			Status        string `json:"status"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return
+	}
+
+	if payload.ProjectID == "" {
+		return
+	}
+
+	for _, node := range payload.Nodes {
+		metadataJSON := "{}"
+		if node.Metadata != nil {
+			raw, _ := json.Marshal(node.Metadata)
+			metadataJSON = string(raw)
+		}
+		_ = ctl.observability.UpsertTopologyNode(context.Background(), service.TopologyNodeUpsertCommand{
+			ProjectID: payload.ProjectID,
+			NodeRef:   node.NodeRef,
+			NodeKind:  node.NodeType,
+			Name:      node.NodeRef,
+			Status:    node.Status,
+			Metadata:  metadataJSON,
+		})
+	}
+
+	for _, edge := range payload.Edges {
+		metadataJSON := "{}"
+		_ = ctl.observability.UpsertTopologyEdge(context.Background(), service.TopologyEdgeUpsertCommand{
+			ProjectID: payload.ProjectID,
+			SourceID:  edge.SourceNodeRef,
+			TargetID:  edge.TargetNodeRef,
+			EdgeKind:  edge.EdgeType,
+			Protocol:  "http",
+			Metadata:  metadataJSON,
+		})
 	}
 }
 

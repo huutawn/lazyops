@@ -48,70 +48,76 @@ function LoginForm() {
   };
 
   return (
-    <div className="auth-layout">
-      <div className="auth-page">
-        <h1>Sign in</h1>
-        <p className="mb-6 text-sm text-lazyops-muted">Access your LazyOps console</p>
+    <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
+      <div className="space-y-2 text-center lg:text-left">
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Sign In</h1>
+        <p className="text-sm text-muted-foreground">Access your LazyOps console</p>
+      </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-          <FormField label="Email" error={errors.email?.message}>
-            <FormInput
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              error={!!errors.email}
-              {...register('email')}
-            />
-          </FormField>
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
+        <FormField label="Email" error={errors.email?.message}>
+          <FormInput
+            type="email"
+            autoComplete="email"
+            placeholder="you@example.com"
+            error={!!errors.email}
+            {...register('email')}
+          />
+        </FormField>
 
-          <FormField label="Password" error={errors.password?.message}>
-            <FormInput
-              type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              error={!!errors.password}
-              {...register('password')}
-            />
-          </FormField>
+        <FormField label="Password" error={errors.password?.message}>
+          <FormInput
+            type="password"
+            autoComplete="current-password"
+            placeholder="••••••••"
+            error={!!errors.password}
+            {...register('password')}
+          />
+        </FormField>
 
-          {displayError && (
-            <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
-              {displayError}
-            </div>
-          )}
-
-          <FormButton type="submit" loading={isSubmitting || login.isPending}>
-            Sign in
-          </FormButton>
-        </form>
-
-        <div className="mt-6 flex flex-col gap-3">
-          <div className="flex items-center gap-3 before:h-px before:flex-1 before:bg-lazyops-border after:h-px after:flex-1 after:bg-lazyops-border">
-            <span className="text-xs text-lazyops-muted">or</span>
+        {displayError && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive animate-in fade-in zoom-in-95">
+            {displayError}
           </div>
+        )}
 
-          <a
-            href="/api/auth/oauth/google/start"
-            className="flex h-10 items-center justify-center rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 text-sm text-lazyops-text transition-colors hover:bg-lazyops-bg-accent"
-          >
-            Continue with Google
-          </a>
+        <FormButton type="submit" loading={isSubmitting || login.isPending} className="mt-2 h-11">
+          Continue to console
+        </FormButton>
+      </form>
 
-          <a
-            href="/api/auth/oauth/github/start"
-            className="flex h-10 items-center justify-center rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 text-sm text-lazyops-text transition-colors hover:bg-lazyops-bg-accent"
-          >
-            Continue with GitHub
-          </a>
+      <div className="flex flex-col gap-4">
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
+          </div>
         </div>
 
-        <p className="mt-6 text-center text-sm text-lazyops-muted">
-          Don&apos;t have an account?{' '}
-          <Link href="/register" className="text-primary hover:underline">
-            Create one
-          </Link>
-        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <a
+            href="/api/auth/oauth/google/start"
+            className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card/50 text-sm font-medium text-foreground transition-all hover:bg-card hover:border-primary/50 hover:shadow-sm"
+          >
+            Google
+          </a>
+          <a
+            href="/api/auth/oauth/github/start"
+            className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card/50 text-sm font-medium text-foreground transition-all hover:bg-card hover:border-primary/50 hover:shadow-sm"
+          >
+            GitHub
+          </a>
+        </div>
       </div>
+
+      <p className="text-center text-sm text-muted-foreground">
+        Don&apos;t have an account?{' '}
+        <Link href="/register" className="font-semibold text-primary transition-colors hover:text-primary/80 hover:underline">
+          Create one
+        </Link>
+      </p>
     </div>
   );
 }

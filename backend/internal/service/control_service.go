@@ -115,18 +115,20 @@ func (h *ControlHub) run() {
 }
 
 type ControlService struct {
-	hub       *ControlHub
-	registry  *runtime.Registry
-	instances InstanceStore
-	agents    AgentStore
+	hub            *ControlHub
+	commandTracker *CommandTracker
+	registry       *runtime.Registry
+	instances      InstanceStore
+	agents         AgentStore
 }
 
-func NewControlService(hub *ControlHub, registry *runtime.Registry, instances InstanceStore, agents AgentStore) *ControlService {
+func NewControlService(hub *ControlHub, commandTracker *CommandTracker, registry *runtime.Registry, instances InstanceStore, agents AgentStore) *ControlService {
 	return &ControlService{
-		hub:       hub,
-		registry:  registry,
-		instances: instances,
-		agents:    agents,
+		hub:            hub,
+		commandTracker: commandTracker,
+		registry:       registry,
+		instances:      instances,
+		agents:         agents,
 	}
 }
 
@@ -144,9 +146,9 @@ func (s *ControlService) UnregisterAgent(agentID string) {
 	s.hub.Unregister(agentID)
 }
 
-func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cmd runtime.AgentCommand) error {
+func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cmd runtime.AgentCommand) (*runtime.CommandResult, error) {
 	if !s.hub.IsConnected(agentID) {
-		return fmt.Errorf("agent %q is not connected", agentID)
+		return nil, fmt.Errorf("agent %q is not connected", agentID)
 	}
 
 	if cmd.RequestID == "" {
@@ -154,6 +156,10 @@ func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cm
 	}
 	if cmd.OccurredAt == "" {
 		cmd.OccurredAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	if s.commandTracker != nil {
+		s.commandTracker.Register(cmd.RequestID, agentID, cmd.Type)
 	}
 
 	envelope := runtime.NewCommandEnvelope(
@@ -166,7 +172,21 @@ func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cm
 		cmd.Payload,
 	)
 
-	return s.hub.SendToAgent(agentID, envelope)
+	if err := s.hub.SendToAgent(agentID, envelope); err != nil {
+		return nil, err
+	}
+
+	return &runtime.CommandResult{
+		RequestID: cmd.RequestID,
+		Status:    "dispatched",
+	}, nil
+}
+
+func (s *ControlService) WaitForCommand(ctx context.Context, requestID string) (*TrackedCommand, error) {
+	if s.commandTracker == nil {
+		return nil, fmt.Errorf("command tracker not configured")
+	}
+	return s.commandTracker.WaitForResult(ctx, requestID)
 }
 
 func (s *ControlService) HandleAgentResponse(agentID string, raw []byte) error {

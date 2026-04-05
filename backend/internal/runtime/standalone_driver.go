@@ -50,6 +50,24 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 				},
 			},
 			{
+				Kind: "render_sidecars",
+				Command: AgentCommand{
+					Type:      "render_sidecars",
+					ProjectID: req.ProjectID,
+					Source:    "standalone_driver",
+					Payload:   req.RevisionPayload,
+				},
+			},
+			{
+				Kind: "render_gateway_config",
+				Command: AgentCommand{
+					Type:      "render_gateway_config",
+					ProjectID: req.ProjectID,
+					Source:    "standalone_driver",
+					Payload:   req.RevisionPayload,
+				},
+			},
+			{
 				Kind: "reconcile",
 				Command: AgentCommand{
 					Type:      "reconcile_revision",
@@ -90,7 +108,7 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 		},
 		RuntimeMode: RuntimeModeStandalone,
 		TargetKind:  "instance",
-	}, nil
+	}
 }
 
 func (d *StandaloneDriver) ExecuteCommand(ctx context.Context, cmd AgentCommand) (*CommandResult, error) {

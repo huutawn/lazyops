@@ -42,6 +42,11 @@ type AutosleepManager struct {
 
 	mu     sync.Mutex
 	states map[string]*ServiceSleepState
+
+	policies map[string]contracts.ScaleToZeroPolicy
+
+	stopCh chan struct{}
+	doneCh chan struct{}
 }
 
 func NewAutosleepManager(logger *slog.Logger, cfg AutosleepConfig) *AutosleepManager {
@@ -238,4 +243,92 @@ func (m *AutosleepManager) PersistSleepState(workspaceRoot, projectID, bindingID
 	}
 
 	return statePath, nil
+}
+
+func (m *AutosleepManager) RegisterPolicy(serviceName string, policy contracts.ScaleToZeroPolicy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.policies == nil {
+		m.policies = make(map[string]contracts.ScaleToZeroPolicy)
+	}
+	m.policies[serviceName] = policy
+}
+
+func (m *AutosleepManager) StartBackgroundLoop() {
+	m.stopCh = make(chan struct{})
+	m.doneCh = make(chan struct{})
+
+	go m.backgroundLoop()
+}
+
+func (m *AutosleepManager) StopBackgroundLoop() {
+	if m.stopCh == nil {
+		return
+	}
+	close(m.stopCh)
+	<-m.doneCh
+}
+
+func (m *AutosleepManager) backgroundLoop() {
+	defer close(m.doneCh)
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			if m.logger != nil {
+				m.logger.Info("autosleep background loop stopped")
+			}
+			return
+		case <-ticker.C:
+			m.evaluateAndSleep()
+		}
+	}
+}
+
+func (m *AutosleepManager) evaluateAndSleep() {
+	m.mu.Lock()
+	policies := make(map[string]contracts.ScaleToZeroPolicy, len(m.policies))
+	for name, policy := range m.policies {
+		policies[name] = policy
+	}
+	m.mu.Unlock()
+
+	for serviceName, policy := range policies {
+		if !policy.Enabled {
+			continue
+		}
+
+		if m.CanSleep(serviceName, policy) {
+			if m.logger != nil {
+				m.logger.Info("autosleep triggering for service",
+					"service", serviceName,
+					"reason", "idle window exceeded",
+				)
+			}
+
+			m.mu.Lock()
+			state, exists := m.states[serviceName]
+			if exists && state.Status != "sleeping" {
+				now := m.now()
+				state.SleepingAt = now
+				state.Status = "sleeping"
+				state.WakeAt = now.Add(m.cfg.MaxSleepWindow)
+			}
+			m.mu.Unlock()
+		}
+	}
+
+	expired := m.CollectExpiredSleepWindows()
+	for _, state := range expired {
+		if m.logger != nil {
+			m.logger.Warn("autosleep expired sleep window",
+				"service", state.ServiceName,
+				"expired_at", state.WakeAt.Format(time.RFC3339),
+			)
+		}
+	}
 }

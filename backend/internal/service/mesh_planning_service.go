@@ -110,7 +110,11 @@ func (s *MeshPlanningService) ResolveDependencyBinding(ctx context.Context, proj
 		return nil, fmt.Errorf("no routable IP for instance %q", targetInstance.ID)
 	}
 
-	targetPort := extractPortFromDependencyBinding(binding)
+	serviceHealthcheckPort := s.resolveServiceHealthcheckPort(ctx, projectID, binding.TargetService)
+	targetPort := extractPortFromDependencyBinding(binding, serviceHealthcheckPort)
+	if targetPort == 0 {
+		return nil, fmt.Errorf("cannot resolve port for service %q: no local_endpoint configured and no healthcheck port available", binding.TargetService)
+	}
 
 	resolution := &DependencyResolutionResult{
 		ServiceName:    serviceName,
@@ -288,6 +292,7 @@ func (s *MeshPlanningService) findInstanceForService(ctx context.Context, projec
 		return nil, fmt.Errorf("no deployment binding found for project %q", projectID)
 	}
 
+	var fallbackInstance *models.Instance
 	for _, binding := range bindings {
 		if binding.TargetKind != "instance" {
 			continue
@@ -302,7 +307,36 @@ func (s *MeshPlanningService) findInstanceForService(ctx context.Context, projec
 		if strings.EqualFold(instance.Status, "offline") {
 			continue
 		}
-		return instance, nil
+		if fallbackInstance == nil {
+			fallbackInstance = instance
+		}
+
+		if strings.EqualFold(binding.Name, serviceName) {
+			return instance, nil
+		}
+
+		revisions, err := s.revisions.ListByProject(projectID)
+		if err != nil {
+			continue
+		}
+		for _, rev := range revisions {
+			if rev.DeploymentBindingID != binding.ID {
+				continue
+			}
+			compiled, err := parseCompiledRevision(rev.CompiledRevisionJSON)
+			if err != nil {
+				continue
+			}
+			for _, assignment := range compiled.PlacementAssignments {
+				if assignment.ServiceName == serviceName && assignment.TargetID == binding.TargetID {
+					return instance, nil
+				}
+			}
+		}
+	}
+
+	if fallbackInstance != nil {
+		return fallbackInstance, nil
 	}
 
 	return nil, fmt.Errorf("no online instance found for service %q in project %q", serviceName, projectID)
@@ -334,7 +368,7 @@ func resolveInstanceIP(instance models.Instance) string {
 	return ""
 }
 
-func extractPortFromDependencyBinding(binding LazyopsYAMLDependencyBinding) int {
+func extractPortFromDependencyBinding(binding LazyopsYAMLDependencyBinding, serviceHealthcheckPort int) int {
 	if binding.LocalEndpoint != "" {
 		_, port, err := net.SplitHostPort(binding.LocalEndpoint)
 		if err == nil {
@@ -345,7 +379,53 @@ func extractPortFromDependencyBinding(binding LazyopsYAMLDependencyBinding) int 
 			}
 		}
 	}
-	return 8080
+	if serviceHealthcheckPort > 0 {
+		return serviceHealthcheckPort
+	}
+	return 0
+}
+
+func (s *MeshPlanningService) resolveServiceHealthcheckPort(ctx context.Context, projectID, serviceName string) int {
+	bindings, err := s.bindings.ListByProject(projectID)
+	if err != nil {
+		return 0
+	}
+
+	for _, binding := range bindings {
+		if binding.TargetKind != "instance" {
+			continue
+		}
+		revisions, err := s.revisions.ListByProject(projectID)
+		if err != nil {
+			continue
+		}
+		for _, rev := range revisions {
+			if rev.DeploymentBindingID != binding.ID {
+				continue
+			}
+			compiled, err := parseCompiledRevision(rev.CompiledRevisionJSON)
+			if err != nil {
+				continue
+			}
+			for _, svc := range compiled.Services {
+				if svc.Name == serviceName && svc.Healthcheck != nil {
+					if portVal, ok := svc.Healthcheck["port"]; ok {
+						switch p := portVal.(type) {
+						case float64:
+							if int(p) > 0 {
+								return int(p)
+							}
+						case int:
+							if p > 0 {
+								return p
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func normalizeTopologyState(raw string) string {

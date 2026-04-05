@@ -413,3 +413,54 @@ func TestSleepWakeHandlersCanBeRegistered(t *testing.T) {
 		t.Fatal("expected runtime service to register wake_service handler")
 	}
 }
+
+func TestAutosleepManagerBackgroundLoopStartsAndStops(t *testing.T) {
+	mgr := NewAutosleepManager(nil, AutosleepConfig{})
+	mgr.StartBackgroundLoop()
+	mgr.StopBackgroundLoop()
+}
+
+func TestAutosleepManagerRegisterPolicy(t *testing.T) {
+	mgr := NewAutosleepManager(nil, AutosleepConfig{})
+	mgr.RegisterPolicy("web", contracts.ScaleToZeroPolicy{Enabled: true, IdleWindow: "1m"})
+	mgr.RegisterPolicy("api", contracts.ScaleToZeroPolicy{Enabled: false})
+
+	mgr.mu.Lock()
+	if len(mgr.policies) != 2 {
+		t.Fatalf("expected 2 policies, got %d", len(mgr.policies))
+	}
+	if !mgr.policies["web"].Enabled {
+		t.Fatal("expected web policy to be enabled")
+	}
+	if mgr.policies["api"].Enabled {
+		t.Fatal("expected api policy to be disabled")
+	}
+	mgr.mu.Unlock()
+}
+
+func TestAutosleepManagerBackgroundLoopAutoSleepTrigger(t *testing.T) {
+	mgr := NewAutosleepManager(nil, AutosleepConfig{
+		IdleWindow:     100 * time.Millisecond,
+		MaxSleepWindow: 1 * time.Hour,
+	})
+	mgr.now = func() time.Time {
+		return time.Now().UTC()
+	}
+
+	mgr.RegisterPolicy("web", contracts.ScaleToZeroPolicy{Enabled: true, IdleWindow: "100ms"})
+
+	mgr.states["web"] = &ServiceSleepState{
+		ServiceName:  "web",
+		LastActiveAt: time.Now().UTC().Add(-200 * time.Millisecond),
+		Status:       "active",
+	}
+
+	mgr.evaluateAndSleep()
+
+	mgr.mu.Lock()
+	state := mgr.states["web"]
+	if state.Status != "sleeping" {
+		t.Fatalf("expected service to be sleeping after evaluate, got %s", state.Status)
+	}
+	mgr.mu.Unlock()
+}

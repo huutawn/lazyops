@@ -232,6 +232,102 @@ func TestDistributedK3sDriverAllowsValidCommands(t *testing.T) {
 	}
 }
 
+func TestStandaloneDriverExecuteCommandRejectsEmptyType(t *testing.T) {
+	driver := NewStandaloneDriver()
+	cmd := AgentCommand{
+		Type:      "",
+		RequestID: "req_123",
+	}
+	_, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("expected error for empty command type")
+	}
+}
+
+func TestStandaloneDriverExecuteCommandRejectsUnknownType(t *testing.T) {
+	driver := NewStandaloneDriver()
+	cmd := AgentCommand{
+		Type:      "unknown_command",
+		RequestID: "req_123",
+	}
+	_, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("expected error for unknown command type")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("expected error to contain 'unsupported', got %q", err.Error())
+	}
+}
+
+func TestStandaloneDriverExecuteCommandReturnsDriverInfo(t *testing.T) {
+	driver := NewStandaloneDriver()
+	cmd := AgentCommand{
+		Type:      "prepare_release_workspace",
+		RequestID: "req_123",
+	}
+	result, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
+	if result.Output["driver"] != "standalone" {
+		t.Fatalf("expected driver output to be 'standalone', got %v", result.Output["driver"])
+	}
+}
+
+func TestDistributedMeshDriverExecuteCommandRejectsUnknownType(t *testing.T) {
+	driver := NewDistributedMeshDriver()
+	cmd := AgentCommand{
+		Type:      "docker_run",
+		RequestID: "req_123",
+	}
+	_, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("expected error for unknown command type")
+	}
+}
+
+func TestDistributedMeshDriverExecuteCommandReturnsDriverInfo(t *testing.T) {
+	driver := NewDistributedMeshDriver()
+	cmd := AgentCommand{
+		Type:      "ensure_mesh_peer",
+		RequestID: "req_123",
+	}
+	result, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
+	if result.Output["driver"] != "distributed_mesh" {
+		t.Fatalf("expected driver output to be 'distributed_mesh', got %v", result.Output["driver"])
+	}
+}
+
+func TestDistributedK3sDriverExecuteCommandRejectsUnknownType(t *testing.T) {
+	driver := NewDistributedK3sDriver()
+	cmd := AgentCommand{
+		Type:      "docker_run",
+		RequestID: "req_123",
+	}
+	_, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err == nil {
+		t.Fatal("expected error for forbidden command type")
+	}
+}
+
+func TestDistributedK3sDriverExecuteCommandReturnsDriverInfo(t *testing.T) {
+	driver := NewDistributedK3sDriver()
+	cmd := AgentCommand{
+		Type:      "render_gateway_config",
+		RequestID: "req_123",
+	}
+	result, err := driver.ExecuteCommand(context.Background(), cmd)
+	if err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
+	if result.Output["driver"] != "distributed_k3s" {
+		t.Fatalf("expected driver output to be 'distributed_k3s', got %v", result.Output["driver"])
+	}
+}
+
 func TestStandaloneDriverPlanRollout(t *testing.T) {
 	driver := NewStandaloneDriver()
 	req := RolloutRequest{
@@ -255,6 +351,8 @@ func TestStandaloneDriverPlanRollout(t *testing.T) {
 	}
 	expected := []string{
 		CommandTypePrepareReleaseWorkspace,
+		CommandTypeRenderSidecars,
+		CommandTypeRenderGatewayConfig,
 		CommandTypeReconcileRevision,
 		CommandTypeStartReleaseCandidate,
 		CommandTypeRunHealthGate,
@@ -288,6 +386,23 @@ func TestDistributedMeshDriverPlanRollout(t *testing.T) {
 	if plan.TargetKind != "mesh_network" {
 		t.Fatalf("expected target kind mesh_network, got %q", plan.TargetKind)
 	}
+	expected := []string{
+		CommandTypeEnsureMeshPeer,
+		CommandTypeSyncOverlayRoutes,
+		CommandTypeRenderSidecars,
+		CommandTypeRenderGatewayConfig,
+		CommandTypeReconcileRevision,
+		CommandTypeRunHealthGate,
+		CommandTypePromoteRelease,
+	}
+	if len(plan.Steps) != len(expected) {
+		t.Fatalf("expected %d rollout steps, got %d", len(expected), len(plan.Steps))
+	}
+	for index, commandType := range expected {
+		if plan.Steps[index].Command.Type != commandType {
+			t.Fatalf("expected step %d command %q, got %q", index, commandType, plan.Steps[index].Command.Type)
+		}
+	}
 }
 
 func TestDistributedK3sDriverPlanRollout(t *testing.T) {
@@ -307,6 +422,20 @@ func TestDistributedK3sDriverPlanRollout(t *testing.T) {
 	}
 	if plan.TargetKind != "cluster" {
 		t.Fatalf("expected target kind cluster, got %q", plan.TargetKind)
+	}
+	expected := []string{
+		CommandTypeRenderGatewayConfig,
+		CommandTypeReconcileRevision,
+		CommandTypeRunHealthGate,
+		CommandTypePromoteRelease,
+	}
+	if len(plan.Steps) != len(expected) {
+		t.Fatalf("expected %d rollout steps, got %d", len(expected), len(plan.Steps))
+	}
+	for index, commandType := range expected {
+		if plan.Steps[index].Command.Type != commandType {
+			t.Fatalf("expected step %d command %q, got %q", index, commandType, plan.Steps[index].Command.Type)
+		}
 	}
 }
 

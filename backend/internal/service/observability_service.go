@@ -85,6 +85,54 @@ func NewObservabilityService(
 	}
 }
 
+type TopologyNodeUpsertCommand struct {
+	ProjectID string
+	NodeRef   string
+	NodeKind  string
+	Name      string
+	Status    string
+	Metadata  string
+}
+
+type TopologyEdgeUpsertCommand struct {
+	ProjectID string
+	SourceID  string
+	TargetID  string
+	EdgeKind  string
+	Protocol  string
+	Metadata  string
+}
+
+func (s *ObservabilityService) UpsertTopologyNode(ctx context.Context, cmd TopologyNodeUpsertCommand) error {
+	if s.topoNodes == nil {
+		return nil
+	}
+	node := &models.TopologyNode{
+		ProjectID:    cmd.ProjectID,
+		NodeKind:     cmd.NodeKind,
+		NodeRef:      cmd.NodeRef,
+		Name:         cmd.Name,
+		Status:       cmd.Status,
+		MetadataJSON: cmd.Metadata,
+	}
+	return s.topoNodes.Upsert(node)
+}
+
+func (s *ObservabilityService) UpsertTopologyEdge(ctx context.Context, cmd TopologyEdgeUpsertCommand) error {
+	if s.topoEdges == nil {
+		return nil
+	}
+	edge := &models.TopologyEdge{
+		ProjectID:    cmd.ProjectID,
+		SourceID:     cmd.SourceID,
+		TargetID:     cmd.TargetID,
+		EdgeKind:     cmd.EdgeKind,
+		Protocol:     cmd.Protocol,
+		MetadataJSON: cmd.Metadata,
+	}
+	return s.topoEdges.Upsert(edge)
+}
+
 func (s *ObservabilityService) IngestTraceSummary(ctx context.Context, cmd IngestTraceCommand) (*TraceRecord, error) {
 	correlationID := strings.TrimSpace(cmd.CorrelationID)
 	if correlationID == "" {
@@ -207,21 +255,27 @@ func (s *ObservabilityService) IngestLogBatch(ctx context.Context, cmd IngestLog
 			occurredAt = collectedAt
 		}
 
+		correlationID := strings.TrimSpace(cmd.CorrelationID)
+		if correlationID == "" {
+			correlationID = strings.TrimSpace(entry.CorrelationID)
+		}
+
 		records = append(records, models.LogStreamEntry{
-			ID:          utils.NewPrefixedID("log"),
-			ProjectID:   projectID,
-			BindingID:   bindingID,
-			RevisionID:  strings.TrimSpace(cmd.RevisionID),
-			ServiceName: resolvedService,
-			Source:      normalizeLogSource(entry.Source, resolvedService),
-			Level:       normalizeLogLevel(entry.Severity),
-			Node:        normalizeLogNode(labels),
-			Message:     message,
-			Excerpt:     strings.TrimSpace(entry.Excerpt),
-			LabelsJSON:  string(labelsJSON),
-			OccurredAt:  occurredAt.UTC(),
-			CollectedAt: collectedAt.UTC(),
-			CreatedAt:   time.Now().UTC(),
+			ID:            utils.NewPrefixedID("log"),
+			ProjectID:     projectID,
+			BindingID:     bindingID,
+			RevisionID:    strings.TrimSpace(cmd.RevisionID),
+			ServiceName:   resolvedService,
+			Source:        normalizeLogSource(entry.Source, resolvedService),
+			Level:         normalizeLogLevel(entry.Severity),
+			Node:          normalizeLogNode(labels),
+			CorrelationID: correlationID,
+			Message:       message,
+			Excerpt:       strings.TrimSpace(entry.Excerpt),
+			LabelsJSON:    string(labelsJSON),
+			OccurredAt:    occurredAt.UTC(),
+			CollectedAt:   collectedAt.UTC(),
+			CreatedAt:     time.Now().UTC(),
 		})
 	}
 
@@ -267,12 +321,13 @@ func (s *ObservabilityService) PreviewLogs(ctx context.Context, cmd PreviewLogsC
 	}
 
 	query := models.LogStreamQuery{
-		ProjectID:   projectID,
-		ServiceName: serviceName,
-		Level:       level,
-		Contains:    strings.TrimSpace(cmd.Contains),
-		Node:        strings.TrimSpace(cmd.Node),
-		Limit:       limit,
+		ProjectID:     projectID,
+		ServiceName:   serviceName,
+		Level:         level,
+		Contains:      strings.TrimSpace(cmd.Contains),
+		Node:          strings.TrimSpace(cmd.Node),
+		CorrelationID: strings.TrimSpace(cmd.CorrelationID),
+		Limit:         limit,
 	}
 	if cursor := strings.TrimSpace(cmd.Cursor); cursor != "" {
 		beforeAt, beforeID, err := decodeLogCursor(cursor)
@@ -306,6 +361,101 @@ func (s *ObservabilityService) PreviewLogs(ctx context.Context, cmd PreviewLogsC
 	}
 
 	return preview, nil
+}
+
+type CorrelatedObservability struct {
+	Trace    *TraceRecord    `json:"trace,omitempty"`
+	Logs     []LogLineRecord `json:"logs"`
+	Topology *TopologyGraph  `json:"topology,omitempty"`
+	NodeHops []string        `json:"node_hops"`
+}
+
+func (s *ObservabilityService) GetCorrelatedObservability(ctx context.Context, projectID, correlationID string) (*CorrelatedObservability, error) {
+	projectID = strings.TrimSpace(projectID)
+	correlationID = strings.TrimSpace(correlationID)
+	if projectID == "" || correlationID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	result := &CorrelatedObservability{
+		Logs:     make([]LogLineRecord, 0),
+		NodeHops: make([]string, 0),
+	}
+
+	trace, err := s.GetTraceByCorrelationID(ctx, correlationID)
+	if err == nil && trace != nil {
+		result.Trace = trace
+		result.NodeHops = trace.NodeHops
+	}
+
+	logQuery := models.LogStreamQuery{
+		ProjectID:     projectID,
+		CorrelationID: correlationID,
+		Limit:         100,
+	}
+	logEntries, err := s.logs.ListByQuery(logQuery)
+	if err == nil {
+		for _, entry := range logEntries {
+			result.Logs = append(result.Logs, LogLineRecord{
+				Timestamp: entry.OccurredAt,
+				Level:     entry.Level,
+				Message:   entry.Message,
+				Node:      entry.Node,
+			})
+		}
+	}
+
+	topology, err := s.BuildTopologyGraph(ctx, projectID)
+	if err == nil && topology != nil {
+		result.Topology = topology
+	}
+
+	return result, nil
+}
+
+func (s *ObservabilityService) ListTracesByProject(ctx context.Context, projectID string, limit int) ([]*TraceRecord, error) {
+	traces, err := s.traces.ListByProject(projectID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*TraceRecord, len(traces))
+	for i, trace := range traces {
+		out[i] = toTraceRecord(trace)
+	}
+	return out, nil
+}
+
+func toTraceRecord(t models.TraceSummary) *TraceRecord {
+	var metadata map[string]any
+	if t.MetadataJSON != "" {
+		_ = json.Unmarshal([]byte(t.MetadataJSON), &metadata)
+	}
+
+	var nodeHops []string
+	if hops, ok := metadata["node_hops"].([]any); ok {
+		for _, h := range hops {
+			if s, ok := h.(string); ok {
+				nodeHops = append(nodeHops, s)
+			}
+		}
+	}
+
+	return &TraceRecord{
+		ID:             t.ID,
+		CorrelationID:  t.CorrelationID,
+		ProjectID:      t.ProjectID,
+		ServiceName:    t.ServiceName,
+		Operation:      t.Operation,
+		HTTPMethod:     t.HTTPMethod,
+		HTTPStatusCode: t.HTTPStatusCode,
+		DurationMs:     t.DurationMs,
+		Status:         t.Status,
+		ErrorSummary:   t.ErrorSummary,
+		SpanCount:      t.SpanCount,
+		NodeHops:       nodeHops,
+		ReceivedAt:     t.ReceivedAt,
+	}
 }
 
 func (s *ObservabilityService) BuildTopologyGraph(ctx context.Context, projectID string) (*TopologyGraph, error) {
@@ -509,21 +659,23 @@ type TopologyEdgeRecord struct {
 }
 
 type IngestLogBatchCommand struct {
-	ProjectID   string
-	BindingID   string
-	RevisionID  string
-	ServiceName string
-	Entries     []LogBatchEntry
-	CollectedAt time.Time
+	ProjectID     string
+	BindingID     string
+	RevisionID    string
+	ServiceName   string
+	CorrelationID string
+	Entries       []LogBatchEntry
+	CollectedAt   time.Time
 }
 
 type LogBatchEntry struct {
-	Timestamp time.Time
-	Severity  string
-	Source    string
-	Message   string
-	Excerpt   string
-	Labels    map[string]string
+	Timestamp     time.Time
+	Severity      string
+	Source        string
+	Message       string
+	Excerpt       string
+	Labels        map[string]string
+	CorrelationID string
 }
 
 type LogBatchRecord struct {
@@ -536,13 +688,14 @@ type LogBatchRecord struct {
 }
 
 type PreviewLogsCommand struct {
-	ProjectID   string
-	ServiceName string
-	Level       string
-	Contains    string
-	Node        string
-	Cursor      string
-	Limit       int
+	ProjectID     string
+	ServiceName   string
+	Level         string
+	Contains      string
+	Node          string
+	CorrelationID string
+	Cursor        string
+	Limit         int
 }
 
 type LogsStreamPreview struct {

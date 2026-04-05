@@ -82,12 +82,34 @@ func (d *DistributedK3sDriver) PlanRollout(ctx context.Context, req RolloutReque
 }
 
 func (d *DistributedK3sDriver) ExecuteCommand(ctx context.Context, cmd AgentCommand) (*CommandResult, error) {
+	if cmd.Type == "" {
+		return nil, fmt.Errorf("command type is required")
+	}
 	if err := d.guardK3sBoundary(cmd); err != nil {
 		return nil, err
 	}
+
+	validTypes := map[string]bool{
+		"render_gateway_config":   true,
+		"reconcile_revision":      true,
+		"start_release_candidate": true,
+		"run_health_gate":         true,
+		"promote_release":         true,
+		"rollback_release":        true,
+		"garbage_collect_runtime": true,
+	}
+
+	if !validTypes[cmd.Type] {
+		return nil, fmt.Errorf("unsupported command type %q for k3s driver", cmd.Type)
+	}
+
 	return &CommandResult{
 		RequestID: cmd.RequestID,
 		Status:    "dispatched",
+		Output: map[string]any{
+			"driver":  "distributed_k3s",
+			"command": cmd.Type,
+		},
 	}, nil
 }
 

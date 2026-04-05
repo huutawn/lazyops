@@ -28,7 +28,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
-	agentControlController := controller.NewAgentControlController(app.ControlHub, app.ObservabilitySvc, app.Config)
+	agentControlController := controller.NewAgentControlController(app.ControlHub, app.CommandTracker, app.ObservabilitySvc, app.Config)
 	operatorStreamController := controller.NewOperatorStreamController(app.OperatorStreamHub, app.Config)
 
 	rootAgentControl := router.Group("/ws")

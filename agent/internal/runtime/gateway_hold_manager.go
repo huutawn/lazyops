@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"lazyops-agent/internal/contracts"
 )
 
 type GatewayHoldConfig struct {
@@ -41,6 +43,9 @@ type GatewayHoldManager struct {
 	total   int
 	expired int
 	resumed int
+
+	stopCh chan struct{}
+	doneCh chan struct{}
 }
 
 func NewGatewayHoldManager(logger *slog.Logger, cfg GatewayHoldConfig) *GatewayHoldManager {
@@ -183,4 +188,55 @@ func (m *GatewayHoldManager) PersistHoldState(workspaceRoot, projectID, bindingI
 	}
 
 	return holdPath, nil
+}
+
+func (m *GatewayHoldManager) StartBackgroundLoop() {
+	m.stopCh = make(chan struct{})
+	m.doneCh = make(chan struct{})
+	go m.backgroundLoop()
+}
+
+func (m *GatewayHoldManager) StopBackgroundLoop() {
+	if m.stopCh == nil {
+		return
+	}
+	close(m.stopCh)
+	<-m.doneCh
+}
+
+func (m *GatewayHoldManager) backgroundLoop() {
+	defer close(m.doneCh)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			if m.logger != nil {
+				m.logger.Info("gateway hold manager background loop stopped")
+			}
+			return
+		case <-ticker.C:
+			expired := m.CollectExpiredHolds()
+			for _, req := range expired {
+				if m.logger != nil {
+					m.logger.Warn("gateway hold expired",
+						"service", req.ServiceName,
+						"request_id", req.RequestID,
+						"held_at", req.HeldAt.Format(time.RFC3339),
+					)
+				}
+			}
+		}
+	}
+}
+
+func (m *GatewayHoldManager) HoldTimeoutFromPolicy(policy contracts.ScaleToZeroPolicy) time.Duration {
+	if policy.GatewayHoldTimeout != "" {
+		if d, err := time.ParseDuration(policy.GatewayHoldTimeout); err == nil && d > 0 {
+			return d
+		}
+	}
+	return m.cfg.DefaultHoldTimeout
 }

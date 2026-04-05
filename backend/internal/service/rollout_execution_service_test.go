@@ -16,13 +16,17 @@ type fakeRolloutDispatcher struct {
 	err      error
 }
 
-func (f *fakeRolloutDispatcher) DispatchCommand(_ context.Context, agentID string, cmd runtime.AgentCommand) error {
+func (f *fakeRolloutDispatcher) DispatchCommand(_ context.Context, agentID string, cmd runtime.AgentCommand) (*runtime.CommandResult, error) {
 	if f.err != nil {
-		return f.err
+		return nil, f.err
 	}
 	f.agentIDs = append(f.agentIDs, agentID)
 	f.commands = append(f.commands, cmd)
-	return nil
+	return &runtime.CommandResult{RequestID: cmd.RequestID, Status: "dispatched"}, nil
+}
+
+func (f *fakeRolloutDispatcher) WaitForCommand(_ context.Context, requestID string) (*TrackedCommand, error) {
+	return &TrackedCommand{RequestID: requestID, State: CommandStateDone}, nil
 }
 
 func dispatchedTypes(commands []runtime.AgentCommand) []string {
@@ -84,6 +88,8 @@ func TestRolloutExecutionServiceStartDeploymentHappyPath(t *testing.T) {
 
 	expected := []string{
 		runtime.CommandTypePrepareReleaseWorkspace,
+		runtime.CommandTypeRenderSidecars,
+		runtime.CommandTypeRenderGatewayConfig,
 		runtime.CommandTypeReconcileRevision,
 		runtime.CommandTypeStartReleaseCandidate,
 		runtime.CommandTypeRunHealthGate,
@@ -193,6 +199,8 @@ func TestRolloutExecutionServiceRollbacksFailedHealthGate(t *testing.T) {
 
 	expected := []string{
 		runtime.CommandTypePrepareReleaseWorkspace,
+		runtime.CommandTypeRenderSidecars,
+		runtime.CommandTypeRenderGatewayConfig,
 		runtime.CommandTypeReconcileRevision,
 		runtime.CommandTypeStartReleaseCandidate,
 		runtime.CommandTypeRunHealthGate,

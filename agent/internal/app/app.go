@@ -65,6 +65,8 @@ func New(cfg config.Config) (*App, error) {
 	store := state.New(statePath)
 	runtimeDriver := agentruntime.NewFilesystemDriver(logger, runtimeRoot)
 	runtimeService := agentruntime.NewService(logger, store, runtimeDriver)
+	topologyReporter := agentruntime.NewTopologyReporter(logger, agentruntime.DefaultTopologyReporterConfig())
+	runtimeService.WithTopologyReporter(topologyReporter)
 	meshService := agentruntime.NewMeshService(logger, store, agentruntime.NewMeshManager(logger, runtimeRoot))
 
 	registry := dispatcher.NewDefaultRegistry()

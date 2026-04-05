@@ -68,6 +68,15 @@ func (d *DistributedMeshDriver) PlanRollout(ctx context.Context, req RolloutRequ
 				},
 			},
 			{
+				Kind: "render_gateway_config",
+				Command: AgentCommand{
+					Type:      "render_gateway_config",
+					ProjectID: req.ProjectID,
+					Source:    "distributed_mesh_driver",
+					Payload:   req.RevisionPayload,
+				},
+			},
+			{
 				Kind: "reconcile",
 				Command: AgentCommand{
 					Type:      "reconcile_revision",
@@ -101,8 +110,33 @@ func (d *DistributedMeshDriver) PlanRollout(ctx context.Context, req RolloutRequ
 }
 
 func (d *DistributedMeshDriver) ExecuteCommand(ctx context.Context, cmd AgentCommand) (*CommandResult, error) {
+	if cmd.Type == "" {
+		return nil, fmt.Errorf("command type is required")
+	}
+
+	validTypes := map[string]bool{
+		"ensure_mesh_peer":        true,
+		"sync_overlay_routes":     true,
+		"render_sidecars":         true,
+		"render_gateway_config":   true,
+		"reconcile_revision":      true,
+		"start_release_candidate": true,
+		"run_health_gate":         true,
+		"promote_release":         true,
+		"rollback_release":        true,
+		"garbage_collect_runtime": true,
+	}
+
+	if !validTypes[cmd.Type] {
+		return nil, fmt.Errorf("unsupported command type %q for mesh driver", cmd.Type)
+	}
+
 	return &CommandResult{
 		RequestID: cmd.RequestID,
 		Status:    "dispatched",
+		Output: map[string]any{
+			"driver":  "distributed_mesh",
+			"command": cmd.Type,
+		},
 	}, nil
 }

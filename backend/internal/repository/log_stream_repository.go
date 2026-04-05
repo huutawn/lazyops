@@ -22,14 +22,19 @@ func (r *LogStreamRepository) CreateBatch(entries []models.LogStreamEntry) error
 }
 
 func (r *LogStreamRepository) ListByQuery(query models.LogStreamQuery) ([]models.LogStreamEntry, error) {
-	tx := r.db.Model(&models.LogStreamEntry{}).
-		Where("project_id = ? AND service_name = ?", query.ProjectID, query.ServiceName)
+	tx := r.db.Model(&models.LogStreamEntry{}).Where("project_id = ?", query.ProjectID)
 
+	if query.ServiceName != "" {
+		tx = tx.Where("service_name = ?", query.ServiceName)
+	}
 	if query.Level != "" {
 		tx = tx.Where("level = ?", query.Level)
 	}
 	if query.Node != "" {
 		tx = tx.Where("node = ?", query.Node)
+	}
+	if query.CorrelationID != "" {
+		tx = tx.Where("correlation_id = ?", query.CorrelationID)
 	}
 	if query.Contains != "" {
 		tx = tx.Where("message ILIKE ?", "%"+query.Contains+"%")

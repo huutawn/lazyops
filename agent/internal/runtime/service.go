@@ -36,6 +36,7 @@ type Service struct {
 	autosleepManager *AutosleepManager
 	gatewayHoldMgr   *GatewayHoldManager
 	scaleToZeroGuard *ScaleToZeroGuard
+	nodeAgentGuard   *NodeAgentGuard
 	now              func() time.Time
 }
 
@@ -125,6 +126,11 @@ func (s *Service) WithScaleToZeroGuard(guard *ScaleToZeroGuard) *Service {
 	return s
 }
 
+func (s *Service) WithNodeAgentGuard(guard *NodeAgentGuard) *Service {
+	s.nodeAgentGuard = guard
+	return s
+}
+
 func (s *Service) Register(registry *dispatcher.Registry) {
 	if registry == nil {
 		return
@@ -151,6 +157,14 @@ func (s *Service) handlePrepareReleaseWorkspace(ctx context.Context, envelope co
 		return dispatcher.NonRetryable("invalid_prepare_release_workspace_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("prepare_release_workspace"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "prepare_release_workspace",
+			})
+		}
 	}
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
@@ -197,6 +211,14 @@ func (s *Service) handleStartReleaseCandidate(ctx context.Context, envelope cont
 		return dispatcher.NonRetryable("invalid_start_release_candidate_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("start_release_candidate"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "start_release_candidate",
+			})
+		}
 	}
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
@@ -246,6 +268,14 @@ func (s *Service) handleRenderGatewayConfig(ctx context.Context, envelope contra
 		return dispatcher.NonRetryable("invalid_render_gateway_config_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("render_gateway_config"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "render_gateway_config",
+			})
+		}
 	}
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
@@ -300,6 +330,14 @@ func (s *Service) handleRenderSidecars(ctx context.Context, envelope contracts.C
 		})
 	}
 
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("render_sidecars"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "render_sidecars",
+			})
+		}
+	}
+
 	runtimeCtx, err := ContextFromPreparePayload(payload)
 	if err != nil {
 		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
@@ -350,6 +388,14 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 		return dispatcher.NonRetryable("invalid_run_health_gate_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("run_health_gate"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "run_health_gate",
+			})
+		}
 	}
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
@@ -435,6 +481,14 @@ func (s *Service) handlePromoteRelease(ctx context.Context, envelope contracts.C
 		})
 	}
 
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("promote_release"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "promote_release",
+			})
+		}
+	}
+
 	runtimeCtx, err := ContextFromPreparePayload(payload)
 	if err != nil {
 		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
@@ -506,6 +560,14 @@ func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.
 		return dispatcher.NonRetryable("invalid_rollback_release_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("rollback_release"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "rollback_release",
+			})
+		}
 	}
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
@@ -726,6 +788,14 @@ func (s *Service) handleReportLogBatch(ctx context.Context, envelope contracts.C
 		})
 	}
 
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertTelemetryOnly("container_log_tailing"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "container_log_tailing",
+			})
+		}
+	}
+
 	if s.logCollector == nil {
 		return dispatcher.NonRetryable("log_collector_not_configured", "log collector is not initialized", nil)
 	}
@@ -868,6 +938,14 @@ func (s *Service) handleSleepService(ctx context.Context, envelope contracts.Com
 		})
 	}
 
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("sleep_service"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "sleep_service",
+			})
+		}
+	}
+
 	if s.autosleepManager == nil {
 		return dispatcher.NonRetryable("autosleep_manager_not_configured", "autosleep manager is not initialized", nil)
 	}
@@ -894,7 +972,13 @@ func (s *Service) handleSleepService(ctx context.Context, envelope contracts.Com
 		}
 
 		if s.gatewayHoldMgr != nil {
-			_ = s.gatewayHoldMgr.ResumeRequests(payload.ServiceName)
+			resumed := s.gatewayHoldMgr.ResumeRequests(payload.ServiceName)
+			if s.logger != nil && len(resumed) > 0 {
+				s.logger.Info("resumed held requests on sleep",
+					"service", payload.ServiceName,
+					"count", len(resumed),
+				)
+			}
 		}
 
 		return dispatcher.Done(fmt.Sprintf("service %s put to sleep at %s", payload.ServiceName, state.SleepingAt.Format(time.RFC3339)))
@@ -908,7 +992,13 @@ func (s *Service) handleSleepService(ctx context.Context, envelope contracts.Com
 	}
 
 	if s.gatewayHoldMgr != nil {
-		_ = s.gatewayHoldMgr.ResumeRequests(payload.ServiceName)
+		resumed := s.gatewayHoldMgr.ResumeRequests(payload.ServiceName)
+		if s.logger != nil && len(resumed) > 0 {
+			s.logger.Info("resumed held requests on sleep",
+				"service", payload.ServiceName,
+				"count", len(resumed),
+			)
+		}
 	}
 
 	return dispatcher.Done(fmt.Sprintf("service %s put to sleep at %s", payload.ServiceName, state.SleepingAt.Format(time.RFC3339)))
@@ -920,6 +1010,14 @@ func (s *Service) handleWakeService(ctx context.Context, envelope contracts.Comm
 		return dispatcher.NonRetryable("invalid_wake_service_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("wake_service"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "wake_service",
+			})
+		}
 	}
 
 	if s.autosleepManager == nil {
@@ -949,6 +1047,16 @@ func (s *Service) handleWakeService(ctx context.Context, envelope contracts.Comm
 
 		s.scaleToZeroGuard.MarkActive(payload.ServiceName)
 
+		if s.gatewayHoldMgr != nil {
+			resumed := s.gatewayHoldMgr.ResumeRequests(payload.ServiceName)
+			if s.logger != nil && len(resumed) > 0 {
+				s.logger.Info("resumed held requests on wake",
+					"service", payload.ServiceName,
+					"count", len(resumed),
+				)
+			}
+		}
+
 		return dispatcher.Done(fmt.Sprintf("service %s woke at %s", payload.ServiceName, state.LastActiveAt.Format(time.RFC3339)))
 	}
 
@@ -960,6 +1068,16 @@ func (s *Service) handleWakeService(ctx context.Context, envelope contracts.Comm
 	}
 
 	s.autosleepManager.MarkActive(payload.ServiceName)
+
+	if s.gatewayHoldMgr != nil {
+		resumed := s.gatewayHoldMgr.ResumeRequests(payload.ServiceName)
+		if s.logger != nil && len(resumed) > 0 {
+			s.logger.Info("resumed held requests on wake",
+				"service", payload.ServiceName,
+				"count", len(resumed),
+			)
+		}
+	}
 
 	return dispatcher.Done(fmt.Sprintf("service %s woke at %s", payload.ServiceName, state.LastActiveAt.Format(time.RFC3339)))
 }

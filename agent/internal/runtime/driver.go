@@ -17,6 +17,7 @@ var ErrNotImplemented = fmt.Errorf("runtime driver operation is not implemented 
 
 type Driver interface {
 	PrepareReleaseWorkspace(context.Context, RuntimeContext) (PreparedWorkspace, error)
+	ReconcileRevision(context.Context, RuntimeContext) (ReconcileRevisionResult, error)
 	RenderGatewayConfig(context.Context, RuntimeContext) (GatewayRenderResult, error)
 	RenderSidecars(context.Context, RuntimeContext) (SidecarRenderResult, error)
 	StartReleaseCandidate(context.Context, RuntimeContext) (CandidateRecord, error)
@@ -629,6 +630,13 @@ type GarbageCollectRuntimeResult struct {
 	Summary                string    `json:"summary"`
 	ReportPath             string    `json:"report_path"`
 	CollectedAt            time.Time `json:"collected_at"`
+}
+
+type ReconcileRevisionResult struct {
+	RevisionID   string    `json:"revision_id"`
+	AppliedSteps []string  `json:"applied_steps"`
+	Summary      string    `json:"summary"`
+	CompletedAt  time.Time `json:"completed_at"`
 }
 
 type OperationError struct {

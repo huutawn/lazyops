@@ -29,62 +29,60 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="auth-layout">
-      <div className="auth-page">
-        <h1>Create account</h1>
-        <p className="mb-6 text-sm text-lazyops-muted">
-          Get started with LazyOps
-        </p>
-
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-          <FormField label="Name" error={errors.name?.message}>
-            <FormInput
-              type="text"
-              autoComplete="name"
-              placeholder="Your name"
-              error={!!errors.name}
-              {...register('name')}
-            />
-          </FormField>
-
-          <FormField label="Email" error={errors.email?.message}>
-            <FormInput
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              error={!!errors.email}
-              {...register('email')}
-            />
-          </FormField>
-
-          <FormField label="Password" error={errors.password?.message}>
-            <FormInput
-              type="password"
-              autoComplete="new-password"
-              placeholder="Min 8 characters"
-              error={!!errors.password}
-              {...register('password')}
-            />
-          </FormField>
-
-          {serverError && (
-            <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
-              {serverError}
-            </div>
-          )}
-
-          <FormButton type="submit" loading={isSubmitting || registerMutation.isPending}>
-            Create account
-          </FormButton>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-lazyops-muted">
-          Already have an account?{' '}
-          <Link href="/login" className="text-primary hover:underline">
-            Sign in
-          </Link>
-        </p>
+    <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
+      <div className="space-y-2 text-center lg:text-left">
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Create account</h1>
+        <p className="text-sm text-muted-foreground">Get started with LazyOps</p>
       </div>
+
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
+        <FormField label="Name" error={errors.name?.message}>
+          <FormInput
+            type="text"
+            autoComplete="name"
+            placeholder="Your name"
+            error={!!errors.name}
+            {...register('name')}
+          />
+        </FormField>
+
+        <FormField label="Email" error={errors.email?.message}>
+          <FormInput
+            type="email"
+            autoComplete="email"
+            placeholder="you@example.com"
+            error={!!errors.email}
+            {...register('email')}
+          />
+        </FormField>
+
+        <FormField label="Password" error={errors.password?.message}>
+          <FormInput
+            type="password"
+            autoComplete="new-password"
+            placeholder="Min 8 characters"
+            error={!!errors.password}
+            {...register('password')}
+          />
+        </FormField>
+
+        {serverError && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive animate-in fade-in zoom-in-95">
+            {serverError}
+          </div>
+        )}
+
+        <FormButton type="submit" loading={isSubmitting || registerMutation.isPending} className="mt-2 h-11">
+          Create account
+        </FormButton>
+      </form>
+
+      <p className="text-center text-sm text-muted-foreground">
+        Already have an account?{' '}
+        <Link href="/login" className="font-semibold text-primary transition-colors hover:text-primary/80 hover:underline">
+          Sign in
+        </Link>
+      </p>
     </div>
   );
 }

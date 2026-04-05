@@ -1,17 +1,22 @@
+import { 
+  Rocket, FolderGit2, Target, Blocks, Network, 
+  Send, Activity, CircleDollarSign, type LucideIcon 
+} from 'lucide-react';
+
 export type NavItem = {
   label: string;
   href: string;
-  icon?: string;
+  icon?: LucideIcon;
   children?: NavItem[];
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { label: 'Onboarding', href: '/onboarding' },
-  { label: 'Projects', href: '/projects' },
-  { label: 'Targets', href: '/targets' },
-  { label: 'Integrations', href: '/integrations' },
-  { label: 'Topology', href: '/topology' },
-  { label: 'Deployments', href: '/deployments' },
-  { label: 'Observability', href: '/observability' },
-  { label: 'FinOps', href: '/finops' },
+  { label: 'Onboarding', href: '/onboarding', icon: Rocket },
+  { label: 'Projects', href: '/projects', icon: FolderGit2 },
+  { label: 'Targets', href: '/targets', icon: Target },
+  { label: 'Integrations', href: '/integrations', icon: Blocks },
+  { label: 'Topology', href: '/topology', icon: Network },
+  { label: 'Deployments', href: '/deployments', icon: Send },
+  { label: 'Observability', href: '/observability', icon: Activity },
+  { label: 'FinOps', href: '/finops', icon: CircleDollarSign },
 ];

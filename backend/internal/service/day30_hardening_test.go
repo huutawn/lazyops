@@ -445,6 +445,7 @@ func TestDay30AcceptanceMatrixGatewayMagicDomainRejectsPrivateIP(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
+ nil,
 	)
 
 	privateIPs := []string{"192.168.1.1", "10.0.0.1", "172.16.0.1", "127.0.0.1"}

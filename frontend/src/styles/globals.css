@@ -1,32 +1,73 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius: var(--radius);
+}
 
 @layer base {
   :root {
-    --bg: #08111f;
-    --bg-accent: #10233a;
-    --card: rgba(10, 22, 39, 0.82);
-    --border: rgba(137, 179, 255, 0.18);
-    --text: #eef4ff;
-    --muted: #a6b7d4;
-    --primary: #7dd3fc;
-    --success: #8de1b5;
-    --warning: #fbbf24;
-    --danger: #f87171;
-    --shadow: 0 30px 80px rgba(0, 0, 0, 0.34);
-    --health-healthy: #8de1b5;
-    --health-degraded: #fbbf24;
+    --background: #09090b;
+    --foreground: #fafafa;
+    --card: rgba(15, 15, 18, 0.75);
+    --card-foreground: #fafafa;
+    --popover: #0f0f12;
+    --popover-foreground: #fafafa;
+    --primary: #3b82f6;
+    --primary-foreground: #ffffff;
+    --secondary: #1e2028;
+    --secondary-foreground: #fafafa;
+    --muted: #1e2028;
+    --muted-foreground: #a1a1aa;
+    --accent: #1e2028;
+    --accent-foreground: #fafafa;
+    --destructive: #ef4444;
+    --destructive-foreground: #fafafa;
+    --border: rgba(255, 255, 255, 0.1);
+    --input: rgba(255, 255, 255, 0.05);
+    --ring: rgba(59, 130, 246, 0.4);
+    --radius: 0.75rem;
+
+    --lazyops-bg: #09090b;
+    --lazyops-bg-accent: #111216;
+    --lazyops-card: rgba(15, 15, 18, 0.85);
+    --lazyops-border: rgba(255, 255, 255, 0.1);
+    --lazyops-text: #fafafa;
+    --lazyops-muted: #a1a1aa;
+    --lazyops-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+
+    --health-healthy: #4ade80;
+    --health-degraded: #facc15;
     --health-unhealthy: #f87171;
-    --health-offline: #6366f1;
-    --health-unknown: #94a3b8;
-    --rollout-progress: #7dd3fc;
+    --health-offline: #a3a3a3;
+    --health-unknown: #737373;
+
+    --rollout-progress: #60a5fa;
     --rollout-paused: #fbbf24;
-    --rollout-failed: #f87171;
-    --rollout-completed: #8de1b5;
-    --incident-critical: #f87171;
-    --incident-warning: #fbbf24;
-    --incident-resolved: #8de1b5;
+    --rollout-failed: #ef4444;
+    --rollout-completed: #22c55e;
+    
+    --incident-critical: #ef4444;
+    --incident-warning: #f59e0b;
+    --incident-resolved: #10b981;
   }
 
   * {
@@ -36,55 +77,20 @@
   html,
   body {
     margin: 0;
-    min-height: 100%;
+    min-height: 100vh;
     padding: 0;
   }
 
   body {
-    background:
-      radial-gradient(circle at top left, rgba(125, 211, 252, 0.15), transparent 30%),
-      radial-gradient(circle at top right, rgba(141, 225, 181, 0.12), transparent 28%),
-      linear-gradient(180deg, #08111f 0%, #0d1729 100%);
-    color: var(--text);
-    font-family:
-      'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    background-color: var(--background);
+    background-image: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59, 130, 246, 0.15) 0%, transparent 100%);
+    color: var(--foreground);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   a {
     color: inherit;
-  }
-}
-
-@layer components {
-  .auth-layout {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    padding: 32px;
-  }
-
-  .auth-page {
-    width: min(440px, 100%);
-    border: 1px solid var(--border);
-    border-radius: 24px;
-    background: var(--card);
-    box-shadow: var(--shadow);
-    padding: 32px;
-    text-align: center;
-    backdrop-filter: blur(18px);
-  }
-
-  .auth-page h1 {
-    font-size: 1.8rem;
-    margin-bottom: 12px;
-  }
-
-  .auth-page p {
-    color: var(--muted);
-  }
-
-  .app-layout {
-    min-height: 100vh;
+    text-decoration: none;
   }
 }
