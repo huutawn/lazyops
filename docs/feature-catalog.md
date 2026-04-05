@@ -81,7 +81,7 @@ Mỗi tính năng bên dưới liệt kê tính năng là gì, luồng hoạt đ
 - Công nghệ: Bản ghi mạng mesh, dịch vụ giải quyết phụ thuộc, thu nhận trạng thái topology, từ vựng lệnh route và peer overlay.
 - Bề mặt sở hữu: backend, agent, CLI.
 - Hợp đồng chính thức: CRUD target mesh, `report_topology_state`, bản ghi lập kế hoạch mesh, `GET /api/v1/projects/:id/topology`.
-- Trạng thái hiện tại: `adapter/composed`.
+- Trạng thái hiện tại: `adapter/composed`. Đã sửa `findInstanceForService` để scope theo project thay vì dùng `ListByUser("")` với naive substring match trên JSON.
 
 ## Tương thích Sidecar
 
@@ -105,19 +105,19 @@ Mỗi tính năng bên dưới liệt kê tính năng là gì, luồng hoạt đ
 
 - Là gì: Tunnel debug tùy chọn cho cơ sở dữ liệu hoặc truy cập TCP chung.
 - Luồng công việc: CLI đọc `lazyops.yaml`, giải quyết dự án và binding, tạo một phiên tunnel thông qua backend, operator sử dụng cổng cục bộ, sau đó đóng phiên thông qua backend trong khi `tunnel list` vẫn chỉ cục bộ.
-- Công nghệ: Trình quản lý tunnel CLI, `MeshPlanningService` backend, lưu trữ `TunnelSession`, xác thực cổng cục bộ.
+- Công nghệ: Trình quản lý tunnel CLI, `MeshPlanningService` backend, lưu trữ `TunnelSession`, xác thực cổng cục bộ, cleanup session expired tự động.
 - Bề mặt sở hữu: backend, CLI.
 - Hợp đồng chính thức: `POST /api/v1/tunnels/db/sessions`, `POST /api/v1/tunnels/tcp/sessions`, `DELETE /api/v1/tunnels/sessions/:id`.
-- Trạng thái hiện tại: `implemented`, với hỗ trợ backend hiện tại giới hạn ở các binding giải quyết đến target `instance`.
+- Trạng thái hiện tại: `implemented`, với hỗ trợ backend hiện tại giới hạn ở các binding giải quyết đến target `instance`. Đã thêm port conflict detection và auto-close expired sessions.
 
 ## Scale-to-Zero
 
 - Là gì: Hành vi sleep và wake dựa trên chính sách cho các dịch vụ nhàn rỗi.
 - Luồng công việc: chính sách được lưu trữ trong `lazyops.yaml` và blueprint đã biên dịch, backend cung cấp từ vựng lệnh, và agents cuối cùng thực hiện chuyển đổi wake và sleep.
-- Công nghệ: `scale_to_zero_policy`, từ vựng lệnh autosleep, ngữ nghĩa giữ wake-up gateway, chính sách rollout và finops.
+- Công nghệ: `scale_to_zero_policy` (với `enabled`, `idle_window`, `gateway_hold_timeout`), từ vựng lệnh autosleep, ngữ nghĩa giữ wake-up gateway, chính sách rollout và finops.
 - Bề mặt sở hữu: backend, agent, CLI, frontend.
 - Hợp đồng chính thức: `wake_service`, `sleep_service`, chính sách scale-to-zero đã biên dịch trong payload blueprint và revision.
-- Trạng thái hiện tại: `adapter/composed`.
+- Trạng thái hiện tại: `adapter/composed`. Đã sửa: policy giờ mang đầy đủ `idle_window` và `gateway_hold_timeout`, `WakeServicePayload` có `ScaleToZeroPolicy`, `CheckColdStartTimeout` dùng configurable threshold thay vì hardcoded, K3s boundary enforced cho cả sleep và wake.
 
 ## Ranh giới K3s
 
@@ -126,4 +126,4 @@ Mỗi tính năng bên dưới liệt kê tính năng là gì, luồng hoạt đ
 - Công nghệ: CRUD cluster, hợp đồng node-agent, kỳ vọng telemetry cluster, guardrails planner.
 - Bề mặt sở hữu: backend, agent, frontend.
 - Hợp đồng chính thức: `POST/GET /api/v1/clusters`, họ hợp đồng node-agent, chế độ runtime `distributed-k3s`, các lệnh telemetry.
-- Trạng thái hiện tại: `adapter/composed`.
+- Trạng thái hiện tại: `adapter/composed`. Đã thêm `sleep_service`, `wake_service`, `scale_to_zero` vào forbidden commands của K3s driver.

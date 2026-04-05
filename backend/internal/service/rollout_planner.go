@@ -103,11 +103,21 @@ func (p *RolloutPlanner) PlanCandidate(ctx context.Context, projectID, revisionI
 	}
 
 	revisionPayload := map[string]any{
-		"revision_id":  revision.ID,
-		"commit_sha":   revision.CommitSHA,
-		"image_ref":    compiled.ArtifactRef,
-		"services":     compiled.Services,
-		"runtime_mode": binding.RuntimeMode,
+		"revision_id":           revision.ID,
+		"project_id":            projectID,
+		"blueprint_id":          revision.BlueprintID,
+		"deployment_binding_id": compiled.DeploymentBindingID,
+		"commit_sha":            revision.CommitSHA,
+		"artifact_ref":          compiled.ArtifactRef,
+		"image_ref":             compiled.ImageRef,
+		"trigger_kind":          revision.TriggerKind,
+		"runtime_mode":          binding.RuntimeMode,
+		"services":              compiled.Services,
+		"dependency_bindings":   compiled.DependencyBindings,
+		"compatibility_policy":  compiled.CompatibilityPolicy,
+		"magic_domain_policy":   compiled.MagicDomainPolicy,
+		"scale_to_zero_policy":  compiled.ScaleToZeroPolicy,
+		"placement_assignments": compiled.PlacementAssignments,
 	}
 
 	req := runtime.RolloutRequest{

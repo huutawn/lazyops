@@ -32,9 +32,11 @@ const (
 )
 
 var (
-	ErrUnsupportedProtocol  = errors.New("unsupported protocol for mesh dependency binding")
-	ErrTargetOffline        = errors.New("target instance is offline")
-	ErrTunnelSessionExpired = errors.New("tunnel session expired")
+	ErrUnsupportedProtocol       = errors.New("unsupported protocol for mesh dependency binding")
+	ErrTargetOffline             = errors.New("target instance is offline")
+	ErrTunnelSessionExpired      = errors.New("tunnel session expired")
+	ErrTunnelSessionPortConflict = errors.New("local port already in use by active tunnel session")
+	ErrTunnelSessionCloseFailed  = errors.New("failed to close expired tunnel session")
 )
 
 var allowedMeshProtocols = map[string]struct{}{
@@ -154,7 +156,22 @@ func (s *MeshPlanningService) CreateTunnelSession(ctx context.Context, projectID
 		return nil, fmt.Errorf("%w: cannot create tunnel to offline target", ErrTargetOffline)
 	}
 
+	existingSessions, err := s.tunnels.ListByTarget(targetKind, targetID)
+	if err != nil {
+		return nil, fmt.Errorf("check existing tunnel sessions: %w", err)
+	}
 	now := time.Now().UTC()
+	for _, existing := range existingSessions {
+		if existing.Status == TunnelSessionStatusActive && existing.LocalPort == localPort {
+			if existing.ExpiresAt.After(now) {
+				return nil, fmt.Errorf("local port %d already in use by active tunnel session %q", localPort, existing.ID)
+			}
+			if err := s.tunnels.CloseSession(existing.ID, now); err != nil {
+				return nil, fmt.Errorf("close expired tunnel session %q before creating new one: %w", existing.ID, err)
+			}
+		}
+	}
+
 	expiresAt := now.Add(ttl)
 
 	session := &models.TunnelSession{
@@ -263,18 +280,32 @@ func (s *MeshPlanningService) buildEnvInjection(serviceName, alias, targetIP str
 }
 
 func (s *MeshPlanningService) findInstanceForService(ctx context.Context, projectID, serviceName string) (*models.Instance, error) {
-	instances, err := s.instances.ListByUser("")
+	bindings, err := s.bindings.ListByProject(projectID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve project bindings for service %q: %w", serviceName, err)
+	}
+	if len(bindings) == 0 {
+		return nil, fmt.Errorf("no deployment binding found for project %q", projectID)
 	}
 
-	for _, inst := range instances {
-		if strings.Contains(inst.LabelsJSON, serviceName) {
-			return &inst, nil
+	for _, binding := range bindings {
+		if binding.TargetKind != "instance" {
+			continue
 		}
+		instance, err := s.instances.GetByID(binding.TargetID)
+		if err != nil {
+			continue
+		}
+		if instance == nil {
+			continue
+		}
+		if strings.EqualFold(instance.Status, "offline") {
+			continue
+		}
+		return instance, nil
 	}
 
-	return nil, fmt.Errorf("no instance found for service %q in project %q", serviceName, projectID)
+	return nil, fmt.Errorf("no online instance found for service %q in project %q", serviceName, projectID)
 }
 
 func (s *MeshPlanningService) findTargetInstance(ctx context.Context, projectID, targetKind, targetID string) (*models.Instance, error) {

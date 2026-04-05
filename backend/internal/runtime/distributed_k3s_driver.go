@@ -97,6 +97,9 @@ func (d *DistributedK3sDriver) guardK3sBoundary(cmd AgentCommand) error {
 		"docker_stop":   {},
 		"docker_rm":     {},
 		"direct_deploy": {},
+		"sleep_service": {},
+		"wake_service":  {},
+		"scale_to_zero": {},
 	}
 	if _, ok := forbiddenCommands[cmd.Type]; ok {
 		return fmt.Errorf("command %q is forbidden in distributed-k3s mode: workload scheduling must go through Kubernetes", cmd.Type)

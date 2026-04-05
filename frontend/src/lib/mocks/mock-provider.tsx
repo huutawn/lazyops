@@ -10,6 +10,11 @@ export function MockProvider({ children }: MockProviderProps) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    if (process.env.NODE_ENV === 'production') {
+      setReady(true);
+      return;
+    }
+
     const enabled = process.env.NEXT_PUBLIC_MOCK_MODE === 'true';
     if (!enabled) {
       setReady(true);

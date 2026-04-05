@@ -88,7 +88,7 @@ func TestScaleToZeroGuardSleepServiceStandalone(t *testing.T) {
 func TestScaleToZeroGuardWakeService(t *testing.T) {
 	g := testScaleToZeroGuard()
 	g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	state, err := g.WakeService("api")
+	state, err := g.WakeService("api", contracts.RuntimeModeStandalone)
 	if err != nil {
 		t.Fatalf("wake service: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestScaleToZeroGuardWakeService(t *testing.T) {
 func TestScaleToZeroGuardMarkActive(t *testing.T) {
 	g := testScaleToZeroGuard()
 	g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	g.WakeService("api")
+	g.WakeService("api", contracts.RuntimeModeStandalone)
 	g.MarkActive("api")
 
 	state, ok := g.autosleep.GetState("api")
@@ -123,7 +123,7 @@ func TestScaleToZeroGuardMarkActive(t *testing.T) {
 func TestScaleToZeroGuardCheckWakeTimeout(t *testing.T) {
 	g := testScaleToZeroGuard()
 	g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	g.WakeService("api")
+	g.WakeService("api", contracts.RuntimeModeStandalone)
 
 	g.now = func() time.Time {
 		return time.Date(2026, 4, 4, 13, 0, 35, 0, time.UTC)
@@ -141,7 +141,7 @@ func TestScaleToZeroGuardCheckWakeTimeout(t *testing.T) {
 func TestScaleToZeroGuardCheckWakeTimeoutNotExceeded(t *testing.T) {
 	g := testScaleToZeroGuard()
 	g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	g.WakeService("api")
+	g.WakeService("api", contracts.RuntimeModeStandalone)
 
 	timedOut, _ := g.CheckWakeTimeout("api")
 	if timedOut {
@@ -153,7 +153,7 @@ func TestScaleToZeroGuardCheckColdStartTimeout(t *testing.T) {
 	g := testScaleToZeroGuard()
 	for i := 0; i < 4; i++ {
 		g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-		g.WakeService("api")
+		g.WakeService("api", contracts.RuntimeModeStandalone)
 		g.MarkActive("api")
 	}
 
@@ -166,7 +166,7 @@ func TestScaleToZeroGuardCheckColdStartTimeout(t *testing.T) {
 func TestScaleToZeroGuardCheckColdStartTimeoutNotExceeded(t *testing.T) {
 	g := testScaleToZeroGuard()
 	g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	g.WakeService("api")
+	g.WakeService("api", contracts.RuntimeModeStandalone)
 	g.MarkActive("api")
 
 	isColdStartTimeout := g.CheckColdStartTimeout("api")
@@ -178,7 +178,7 @@ func TestScaleToZeroGuardCheckColdStartTimeoutNotExceeded(t *testing.T) {
 func TestScaleToZeroGuardResetWakeStats(t *testing.T) {
 	g := testScaleToZeroGuard()
 	g.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	g.WakeService("api")
+	g.WakeService("api", contracts.RuntimeModeStandalone)
 
 	g.ResetWakeStats("api")
 	wakeAttempts, coldStarts, lastWake := g.GetWakeStats("api")
@@ -332,7 +332,7 @@ func TestSleepServiceHandlerSucceedsWithGuard(t *testing.T) {
 func TestWakeServiceHandlerRejectsWakeTimeout(t *testing.T) {
 	guard := testScaleToZeroGuard()
 	guard.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	guard.WakeService("api")
+	guard.WakeService("api", contracts.RuntimeModeStandalone)
 
 	guard.now = func() time.Time {
 		return time.Date(2026, 4, 4, 13, 0, 35, 0, time.UTC)
@@ -375,7 +375,7 @@ func TestWakeServiceHandlerRejectsColdStartTimeout(t *testing.T) {
 	guard := testScaleToZeroGuard()
 	for i := 0; i < 4; i++ {
 		guard.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-		guard.WakeService("api")
+		guard.WakeService("api", contracts.RuntimeModeStandalone)
 		guard.MarkActive("api")
 	}
 

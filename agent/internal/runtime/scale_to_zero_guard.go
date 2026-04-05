@@ -15,6 +15,7 @@ type ScaleToZeroGuard struct {
 	gatewayHold      *GatewayHoldManager
 	wakeTimeout      time.Duration
 	coldStartTimeout time.Duration
+	maxColdStarts    int
 	now              func() time.Time
 
 	mu           sync.Mutex
@@ -35,12 +36,18 @@ func NewScaleToZeroGuard(logger *slog.Logger, autosleep *AutosleepManager, gatew
 		coldStartTimeout = 60 * time.Second
 	}
 
+	maxColdStarts := int(coldStartTimeout / (30 * time.Second))
+	if maxColdStarts < 3 {
+		maxColdStarts = 3
+	}
+
 	return &ScaleToZeroGuard{
 		logger:           logger,
 		autosleep:        autosleep,
 		gatewayHold:      gatewayHold,
 		wakeTimeout:      wakeTimeout,
 		coldStartTimeout: coldStartTimeout,
+		maxColdStarts:    maxColdStarts,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -78,7 +85,11 @@ func (g *ScaleToZeroGuard) SleepService(serviceName, revisionID string, runtimeM
 	return g.autosleep.SleepService(serviceName, revisionID)
 }
 
-func (g *ScaleToZeroGuard) WakeService(serviceName string) (*ServiceSleepState, error) {
+func (g *ScaleToZeroGuard) WakeService(serviceName string, runtimeMode contracts.RuntimeMode) (*ServiceSleepState, error) {
+	if runtimeMode == contracts.RuntimeModeDistributedK3s {
+		return nil, fmt.Errorf("scale-to-zero is not supported in distributed-k3s mode")
+	}
+
 	state, err := g.autosleep.WakeService(serviceName)
 	if err != nil {
 		return nil, err
@@ -123,7 +134,7 @@ func (g *ScaleToZeroGuard) CheckColdStartTimeout(serviceName string) bool {
 	defer g.mu.Unlock()
 
 	count := g.coldStarts[serviceName]
-	return count > 3
+	return count > g.maxColdStarts
 }
 
 func (g *ScaleToZeroGuard) GetWakeStats(serviceName string) (wakeAttempts, coldStarts int, lastWake time.Time) {

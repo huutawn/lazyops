@@ -173,6 +173,10 @@ func (ctl *TunnelController) createSession(c *gin.Context, sessionType string) {
 			response.Error(c, http.StatusNotFound, "failed to create tunnel session", "target_not_found", err.Error())
 		case errors.Is(err, service.ErrTargetOffline):
 			response.Error(c, http.StatusConflict, "failed to create tunnel session", "target_offline", err.Error())
+		case errors.Is(err, service.ErrTunnelSessionPortConflict):
+			response.Error(c, http.StatusConflict, "failed to create tunnel session", "port_conflict", err.Error())
+		case errors.Is(err, service.ErrTunnelSessionCloseFailed):
+			response.Error(c, http.StatusConflict, "failed to create tunnel session", "session_cleanup_failed", err.Error())
 		case errors.Is(err, service.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, "failed to create tunnel session", "invalid_input", err.Error())
 		default:

@@ -322,7 +322,7 @@ func TestAcceptanceMatrixScaleToZeroOptInAndWake(t *testing.T) {
 	}
 
 	guard.SleepService("api", "rev_123", contracts.RuntimeModeStandalone)
-	state, err := guard.WakeService("api")
+	state, err := guard.WakeService("api", contracts.RuntimeModeStandalone)
 	if err != nil {
 		t.Fatalf("wake service: %v", err)
 	}

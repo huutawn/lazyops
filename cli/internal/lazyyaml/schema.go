@@ -65,7 +65,9 @@ type PreviewPolicy struct {
 }
 
 type ScaleToZeroPolicy struct {
-	Enabled bool `json:"enabled"`
+	Enabled            bool   `json:"enabled"`
+	IdleWindow         string `json:"idle_window,omitempty"`
+	GatewayHoldTimeout string `json:"gateway_hold_timeout,omitempty"`
 }
 
 var (

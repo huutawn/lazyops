@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSession } from '@/lib/auth/auth-hooks';
+import { useSessionRefresh } from '@/lib/auth/session-refresh';
 import { LoadingPage } from '@/components/primitives/loading';
 
 type AuthGuardProps = {
@@ -19,6 +20,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const { data: session, isLoading, isError } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+
+  useSessionRefresh();
 
   useEffect(() => {
     if (isError && !isPublicPath(pathname)) {

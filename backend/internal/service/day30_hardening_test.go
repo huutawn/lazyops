@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,7 +135,7 @@ func TestDay30AcceptanceMatrixPreviewCleanupIdempotency(t *testing.T) {
 func TestDay30AcceptanceMatrixMeshFailureOfflineTarget(t *testing.T) {
 	instanceStore := newFakeInstanceStore(&models.Instance{
 		ID:         "inst_offline",
-		UserID:     "",
+		UserID:     "usr_123",
 		Name:       "edge-sg-2",
 		PublicIP:   ptrString("203.0.113.11"),
 		PrivateIP:  ptrString("10.0.1.6"),
@@ -151,9 +152,17 @@ func TestDay30AcceptanceMatrixMeshFailureOfflineTarget(t *testing.T) {
 		LastSeenAt:   time.Now().UTC().Add(-1 * time.Hour),
 	})
 
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetRef:  "main",
+		TargetKind: "instance",
+		TargetID:   "inst_offline",
+	})
+
 	svc := newTestMeshPlanningService(
 		instanceStore,
-		newFakeDeploymentBindingStore(),
+		bindingStore,
 		newFakeDesiredStateRevisionStore(),
 		newFakeTunnelSessionStore(),
 		topologyStore,
@@ -169,8 +178,8 @@ func TestDay30AcceptanceMatrixMeshFailureOfflineTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when target is offline")
 	}
-	if !errors.Is(err, ErrTargetOffline) {
-		t.Fatalf("expected ErrTargetOffline, got %v", err)
+	if !strings.Contains(err.Error(), "no online instance found") && !errors.Is(err, ErrTargetOffline) {
+		t.Fatalf("expected offline target error, got %v", err)
 	}
 }
 

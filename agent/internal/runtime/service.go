@@ -852,11 +852,12 @@ type SleepServicePayload struct {
 }
 
 type WakeServicePayload struct {
-	ProjectID   string                `json:"project_id"`
-	BindingID   string                `json:"binding_id"`
-	RevisionID  string                `json:"revision_id"`
-	RuntimeMode contracts.RuntimeMode `json:"runtime_mode"`
-	ServiceName string                `json:"service_name"`
+	ProjectID         string                      `json:"project_id"`
+	BindingID         string                      `json:"binding_id"`
+	RevisionID        string                      `json:"revision_id"`
+	RuntimeMode       contracts.RuntimeMode       `json:"runtime_mode"`
+	ServiceName       string                      `json:"service_name"`
+	ScaleToZeroPolicy contracts.ScaleToZeroPolicy `json:"scale_to_zero_policy"`
 }
 
 func (s *Service) handleSleepService(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
@@ -939,7 +940,7 @@ func (s *Service) handleWakeService(ctx context.Context, envelope contracts.Comm
 			})
 		}
 
-		state, err := s.scaleToZeroGuard.WakeService(payload.ServiceName)
+		state, err := s.scaleToZeroGuard.WakeService(payload.ServiceName, payload.RuntimeMode)
 		if err != nil {
 			return dispatcher.Retryable("wake_service_failed", err.Error(), map[string]any{
 				"service_name": payload.ServiceName,

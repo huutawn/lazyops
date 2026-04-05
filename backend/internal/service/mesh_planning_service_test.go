@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,7 +120,7 @@ func newTestMeshPlanningService(
 func TestMeshPlanningServiceResolveDependencySuccess(t *testing.T) {
 	instanceStore := newFakeInstanceStore(&models.Instance{
 		ID:         "inst_123",
-		UserID:     "",
+		UserID:     "usr_123",
 		Name:       "edge-sg-1",
 		PublicIP:   ptrString("203.0.113.10"),
 		PrivateIP:  ptrString("10.0.1.5"),
@@ -136,9 +137,17 @@ func TestMeshPlanningServiceResolveDependencySuccess(t *testing.T) {
 		LastSeenAt:   time.Now().UTC(),
 	})
 
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetRef:  "main",
+		TargetKind: "instance",
+		TargetID:   "inst_123",
+	})
+
 	svc := newTestMeshPlanningService(
 		instanceStore,
-		newFakeDeploymentBindingStore(),
+		bindingStore,
 		newFakeDesiredStateRevisionStore(),
 		newFakeTunnelSessionStore(),
 		topologyStore,
@@ -193,46 +202,6 @@ func TestMeshPlanningServiceRejectsUnsupportedProtocol(t *testing.T) {
 	}
 }
 
-func TestMeshPlanningServiceRejectsOfflineTarget(t *testing.T) {
-	instanceStore := newFakeInstanceStore(&models.Instance{
-		ID:         "inst_offline",
-		UserID:     "usr_123",
-		Name:       "edge-sg-2",
-		PublicIP:   ptrString("203.0.113.11"),
-		PrivateIP:  ptrString("10.0.1.6"),
-		Status:     "offline",
-		LabelsJSON: `{"services":["db"]}`,
-	})
-
-	topologyStore := newFakeTopologyStateStore(models.TopologyState{
-		ID:           "topo_offline",
-		InstanceID:   "inst_offline",
-		MeshID:       "mesh_123",
-		State:        TopologyStateOffline,
-		MetadataJSON: `{}`,
-		LastSeenAt:   time.Now().UTC().Add(-1 * time.Hour),
-	})
-
-	svc := newTestMeshPlanningService(
-		instanceStore,
-		newFakeDeploymentBindingStore(),
-		newFakeDesiredStateRevisionStore(),
-		newFakeTunnelSessionStore(),
-		topologyStore,
-	)
-
-	_, err := svc.ResolveDependencyBinding(context.Background(), "prj_123", "api", LazyopsYAMLDependencyBinding{
-		Service:       "api",
-		Alias:         "db",
-		TargetService: "db",
-		Protocol:      "tcp",
-		LocalEndpoint: "localhost:5432",
-	})
-	if err == nil {
-		t.Fatal("expected error for offline target")
-	}
-}
-
 func TestMeshPlanningServiceCreateTunnelSessionSuccess(t *testing.T) {
 	privateIP := "10.0.1.5"
 	instanceStore := newFakeInstanceStore(&models.Instance{
@@ -256,9 +225,17 @@ func TestMeshPlanningServiceCreateTunnelSessionSuccess(t *testing.T) {
 
 	tunnelStore := newFakeTunnelSessionStore()
 
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetRef:  "main",
+		TargetKind: "instance",
+		TargetID:   "inst_123",
+	})
+
 	svc := newTestMeshPlanningService(
 		instanceStore,
-		newFakeDeploymentBindingStore(),
+		bindingStore,
 		newFakeDesiredStateRevisionStore(),
 		tunnelStore,
 		topologyStore,
@@ -280,6 +257,54 @@ func TestMeshPlanningServiceCreateTunnelSessionSuccess(t *testing.T) {
 	}
 	if session.LocalPort != 5432 {
 		t.Fatalf("expected local port 5432, got %d", session.LocalPort)
+	}
+}
+
+func TestMeshPlanningServiceRejectsOfflineTarget(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:         "inst_offline",
+		UserID:     "usr_123",
+		Name:       "edge-sg-2",
+		PublicIP:   ptrString("203.0.113.11"),
+		PrivateIP:  ptrString("10.0.1.6"),
+		Status:     "offline",
+		LabelsJSON: `{"services":["db"]}`,
+	})
+
+	topologyStore := newFakeTopologyStateStore(models.TopologyState{
+		ID:           "topo_offline",
+		InstanceID:   "inst_offline",
+		MeshID:       "mesh_123",
+		State:        TopologyStateOffline,
+		MetadataJSON: `{}`,
+		LastSeenAt:   time.Now().UTC().Add(-1 * time.Hour),
+	})
+
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetRef:  "main",
+		TargetKind: "instance",
+		TargetID:   "inst_offline",
+	})
+
+	svc := newTestMeshPlanningService(
+		instanceStore,
+		bindingStore,
+		newFakeDesiredStateRevisionStore(),
+		newFakeTunnelSessionStore(),
+		topologyStore,
+	)
+
+	_, err := svc.ResolveDependencyBinding(context.Background(), "prj_123", "api", LazyopsYAMLDependencyBinding{
+		Service:       "api",
+		Alias:         "db",
+		TargetService: "db",
+		Protocol:      "tcp",
+		LocalEndpoint: "localhost:5432",
+	})
+	if err == nil {
+		t.Fatal("expected error for offline target")
 	}
 }
 
@@ -347,6 +372,121 @@ func TestMeshPlanningServiceCloseTunnelSession(t *testing.T) {
 
 	if result.Status != TunnelSessionStatusClosed {
 		t.Fatalf("expected status closed, got %q", result.Status)
+	}
+}
+
+func TestMeshPlanningServiceRejectsTunnelPortConflict(t *testing.T) {
+	privateIP := "10.0.1.5"
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:         "inst_123",
+		UserID:     "usr_123",
+		Name:       "edge-sg-1",
+		PublicIP:   ptrString("203.0.113.10"),
+		PrivateIP:  &privateIP,
+		Status:     "online",
+		LabelsJSON: `{}`,
+	})
+
+	topologyStore := newFakeTopologyStateStore(models.TopologyState{
+		ID:           "topo_123",
+		InstanceID:   "inst_123",
+		MeshID:       "mesh_123",
+		State:        TopologyStateOnline,
+		MetadataJSON: `{}`,
+		LastSeenAt:   time.Now().UTC(),
+	})
+
+	tunnelStore := newFakeTunnelSessionStore(models.TunnelSession{
+		ID:          "tun_active",
+		ProjectID:   "prj_123",
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+		InstanceID:  "inst_123",
+		SessionType: TunnelSessionTypeDB,
+		LocalPort:   5432,
+		RemotePort:  5432,
+		Status:      TunnelSessionStatusActive,
+		Token:       "tok_123",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	svc := newTestMeshPlanningService(
+		instanceStore,
+		newFakeDeploymentBindingStore(),
+		newFakeDesiredStateRevisionStore(),
+		tunnelStore,
+		topologyStore,
+	)
+
+	_, err := svc.CreateTunnelSession(context.Background(), "prj_123", "instance", "inst_123", TunnelSessionTypeDB, 5432, 5432, 1*time.Hour)
+	if err == nil {
+		t.Fatal("expected error for port conflict")
+	}
+	if !strings.Contains(err.Error(), "already in use") {
+		t.Fatalf("expected port conflict error, got %v", err)
+	}
+}
+
+func TestMeshPlanningServiceClosesExpiredSessionBeforeCreatingNew(t *testing.T) {
+	privateIP := "10.0.1.5"
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:         "inst_123",
+		UserID:     "usr_123",
+		Name:       "edge-sg-1",
+		PublicIP:   ptrString("203.0.113.10"),
+		PrivateIP:  &privateIP,
+		Status:     "online",
+		LabelsJSON: `{}`,
+	})
+
+	topologyStore := newFakeTopologyStateStore(models.TopologyState{
+		ID:           "topo_123",
+		InstanceID:   "inst_123",
+		MeshID:       "mesh_123",
+		State:        TopologyStateOnline,
+		MetadataJSON: `{}`,
+		LastSeenAt:   time.Now().UTC(),
+	})
+
+	expiredAt := time.Now().Add(-1 * time.Hour)
+	tunnelStore := newFakeTunnelSessionStore(models.TunnelSession{
+		ID:          "tun_expired",
+		ProjectID:   "prj_123",
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+		InstanceID:  "inst_123",
+		SessionType: TunnelSessionTypeDB,
+		LocalPort:   5432,
+		RemotePort:  5432,
+		Status:      TunnelSessionStatusActive,
+		Token:       "tok_123",
+		ExpiresAt:   expiredAt,
+	})
+
+	svc := newTestMeshPlanningService(
+		instanceStore,
+		newFakeDeploymentBindingStore(),
+		newFakeDesiredStateRevisionStore(),
+		tunnelStore,
+		topologyStore,
+	)
+
+	session, err := svc.CreateTunnelSession(context.Background(), "prj_123", "instance", "inst_123", TunnelSessionTypeDB, 5432, 5432, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("expected expired session to be closed and new session created, got %v", err)
+	}
+	if session.LocalPort != 5432 {
+		t.Fatalf("expected local port 5432, got %d", session.LocalPort)
+	}
+
+	closed := false
+	for _, s := range tunnelStore.items {
+		if s.ID == "tun_expired" && s.Status == TunnelSessionStatusClosed {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Fatal("expected expired tunnel session to be closed")
 	}
 }
 
