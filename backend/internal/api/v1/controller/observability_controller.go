@@ -143,6 +143,206 @@ func (ctl *ObservabilityController) StreamLogs(c *gin.Context) {
 	response.JSON(c, http.StatusOK, "logs loaded", preview)
 }
 
+func (ctl *ObservabilityController) GetCorrelatedObservability(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	correlationID := strings.TrimSpace(c.Query("correlation_id"))
+	if correlationID == "" {
+		response.Error(c, http.StatusBadRequest, "correlation_id is required", "missing_correlation_id", nil)
+		return
+	}
+
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Query("project"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to correlate", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to correlate", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to correlate", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to correlate", "internal_error", err.Error())
+		}
+		return
+	}
+
+	result, err := ctl.observability.GetCorrelatedObservability(c.Request.Context(), project.ID, correlationID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to correlate", "invalid_input", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to correlate", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "correlated observability loaded", result)
+}
+
+func (ctl *ObservabilityController) GetTraceLogs(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	traceID := strings.TrimSpace(c.Param("correlation_id"))
+	if traceID == "" {
+		response.Error(c, http.StatusBadRequest, "correlation_id is required", "missing_correlation_id", nil)
+		return
+	}
+
+	trace, err := ctl.observability.GetTraceByCorrelationID(c.Request.Context(), traceID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrTraceNotFound):
+			response.Error(c, http.StatusNotFound, "trace not found", "trace_not_found", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load trace", "internal_error", err.Error())
+		}
+		return
+	}
+
+	project, err := resolveProjectForClaims(ctl.projects, claims, trace.ProjectID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "project not found", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "project access denied", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load logs", "internal_error", err.Error())
+		}
+		return
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	logs, err := ctl.observability.GetTraceLogs(c.Request.Context(), service.TraceLogsQuery{
+		ProjectID:     project.ID,
+		CorrelationID: traceID,
+		Limit:         limit,
+	})
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to load trace logs", "internal_error", err.Error())
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "trace logs loaded", gin.H{
+		"correlation_id": traceID,
+		"logs":           logs,
+		"total":          len(logs),
+	})
+}
+
+func (ctl *ObservabilityController) GetTopologyNodeLogs(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	nodeID := strings.TrimSpace(c.Param("node_ref"))
+	if nodeID == "" {
+		response.Error(c, http.StatusBadRequest, "node is required", "missing_node", nil)
+		return
+	}
+
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Param("project"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load node logs", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "project not found", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "project access denied", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load node logs", "internal_error", err.Error())
+		}
+		return
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	logs, err := ctl.observability.GetTopologyNodeLogs(c.Request.Context(), service.TopologyNodeLogsQuery{
+		ProjectID: project.ID,
+		NodeRef:   nodeID,
+		Limit:     limit,
+	})
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to load node logs", "internal_error", err.Error())
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "node logs loaded", gin.H{
+		"node":  nodeID,
+		"logs":  logs,
+		"total": len(logs),
+	})
+}
+
+func (ctl *ObservabilityController) QueryObservability(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+
+	var req struct {
+		ProjectID     string `json:"project_id" binding:"required"`
+		CorrelationID string `json:"correlation_id"`
+		NodeID        string `json:"node_id"`
+		ServiceName   string `json:"service_name"`
+		Level         string `json:"level"`
+		Contains      string `json:"contains"`
+		Limit         int    `json:"limit"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid query payload", "invalid_input", err.Error())
+		return
+	}
+
+	if req.ProjectID == "" {
+		response.Error(c, http.StatusBadRequest, "project_id is required", "missing_project_id", nil)
+		return
+	}
+
+	project, err := resolveProjectForClaims(ctl.projects, claims, req.ProjectID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to query", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "project not found", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "project access denied", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to query", "internal_error", err.Error())
+		}
+		return
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	result, err := ctl.observability.QueryObservabilityData(c.Request.Context(), service.ObservabilityQuery{
+		ProjectID:     project.ID,
+		CorrelationID: req.CorrelationID,
+		NodeID:        req.NodeID,
+		ServiceName:   req.ServiceName,
+		Level:         req.Level,
+		Contains:      req.Contains,
+		Limit:         limit,
+	})
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to query observability", "internal_error", err.Error())
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "observability query completed", result)
+}
+
 func buildTraceServicePath(record service.TraceRecord) []string {
 	path := make([]string, 0, 4)
 

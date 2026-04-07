@@ -40,9 +40,11 @@ type ProcessManager struct {
 	healthCheckInterval time.Duration
 	now                 func() time.Time
 
-	mu        sync.Mutex
-	processes map[string]*ProcessInfo
-	cmds      map[string]*exec.Cmd
+	mu             sync.Mutex
+	processes      map[string]*ProcessInfo
+	cmds           map[string]*exec.Cmd
+	sidecarProxy   *SidecarProxy
+	iptablesManager *IPTablesManager
 }
 
 func NewProcessManager(logger *slog.Logger, runtimeRoot string) *ProcessManager {
@@ -55,8 +57,10 @@ func NewProcessManager(logger *slog.Logger, runtimeRoot string) *ProcessManager 
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-		processes: make(map[string]*ProcessInfo),
-		cmds:      make(map[string]*exec.Cmd),
+		processes:       make(map[string]*ProcessInfo),
+		cmds:            make(map[string]*exec.Cmd),
+		sidecarProxy:    NewSidecarProxy(logger),
+		iptablesManager: NewIPTablesManager(logger),
 	}
 }
 
@@ -75,7 +79,7 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 	}
 	m.processes[serviceName] = info
 
-	cmd := exec.CommandContext(ctx, "sleep", "3600")
+	cmd := exec.CommandContext(ctx, "sleep", "86400")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -97,6 +101,103 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 	}
 
 	return info, nil
+}
+
+// StartProxyProcess starts a real sidecar proxy for the given route.
+// This replaces the placeholder sleep command with actual TCP/HTTP proxying.
+func (m *ProcessManager) StartProxyProcess(ctx context.Context, route SidecarProxyRoute) (*ProcessInfo, error) {
+	if m.sidecarProxy == nil {
+		return nil, fmt.Errorf("sidecar proxy not initialized")
+	}
+
+	if err := m.sidecarProxy.StartRoute(ctx, route); err != nil {
+		return nil, fmt.Errorf("failed to start sidecar proxy for %s: %w", route.Alias, err)
+	}
+
+	// If localhost_rescue with iptables intercept, set up DNAT rule
+	if route.LocalhostRescue && route.NetworkNamespace && m.iptablesManager != nil {
+		if err := m.iptablesManager.EnsureChain(); err != nil {
+			m.logger.Warn("failed to ensure iptables chain, continuing without DNAT",
+				"alias", route.Alias,
+				"error", err,
+			)
+		} else {
+			// The proxy listens on a different port than the original;
+			// redirect the original port to the proxy port
+			iprule := IPTablesRule{
+				Alias:        route.Alias,
+				Protocol:     route.Protocol,
+				OriginalPort: route.ListenerPort,
+				RedirectPort: route.ListenerPort,
+				Comment:      fmt.Sprintf("lazyops-sidecar-%s", route.Alias),
+			}
+			if err := m.iptablesManager.AddDNATRule(iprule); err != nil {
+				m.logger.Warn("failed to add iptables DNAT rule, proxy still active via direct port",
+					"alias", route.Alias,
+					"error", err,
+				)
+			}
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	info := &ProcessInfo{
+		ServiceName: route.Alias,
+		PID:         0, // In-process proxy, no external PID
+		State:       ProcessStateRunning,
+		StartedAt:   m.now(),
+		ConfigPath:  fmt.Sprintf("%s:%d→%s", route.ListenerHost, route.ListenerPort, route.Upstream),
+	}
+	m.processes[route.Alias] = info
+
+	if m.logger != nil {
+		m.logger.Info("sidecar proxy process started",
+			"alias", route.Alias,
+			"target_service", route.TargetService,
+			"protocol", route.Protocol,
+			"listen", fmt.Sprintf("%s:%d", route.ListenerHost, route.ListenerPort),
+			"upstream", route.Upstream,
+			"forwarding_mode", route.ForwardingMode,
+			"localhost_rescue", route.LocalhostRescue,
+			"network_namespace", route.NetworkNamespace,
+		)
+	}
+
+	return info, nil
+}
+
+// StopProxyProcess stops a sidecar proxy route and removes associated iptables rules.
+func (m *ProcessManager) StopProxyProcess(alias string) error {
+	if m.sidecarProxy != nil {
+		_ = m.sidecarProxy.StopRoute(alias)
+	}
+	if m.iptablesManager != nil {
+		for _, rule := range m.iptablesManager.ListRules() {
+			if rule.Alias == alias {
+				_ = m.iptablesManager.RemoveDNATRule(rule)
+			}
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, ok := m.processes[alias]; ok {
+		info.State = ProcessStateStopped
+	}
+
+	return nil
+}
+
+// GetSidecarProxy returns the underlying SidecarProxy instance.
+func (m *ProcessManager) GetSidecarProxy() *SidecarProxy {
+	return m.sidecarProxy
+}
+
+// GetIPTablesManager returns the underlying IPTablesManager instance.
+func (m *ProcessManager) GetIPTablesManager() *IPTablesManager {
+	return m.iptablesManager
 }
 
 func (m *ProcessManager) StopProcess(serviceName string) error {
@@ -222,6 +323,14 @@ func (m *ProcessManager) StopAll() {
 
 	for _, name := range services {
 		_ = m.StopProcess(name)
+	}
+
+	// Also stop all sidecar proxy routes and clean up iptables
+	if m.sidecarProxy != nil {
+		m.sidecarProxy.StopAll()
+	}
+	if m.iptablesManager != nil {
+		_ = m.iptablesManager.CleanupAll()
 	}
 }
 

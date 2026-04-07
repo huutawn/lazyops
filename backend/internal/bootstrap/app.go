@@ -65,6 +65,7 @@ type Application struct {
 	AgentService          *service.AgentService
 	ControlService        *service.ControlService
 	ControlHub            *service.ControlHub
+	CommandTracker        *service.CommandTracker
 	OperatorStreamHub     *service.OperatorStreamHub
 	RuntimeRegistry       *runtime.Registry
 	RolloutPlanner        *service.RolloutPlanner
@@ -150,7 +151,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
-	observabilitySvc := service.NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo)
+	observabilitySvc := service.NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo).WithBindingStore(deploymentBindingRepo)
 	agentEnrollmentSvc := service.NewAgentEnrollmentService(agentRepo, instanceRepo, bootstrapTokenRepo, agentTokenRepo, cfg.Enrollment)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
@@ -166,7 +167,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	rtRegistry.Register(runtime.NewStandaloneDriver())
 	rtRegistry.Register(runtime.NewDistributedMeshDriver())
 	rtRegistry.Register(runtime.NewDistributedK3sDriver())
-	controlService := service.NewControlService(controlHub, rtRegistry, instanceRepo, agentRepo)
+	commandTracker := service.NewCommandTracker()
+	controlService := service.NewControlService(controlHub, commandTracker, rtRegistry, instanceRepo, agentRepo)
 
 	rolloutPlanner := service.NewRolloutPlanner(
 		rtRegistry,
@@ -247,6 +249,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		AgentService:          agentService,
 		ControlService:        controlService,
 		ControlHub:            controlHub,
+		CommandTracker:        commandTracker,
 		OperatorStreamHub:     operatorStreamHub,
 		RuntimeRegistry:       rtRegistry,
 		RolloutPlanner:        rolloutPlanner,

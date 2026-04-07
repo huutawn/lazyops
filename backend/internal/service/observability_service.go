@@ -43,6 +43,7 @@ type ObservabilityService struct {
 	instances InstanceStore
 	meshes    MeshNetworkStore
 	clusters  ClusterStore
+	bindings  DeploymentBindingStore
 }
 
 type TraceSummaryStore interface {
@@ -83,6 +84,11 @@ func NewObservabilityService(
 		meshes:    meshes,
 		clusters:  clusters,
 	}
+}
+
+func (s *ObservabilityService) WithBindingStore(bindings DeploymentBindingStore) *ObservabilityService {
+	s.bindings = bindings
+	return s
 }
 
 type TopologyNodeUpsertCommand struct {
@@ -367,7 +373,6 @@ type CorrelatedObservability struct {
 	Trace    *TraceRecord    `json:"trace,omitempty"`
 	Logs     []LogLineRecord `json:"logs"`
 	Topology *TopologyGraph  `json:"topology,omitempty"`
-	NodeHops []string        `json:"node_hops"`
 }
 
 func (s *ObservabilityService) GetCorrelatedObservability(ctx context.Context, projectID, correlationID string) (*CorrelatedObservability, error) {
@@ -378,14 +383,12 @@ func (s *ObservabilityService) GetCorrelatedObservability(ctx context.Context, p
 	}
 
 	result := &CorrelatedObservability{
-		Logs:     make([]LogLineRecord, 0),
-		NodeHops: make([]string, 0),
+		Logs: make([]LogLineRecord, 0),
 	}
 
 	trace, err := s.GetTraceByCorrelationID(ctx, correlationID)
 	if err == nil && trace != nil {
 		result.Trace = trace
-		result.NodeHops = trace.NodeHops
 	}
 
 	logQuery := models.LogStreamQuery{
@@ -413,48 +416,302 @@ func (s *ObservabilityService) GetCorrelatedObservability(ctx context.Context, p
 	return result, nil
 }
 
-func (s *ObservabilityService) ListTracesByProject(ctx context.Context, projectID string, limit int) ([]*TraceRecord, error) {
-	traces, err := s.traces.ListByProject(projectID, limit)
+type TraceLogsQuery struct {
+	ProjectID     string
+	CorrelationID string
+	Limit         int
+}
+
+func (s *ObservabilityService) GetTraceLogs(ctx context.Context, cmd TraceLogsQuery) ([]LogLineRecord, error) {
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	correlationID := strings.TrimSpace(cmd.CorrelationID)
+	if projectID == "" || correlationID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	limit := cmd.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	trace, err := s.GetTraceByCorrelationID(ctx, correlationID)
+	if err != nil {
+		return nil, err
+	}
+	if trace == nil {
+		return nil, ErrTraceNotFound
+	}
+
+	serviceName := trace.ServiceName
+	if serviceName == "" {
+		return nil, ErrInvalidInput
+	}
+
+	logQuery := models.LogStreamQuery{
+		ProjectID:     projectID,
+		ServiceName:   serviceName,
+		CorrelationID: correlationID,
+		Limit:         limit,
+	}
+	entries, err := s.logs.ListByQuery(logQuery)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make([]*TraceRecord, len(traces))
-	for i, trace := range traces {
-		out[i] = toTraceRecord(trace)
+	lines := make([]LogLineRecord, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, LogLineRecord{
+			Timestamp: entry.OccurredAt,
+			Level:     entry.Level,
+			Message:   entry.Message,
+			Node:      entry.Node,
+		})
 	}
-	return out, nil
+	return lines, nil
 }
 
-func toTraceRecord(t models.TraceSummary) *TraceRecord {
-	var metadata map[string]any
-	if t.MetadataJSON != "" {
-		_ = json.Unmarshal([]byte(t.MetadataJSON), &metadata)
+type TopologyNodeLogsQuery struct {
+	ProjectID string
+	NodeRef   string
+	Limit     int
+}
+
+func (s *ObservabilityService) GetTopologyNodeLogs(ctx context.Context, cmd TopologyNodeLogsQuery) ([]LogLineRecord, error) {
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	nodeRef := strings.TrimSpace(cmd.NodeRef)
+	if projectID == "" || nodeRef == "" {
+		return nil, ErrInvalidInput
 	}
 
-	var nodeHops []string
-	if hops, ok := metadata["node_hops"].([]any); ok {
-		for _, h := range hops {
-			if s, ok := h.(string); ok {
-				nodeHops = append(nodeHops, s)
-			}
+	limit := cmd.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	nodes, err := s.topoNodes.ListByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	var node *models.TopologyNode
+	for i := range nodes {
+		if nodes[i].NodeRef == nodeRef {
+			node = &nodes[i]
+			break
+		}
+	}
+	if node == nil {
+		return nil, fmt.Errorf("topology node %q not found in project %q", nodeRef, projectID)
+	}
+
+	logQuery := models.LogStreamQuery{
+		ProjectID: projectID,
+		Node:      nodeRef,
+		Limit:     limit,
+	}
+	entries, err := s.logs.ListByQuery(logQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make([]LogLineRecord, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, LogLineRecord{
+			Timestamp: entry.OccurredAt,
+			Level:     entry.Level,
+			Message:   entry.Message,
+			Node:      entry.Node,
+		})
+	}
+	return lines, nil
+}
+
+type ObservabilityQuery struct {
+	ProjectID     string
+	CorrelationID string
+	NodeID        string
+	ServiceName   string
+	Level         string
+	Contains      string
+	Limit         int
+}
+
+func (s *ObservabilityService) GetLogsByCorrelationID(ctx context.Context, projectID, correlationID string, limit int) ([]LogLineRecord, error) {
+	return s.GetTraceLogs(ctx, TraceLogsQuery{
+		ProjectID:     projectID,
+		CorrelationID: correlationID,
+		Limit:         limit,
+	})
+}
+
+func (s *ObservabilityService) GetLogsByNode(ctx context.Context, projectID, nodeID string, limit int) ([]LogLineRecord, error) {
+	return s.GetTopologyNodeLogs(ctx, TopologyNodeLogsQuery{
+		ProjectID: projectID,
+		NodeRef:   nodeID,
+		Limit:     limit,
+	})
+}
+
+func (s *ObservabilityService) QueryObservabilityData(ctx context.Context, q ObservabilityQuery) (map[string]any, error) {
+	result := map[string]any{}
+
+	if q.CorrelationID != "" {
+		logs, err := s.GetLogsByCorrelationID(ctx, q.ProjectID, q.CorrelationID, q.Limit)
+		if err == nil {
+			result["logs"] = logs
+			result["log_count"] = len(logs)
+		}
+
+		trace, err := s.GetTraceByCorrelationID(ctx, q.CorrelationID)
+		if err == nil && trace != nil {
+			result["trace"] = trace
 		}
 	}
 
-	return &TraceRecord{
-		ID:             t.ID,
-		CorrelationID:  t.CorrelationID,
-		ProjectID:      t.ProjectID,
-		ServiceName:    t.ServiceName,
-		Operation:      t.Operation,
-		HTTPMethod:     t.HTTPMethod,
-		HTTPStatusCode: t.HTTPStatusCode,
-		DurationMs:     t.DurationMs,
-		Status:         t.Status,
-		ErrorSummary:   t.ErrorSummary,
-		SpanCount:      t.SpanCount,
-		NodeHops:       nodeHops,
-		ReceivedAt:     t.ReceivedAt,
+	if q.NodeID != "" {
+		logs, err := s.GetLogsByNode(ctx, q.ProjectID, q.NodeID, q.Limit)
+		if err == nil {
+			result["node_logs"] = logs
+			result["node_log_count"] = len(logs)
+		}
+	}
+
+	if q.ServiceName != "" || q.Level != "" || q.Contains != "" {
+		logQuery := models.LogStreamQuery{
+			ProjectID:     q.ProjectID,
+			ServiceName:   q.ServiceName,
+			Level:         q.Level,
+			Contains:      q.Contains,
+			CorrelationID: q.CorrelationID,
+			Node:          q.NodeID,
+			Limit:         q.Limit,
+		}
+		if logQuery.Limit <= 0 {
+			logQuery.Limit = 50
+		}
+		entries, err := s.logs.ListByQuery(logQuery)
+		if err == nil {
+			lines := make([]LogLineRecord, 0, len(entries))
+			for _, e := range entries {
+				lines = append(lines, LogLineRecord{
+					Timestamp: e.OccurredAt,
+					Level:     e.Level,
+					Message:   e.Message,
+					Node:      e.Node,
+				})
+			}
+			result["logs"] = lines
+			result["log_count"] = len(lines)
+		}
+	}
+
+	topology, err := s.BuildTopologyGraph(ctx, q.ProjectID)
+	if err == nil && topology != nil {
+		result["topology"] = topology
+	}
+
+	return result, nil
+}
+
+type ObservabilityQueryCommand struct {
+	ProjectID string
+	QueryType string
+	Selectors map[string]string
+	Limit     int
+}
+
+func (s *ObservabilityService) QueryObservability(ctx context.Context, cmd ObservabilityQueryCommand) (any, error) {
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	if projectID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	limit := cmd.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	switch cmd.QueryType {
+	case "trace_logs":
+		correlationID := cmd.Selectors["correlation_id"]
+		serviceName := cmd.Selectors["service_name"]
+		logQuery := models.LogStreamQuery{
+			ProjectID:     projectID,
+			ServiceName:   serviceName,
+			CorrelationID: correlationID,
+			Limit:         limit,
+		}
+		entries, err := s.logs.ListByQuery(logQuery)
+		if err != nil {
+			return nil, err
+		}
+		lines := make([]LogLineRecord, 0, len(entries))
+		for _, entry := range entries {
+			lines = append(lines, LogLineRecord{
+				Timestamp: entry.OccurredAt,
+				Level:     entry.Level,
+				Message:   entry.Message,
+				Node:      entry.Node,
+			})
+		}
+		return lines, nil
+
+	case "node_logs":
+		nodeRef := cmd.Selectors["node_ref"]
+		logQuery := models.LogStreamQuery{
+			ProjectID: projectID,
+			Node:      nodeRef,
+			Limit:     limit,
+		}
+		entries, err := s.logs.ListByQuery(logQuery)
+		if err != nil {
+			return nil, err
+		}
+		lines := make([]LogLineRecord, 0, len(entries))
+		for _, entry := range entries {
+			lines = append(lines, LogLineRecord{
+				Timestamp: entry.OccurredAt,
+				Level:     entry.Level,
+				Message:   entry.Message,
+				Node:      entry.Node,
+			})
+		}
+		return lines, nil
+
+	case "service_traces":
+		serviceName := cmd.Selectors["service_name"]
+		traces, err := s.traces.ListByProject(projectID, limit)
+		if err != nil {
+			return nil, err
+		}
+		if serviceName != "" {
+			filtered := make([]models.TraceSummary, 0)
+			for _, t := range traces {
+				if t.ServiceName == serviceName {
+					filtered = append(filtered, t)
+				}
+			}
+			traces = filtered
+		}
+		records := make([]*TraceRecord, 0, len(traces))
+		for _, t := range traces {
+			records = append(records, toTraceRecord(t))
+		}
+		return records, nil
+
+	case "topology_graph":
+		return s.BuildTopologyGraph(ctx, projectID)
+
+	default:
+		return nil, fmt.Errorf("unsupported query type %q", cmd.QueryType)
 	}
 }
 
@@ -550,7 +807,81 @@ func (s *ObservabilityService) RefreshTopologyGraph(ctx context.Context, project
 		_ = s.topoNodes.Upsert(node)
 	}
 
+	s.createEdgesFromDependencyBindings(projectID)
+	s.createEdgesFromMeshPeerState(projectID)
+
 	return s.BuildTopologyGraph(ctx, projectID)
+}
+
+func (s *ObservabilityService) createEdgesFromDependencyBindings(projectID string) {
+	if s.bindings == nil {
+		return
+	}
+
+	bindings, err := s.bindings.ListByProject(projectID)
+	if err != nil {
+		return
+	}
+
+	for _, binding := range bindings {
+		if binding.TargetKind != "instance" || binding.TargetID == "" {
+			continue
+		}
+		if _, err := s.instances.GetByID(binding.TargetID); err != nil {
+			continue
+		}
+
+		metadata, _ := json.Marshal(map[string]any{
+			"binding_id":   binding.ID,
+			"binding_name": binding.Name,
+			"target_ref":   binding.TargetRef,
+		})
+
+		edge := &models.TopologyEdge{
+			ID:           utils.NewPrefixedID("te"),
+			ProjectID:    projectID,
+			SourceID:     binding.TargetID,
+			TargetID:     binding.TargetID,
+			EdgeKind:     EdgeKindDependency,
+			Protocol:     "http",
+			MetadataJSON: string(metadata),
+			CreatedAt:    time.Now().UTC(),
+		}
+		_ = s.topoEdges.Upsert(edge)
+	}
+}
+
+func (s *ObservabilityService) createEdgesFromMeshPeerState(projectID string) {
+	if s.meshes == nil {
+		return
+	}
+
+	meshes, err := s.meshes.ListByUser("")
+	if err != nil {
+		return
+	}
+
+	for _, mesh := range meshes {
+		metadata, _ := json.Marshal(map[string]any{
+			"mesh_id":   mesh.ID,
+			"mesh_name": mesh.Name,
+			"provider":  mesh.Provider,
+			"cidr":      mesh.CIDR,
+			"status":    mesh.Status,
+		})
+
+		edge := &models.TopologyEdge{
+			ID:           utils.NewPrefixedID("te"),
+			ProjectID:    projectID,
+			SourceID:     mesh.ID,
+			TargetID:     mesh.ID,
+			EdgeKind:     EdgeKindMeshPeer,
+			Protocol:     "tcp",
+			MetadataJSON: string(metadata),
+			CreatedAt:    time.Now().UTC(),
+		}
+		_ = s.topoEdges.Upsert(edge)
+	}
 }
 
 func (s *ObservabilityService) buildNodesFromTargets(ctx context.Context, projectID string) ([]models.TopologyNode, error) {

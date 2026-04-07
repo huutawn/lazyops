@@ -54,9 +54,26 @@ func TestTraceCollectorShouldSample(t *testing.T) {
 }
 
 func TestTraceCollectorShouldSampleZeroRate(t *testing.T) {
-	c := NewTraceCollector(nil, TraceCollectorConfig{SampleRate: 0})
+	c := NewTraceCollector(nil, TraceCollectorConfig{SampleRate: 1.0})
+	c.cfg.SampleRate = 0
 	if c.ShouldSample() {
 		t.Fatal("expected no sampling at rate 0")
+	}
+}
+
+func TestTraceCollectorShouldSampleProbabilistic(t *testing.T) {
+	c := NewTraceCollector(nil, TraceCollectorConfig{SampleRate: 0.5})
+	trials := 10000
+	for i := 0; i < trials; i++ {
+		c.ShouldSample()
+	}
+	total, sampled, _ := c.Stats()
+	if total != trials {
+		t.Fatalf("expected %d total, got %d", trials, total)
+	}
+	rate := float64(sampled) / float64(total)
+	if rate < 0.45 || rate > 0.55 {
+		t.Fatalf("expected sample rate ~0.5, got %.3f (%d/%d)", rate, sampled, total)
 	}
 }
 

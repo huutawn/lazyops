@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -369,6 +370,20 @@ func (m *GatewayManager) defaultValidate(_ context.Context, plan GatewayPlan, pa
 		Path:       paths.validatePath,
 		OccurredAt: m.now(),
 	}
+
+	// Run caddy validate if available
+	if err := execCaddyValidate(paths.versionConfig); err != nil {
+		result.Status = "validation_failed"
+		result.Message = fmt.Sprintf("caddy validate failed: %v", err)
+		_ = writeJSON(paths.validatePath, result)
+		return GatewayHookResult{}, &OperationError{
+			Code:      "gateway_caddy_validate_failed",
+			Message:   result.Message,
+			Retryable: true,
+			Err:       err,
+		}
+	}
+
 	if err := writeJSON(paths.validatePath, result); err != nil {
 		return GatewayHookResult{}, err
 	}
@@ -407,6 +422,16 @@ func (m *GatewayManager) defaultApply(_ context.Context, plan GatewayPlan, paths
 }
 
 func (m *GatewayManager) defaultReload(_ context.Context, plan GatewayPlan, paths gatewayRenderPaths, activation GatewayActivation) (GatewayHookResult, error) {
+	// Reload Caddy with the new config
+	if err := execCaddyReload(paths.liveConfigPath); err != nil {
+		return GatewayHookResult{}, &OperationError{
+			Code:      "gateway_caddy_reload_failed",
+			Message:   fmt.Sprintf("caddy reload failed: %v", err),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+
 	result := GatewayHookResult{
 		Name:       "reload",
 		Status:     "reloaded",
@@ -418,6 +443,50 @@ func (m *GatewayManager) defaultReload(_ context.Context, plan GatewayPlan, path
 		return GatewayHookResult{}, err
 	}
 	return result, nil
+}
+
+// execCaddyValidate runs 'caddy validate' against the given config.
+// If caddy binary is not found, it skips validation (dev mode).
+func execCaddyValidate(configPath string) error {
+	if _, err := exec.LookPath("caddy"); err != nil {
+		slog.Default().Warn("caddy binary not found, skipping validation (dev mode)",
+			"config_path", configPath,
+		)
+		return nil
+	}
+
+	cmd := exec.Command("caddy", "validate", "--config", configPath, "--adapter", "caddyfile")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("caddy validate: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// execCaddyReload runs 'caddy reload' to apply a new config.
+// If caddy binary is not found, it skips the reload (dev mode).
+func execCaddyReload(configPath string) error {
+	if _, err := exec.LookPath("caddy"); err != nil {
+		slog.Default().Warn("caddy binary not found, skipping reload (dev mode)",
+			"config_path", configPath,
+		)
+		return nil
+	}
+
+	cmd := exec.Command("caddy", "reload", "--config", configPath, "--adapter", "caddyfile")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("caddy reload: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// CheckCaddyAvailable returns nil if the caddy binary is available.
+func CheckCaddyAvailable() error {
+	if _, err := exec.LookPath("caddy"); err != nil {
+		return fmt.Errorf("caddy binary not found in PATH: %w", err)
+	}
+	return nil
 }
 
 func (m *GatewayManager) defaultRollback(_ context.Context, _ GatewayPlan, paths gatewayRenderPaths, previous *GatewayActivation, current GatewayActivation) (GatewayHookResult, error) {

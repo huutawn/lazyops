@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1121,11 +1122,85 @@ func ensureWireGuardPeer(providerRoot string, peer MeshPeer, now time.Time) (Wir
 	if err := writeJSON(recordPath, record); err != nil {
 		return WireGuardPeerRecord{}, err
 	}
+
+	ifName := wireGuardInterfaceName(peer.PeerRef)
+	if err := execWireGuardUp(configPath, ifName); err != nil {
+		record.LastAppliedAt = time.Time{}
+		_ = writeJSON(recordPath, record)
+		return record, &OperationError{
+			Code:      "wireguard_up_failed",
+			Message:   fmt.Sprintf("wg-quick up failed for peer %s: %v", peer.PeerRef, err),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+
 	return record, nil
 }
 
 func removeWireGuardPeer(providerRoot, peerRef string) error {
+	ifName := wireGuardInterfaceName(peerRef)
+	if err := execWireGuardDown(ifName); err != nil {
+		slog.Default().Warn("wg-quick down failed during peer removal, proceeding with cleanup",
+			"peer_ref", peerRef,
+			"interface", ifName,
+			"error", err,
+		)
+	}
 	return os.RemoveAll(filepath.Join(providerRoot, sanitizePathToken(peerRef)))
+}
+
+// wireGuardInterfaceName derives a Linux-safe interface name (max 15 chars) from a peer ref.
+func wireGuardInterfaceName(peerRef string) string {
+	sum := sha256.Sum256([]byte(peerRef))
+	return "wg" + hex.EncodeToString(sum[:6])
+}
+
+// execWireGuardUp brings up a WireGuard interface using wg-quick.
+// If the interface already exists, it is brought down first.
+func execWireGuardUp(configPath, ifName string) error {
+	if _, err := exec.LookPath("wg-quick"); err != nil {
+		slog.Default().Warn("wg-quick binary not found, skipping WireGuard activation (dev mode)",
+			"config_path", configPath,
+			"interface", ifName,
+		)
+		return nil
+	}
+
+	// Bring down existing interface if present (ignore errors)
+	down := exec.Command("wg-quick", "down", ifName)
+	_ = down.Run()
+
+	up := exec.Command("wg-quick", "up", configPath)
+	up.Env = append(os.Environ(), "WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1")
+	output, err := up.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("wg-quick up %s: %s: %w", configPath, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// execWireGuardDown brings down a WireGuard interface.
+func execWireGuardDown(ifName string) error {
+	if _, err := exec.LookPath("wg-quick"); err != nil {
+		return nil
+	}
+	down := exec.Command("wg-quick", "down", ifName)
+	output, err := down.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("wg-quick down %s: %s: %w", ifName, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// CheckWireGuardAvailable returns nil if wg and wg-quick binaries are available.
+func CheckWireGuardAvailable() error {
+	for _, binary := range []string{"wg", "wg-quick"} {
+		if _, err := exec.LookPath(binary); err != nil {
+			return fmt.Errorf("%s binary not found in PATH: %w", binary, err)
+		}
+	}
+	return nil
 }
 
 func ensureSecretFile(path string) (string, error) {

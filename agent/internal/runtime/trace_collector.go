@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -96,11 +97,7 @@ func (c *TraceCollector) ShouldSample() bool {
 		return false
 	}
 
-	threshold := uint64(c.cfg.SampleRate * 1000)
-	if threshold == 0 {
-		threshold = 1
-	}
-	if uint64(c.total)%threshold == 0 {
+	if rand.Float64() < c.cfg.SampleRate {
 		c.sampled++
 		return true
 	}
