@@ -56,12 +56,21 @@ jobs:
             echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin
             export IMAGE_TAG
 
-            if [ "$RUN_LOCAL_AGENT" = "true" ]; then
-              docker compose -f docker-compose.prod.yml --profile local-agent pull
-              docker compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE_CMD="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              COMPOSE_CMD="docker-compose"
             else
-              docker compose -f docker-compose.prod.yml pull
-              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+              echo "Docker Compose is not installed on VPS"
+              exit 1
             fi
 
-            docker compose -f docker-compose.prod.yml ps
+            if [ "$RUN_LOCAL_AGENT" = "true" ]; then
+              $COMPOSE_CMD -f docker-compose.prod.yml --profile local-agent pull
+              $COMPOSE_CMD -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
+            else
+              $COMPOSE_CMD -f docker-compose.prod.yml pull
+              $COMPOSE_CMD -f docker-compose.prod.yml up -d --remove-orphans
+            fi
+
+            $COMPOSE_CMD -f docker-compose.prod.yml ps
