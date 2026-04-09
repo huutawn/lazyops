@@ -61,40 +61,22 @@ jobs:
             echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin
             export IMAGE_TAG
 
-            if docker compose version >/dev/null 2>&1; then
-              COMPOSE_MODE="plugin"
-            elif command -v docker-compose >/dev/null 2>&1; then
-              COMPOSE_MODE="standalone"
-            else
+            docker compose version >/dev/null 2>&1 || docker-compose version >/dev/null 2>&1 || {
               echo "Docker Compose is not installed on VPS"
               exit 1
-            fi
-
-            if [ "$COMPOSE_MODE" = "plugin" ]; then
-              docker compose -f docker-compose.prod.yml config >/dev/null
-            else
-              docker-compose -f docker-compose.prod.yml config >/dev/null
-            fi
+            }
 
             RUN_LOCAL_AGENT="${RUN_LOCAL_AGENT:-false}"
-            if [ "$RUN_LOCAL_AGENT" = "true" ]; then
-              if [ "$COMPOSE_MODE" = "plugin" ]; then
-                docker compose -f docker-compose.prod.yml --profile local-agent pull
-                docker compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
-                docker compose -f docker-compose.prod.yml --profile local-agent ps
-              else
-                docker-compose -f docker-compose.prod.yml --profile local-agent pull
-                docker-compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
-                docker-compose -f docker-compose.prod.yml --profile local-agent ps
-              fi
-            else
-              if [ "$COMPOSE_MODE" = "plugin" ]; then
-                docker compose -f docker-compose.prod.yml pull
-                docker compose -f docker-compose.prod.yml up -d --remove-orphans
-                docker compose -f docker-compose.prod.yml ps
-              else
-                docker-compose -f docker-compose.prod.yml pull
-                docker-compose -f docker-compose.prod.yml up -d --remove-orphans
-                docker-compose -f docker-compose.prod.yml ps
-              fi
-            fi
+            PROFILE_OPT="$([ "$RUN_LOCAL_AGENT" = "true" ] && printf '%s' '--profile local-agent' || printf '%s' '')"
+
+            docker compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} config >/dev/null \
+              || docker-compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} config >/dev/null
+
+            docker compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} pull \
+              || docker-compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} pull
+
+            docker compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} up -d --remove-orphans \
+              || docker-compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} up -d --remove-orphans
+
+            docker compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} ps \
+              || docker-compose -f docker-compose.prod.yml ${PROFILE_OPT:+$PROFILE_OPT} ps
