@@ -240,11 +240,11 @@ describe('syncGitHubInstallationsSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects empty token', () => {
+  it('accepts empty token for cache refresh flow', () => {
     const result = syncGitHubInstallationsSchema.safeParse({
       github_access_token: '',
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });
 
