@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -227,6 +228,131 @@ func (s *ObservabilityService) ListIncidentsByProject(ctx context.Context, proje
 		out[i] = *r
 	}
 	return out, nil
+}
+
+func (s *ObservabilityService) ListRecentLogs(
+	ctx context.Context,
+	projectID,
+	serviceName,
+	level,
+	contains string,
+	limit int,
+) ([]LogLineRecord, error) {
+	_ = ctx
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	normalizedLevel, err := validatePreviewLevel(level)
+	if err != nil {
+		return nil, ErrInvalidInput
+	}
+
+	entries, err := s.logs.ListByQuery(models.LogStreamQuery{
+		ProjectID:   projectID,
+		ServiceName: strings.TrimSpace(serviceName),
+		Level:       normalizedLevel,
+		Contains:    strings.TrimSpace(contains),
+		Limit:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make([]LogLineRecord, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, LogLineRecord{
+			ID:         entry.ID,
+			Service:    entry.ServiceName,
+			RevisionID: entry.RevisionID,
+			Timestamp:  entry.OccurredAt,
+			Level:      entry.Level,
+			Message:    entry.Message,
+			Node:       entry.Node,
+		})
+	}
+	return lines, nil
+}
+
+type ServiceMetricSummary struct {
+	Service      string  `json:"service"`
+	CpuP95       float64 `json:"cpu_p95"`
+	CpuMax       float64 `json:"cpu_max"`
+	CpuMin       float64 `json:"cpu_min"`
+	CpuAvg       float64 `json:"cpu_avg"`
+	RamP95       float64 `json:"ram_p95"`
+	RamMax       float64 `json:"ram_max"`
+	RamMin       float64 `json:"ram_min"`
+	RamAvg       float64 `json:"ram_avg"`
+	RequestCount int64   `json:"request_count"`
+	Period       string  `json:"period"`
+}
+
+func (s *ObservabilityService) BuildServiceMetricSummary(ctx context.Context, projectID string, limit int) ([]ServiceMetricSummary, error) {
+	traces, err := s.ListTracesByProject(ctx, projectID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	type series struct {
+		cpu []float64
+		ram []float64
+	}
+	perService := make(map[string]*series)
+	for _, trace := range traces {
+		service := strings.TrimSpace(trace.ServiceName)
+		if service == "" {
+			service = "unknown"
+		}
+		track := perService[service]
+		if track == nil {
+			track = &series{
+				cpu: make([]float64, 0, 8),
+				ram: make([]float64, 0, 8),
+			}
+			perService[service] = track
+		}
+
+		cpuProxy := math.Max(0, math.Min(100, trace.DurationMs/10))
+		ramProxy := math.Max(0, float64(trace.SpanCount)*64)
+		track.cpu = append(track.cpu, cpuProxy)
+		track.ram = append(track.ram, ramProxy)
+	}
+
+	metrics := make([]ServiceMetricSummary, 0, len(perService))
+	for serviceName, values := range perService {
+		cpuStats := summarizeSeries(values.cpu)
+		ramStats := summarizeSeries(values.ram)
+		metrics = append(metrics, ServiceMetricSummary{
+			Service:      serviceName,
+			CpuP95:       cpuStats.p95,
+			CpuMax:       cpuStats.max,
+			CpuMin:       cpuStats.min,
+			CpuAvg:       cpuStats.avg,
+			RamP95:       ramStats.p95,
+			RamMax:       ramStats.max,
+			RamMin:       ramStats.min,
+			RamAvg:       ramStats.avg,
+			RequestCount: int64(len(values.cpu)),
+			Period:       "trace_recent",
+		})
+	}
+
+	sort.Slice(metrics, func(i, j int) bool {
+		if metrics[i].RequestCount == metrics[j].RequestCount {
+			return metrics[i].Service < metrics[j].Service
+		}
+		return metrics[i].RequestCount > metrics[j].RequestCount
+	})
+	return metrics, nil
 }
 
 func (s *ObservabilityService) IngestLogBatch(ctx context.Context, cmd IngestLogBatchCommand) (*LogBatchRecord, error) {
@@ -1036,10 +1162,13 @@ type LogsStreamPreview struct {
 }
 
 type LogLineRecord struct {
-	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`
-	Message   string    `json:"message"`
-	Node      string    `json:"node,omitempty"`
+	ID         string    `json:"id,omitempty"`
+	Service    string    `json:"service,omitempty"`
+	RevisionID string    `json:"revision_id,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
+	Level      string    `json:"level"`
+	Message    string    `json:"message"`
+	Node       string    `json:"node,omitempty"`
 }
 
 func toTraceRecord(item models.TraceSummary) *TraceRecord {
@@ -1112,6 +1241,43 @@ func normalizeTraceStatus(raw string, httpStatus int) string {
 		return TraceStatusWarning
 	}
 	return TraceStatusOK
+}
+
+type seriesSummary struct {
+	min float64
+	max float64
+	avg float64
+	p95 float64
+}
+
+func summarizeSeries(values []float64) seriesSummary {
+	if len(values) == 0 {
+		return seriesSummary{}
+	}
+
+	sorted := make([]float64, len(values))
+	copy(sorted, values)
+	sort.Float64s(sorted)
+
+	var total float64
+	for _, item := range sorted {
+		total += item
+	}
+
+	index := int(math.Ceil(float64(len(sorted))*0.95)) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+
+	return seriesSummary{
+		min: sorted[0],
+		max: sorted[len(sorted)-1],
+		avg: total / float64(len(sorted)),
+		p95: sorted[index],
+	}
 }
 
 func normalizeTopologyNodeStatus(raw string) string {

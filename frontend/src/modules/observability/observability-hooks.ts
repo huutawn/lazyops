@@ -1,10 +1,26 @@
 import { useQuery } from '@tanstack/react-query';
-import { mockFetchLogs, mockFetchTrace, mockFetchIncidents, mockFetchMetrics } from '@/modules/observability/observability-mocks';
+import {
+  getTraceByCorrelationID,
+  listProjectIncidents,
+  listProjectLogs,
+  listProjectMetrics,
+} from '@/modules/observability/observability-api';
+import type { Incident, LogEntry, MetricRecord, TraceDetail } from '@/modules/observability/observability-types';
 
-export function useLogs(deploymentId?: string, level?: string) {
+export function useLogs(projectId?: string, level?: string) {
   return useQuery({
-    queryKey: ['observability', 'logs', deploymentId, level],
-    queryFn: () => mockFetchLogs(deploymentId, level),
+    queryKey: ['observability', 'logs', projectId, level],
+    queryFn: async (): Promise<LogEntry[]> => {
+      if (!projectId) {
+        return [];
+      }
+      const result = await listProjectLogs(projectId, { level });
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      return result.data?.items ?? [];
+    },
+    enabled: !!projectId,
     staleTime: 15 * 1000,
   });
 }
@@ -12,24 +28,53 @@ export function useLogs(deploymentId?: string, level?: string) {
 export function useTrace(correlationId: string) {
   return useQuery({
     queryKey: ['observability', 'trace', correlationId],
-    queryFn: () => mockFetchTrace(correlationId),
+    queryFn: async (): Promise<TraceDetail | null> => {
+      const result = await getTraceByCorrelationID(correlationId);
+      if (result.error) {
+        if (result.error.code === 'trace_not_found') {
+          return null;
+        }
+        throw new Error(result.error.message);
+      }
+      return result.data ?? null;
+    },
     enabled: !!correlationId,
     staleTime: 60 * 1000,
   });
 }
 
-export function useIncidents() {
+export function useIncidents(projectId?: string) {
   return useQuery({
-    queryKey: ['observability', 'incidents'],
-    queryFn: () => mockFetchIncidents(),
+    queryKey: ['observability', 'incidents', projectId],
+    queryFn: async (): Promise<Incident[]> => {
+      if (!projectId) {
+        return [];
+      }
+      const result = await listProjectIncidents(projectId);
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      return result.data?.items ?? [];
+    },
+    enabled: !!projectId,
     staleTime: 30 * 1000,
   });
 }
 
-export function useMetrics() {
+export function useMetrics(projectId?: string) {
   return useQuery({
-    queryKey: ['observability', 'metrics'],
-    queryFn: () => mockFetchMetrics(),
+    queryKey: ['observability', 'metrics', projectId],
+    queryFn: async (): Promise<MetricRecord[]> => {
+      if (!projectId) {
+        return [];
+      }
+      const result = await listProjectMetrics(projectId, 200);
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      return result.data?.items ?? [];
+    },
+    enabled: !!projectId,
     staleTime: 60 * 1000,
   });
 }

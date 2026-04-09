@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -148,6 +149,127 @@ func (s *DeploymentService) Create(cmd CreateDeploymentCommand) (*CreateDeployme
 		Revision:   revisionRecord,
 		Deployment: ToDeploymentRecord(*deployment),
 	}, nil
+}
+
+func (s *DeploymentService) List(requesterUserID, requesterRole, projectID string) ([]DeploymentOverviewRecord, error) {
+	project, err := resolveProjectForAccess(s.projects, requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	deployments, err := s.deployments.ListByProject(project.ID)
+	if err != nil {
+		return nil, err
+	}
+	revisions, err := s.revisions.ListByProject(project.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	revisionRecords, revisionNumbers, err := buildRevisionIndex(revisions)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]DeploymentOverviewRecord, 0, len(deployments))
+	for _, item := range deployments {
+		revisionRecord, ok := revisionRecords[item.RevisionID]
+		out = append(out, buildDeploymentOverview(item, revisionRecord, ok, revisionNumbers[item.RevisionID]))
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *DeploymentService) Get(requesterUserID, requesterRole, projectID, deploymentID string) (*DeploymentDetailRecord, error) {
+	project, err := resolveProjectForAccess(s.projects, requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	deployment, err := s.deployments.GetByIDForProject(project.ID, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	if deployment == nil {
+		return nil, ErrDeploymentNotFound
+	}
+
+	revisions, err := s.revisions.ListByProject(project.ID)
+	if err != nil {
+		return nil, err
+	}
+	revisionRecords, revisionNumbers, err := buildRevisionIndex(revisions)
+	if err != nil {
+		return nil, err
+	}
+
+	revisionRecord, ok := revisionRecords[deployment.RevisionID]
+	if !ok {
+		revision, getErr := s.revisions.GetByIDForProject(project.ID, deployment.RevisionID)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if revision == nil {
+			return nil, ErrRevisionNotFound
+		}
+		parsed, parseErr := ToDesiredStateRevisionRecord(*revision)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		revisionRecord = parsed
+		revisionNumbers[deployment.RevisionID] = len(revisionNumbers) + 1
+	}
+
+	overview := buildDeploymentOverview(*deployment, revisionRecord, true, revisionNumbers[deployment.RevisionID])
+	detail := buildDeploymentDetail(overview, revisionRecord, *deployment)
+	return &detail, nil
+}
+
+func (s *DeploymentService) Act(requesterUserID, requesterRole, projectID, deploymentID, action string) (*DeploymentDetailRecord, error) {
+	project, err := resolveProjectForAccess(s.projects, requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	deployment, err := s.deployments.GetByIDForProject(project.ID, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	if deployment == nil {
+		return nil, ErrDeploymentNotFound
+	}
+
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "promote":
+		if _, err := s.TransitionRevisionStatus(project.ID, deployment.RevisionID, RevisionStatusPromoted); err != nil {
+			return nil, err
+		}
+		if _, err := s.TransitionDeploymentStatus(project.ID, deployment.ID, DeploymentStatusPromoted); err != nil {
+			return nil, err
+		}
+	case "rollback":
+		if _, err := s.TransitionRevisionStatus(project.ID, deployment.RevisionID, RevisionStatusRolledBack); err != nil {
+			return nil, err
+		}
+		if _, err := s.TransitionDeploymentStatus(project.ID, deployment.ID, DeploymentStatusRolledBack); err != nil {
+			return nil, err
+		}
+	case "cancel":
+		if _, err := s.TransitionDeploymentStatus(project.ID, deployment.ID, DeploymentStatusCanceled); err != nil {
+			return nil, err
+		}
+		if _, revErr := s.TransitionRevisionStatus(project.ID, deployment.RevisionID, RevisionStatusFailed); revErr != nil &&
+			!errors.Is(revErr, ErrInvalidRevisionStateTransition) {
+			return nil, revErr
+		}
+	default:
+		return nil, ErrInvalidInput
+	}
+
+	return s.Get(requesterUserID, requesterRole, project.ID, deployment.ID)
 }
 
 func (s *DeploymentService) TransitionRevisionStatus(projectID, revisionID, nextStatus string) (*DesiredStateRevisionRecord, error) {
@@ -407,4 +529,189 @@ func isTerminalDeploymentStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func buildRevisionIndex(revisions []models.DesiredStateRevision) (map[string]DesiredStateRevisionRecord, map[string]int, error) {
+	ordered := make([]models.DesiredStateRevision, len(revisions))
+	copy(ordered, revisions)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].CreatedAt.Equal(ordered[j].CreatedAt) {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].CreatedAt.Before(ordered[j].CreatedAt)
+	})
+
+	records := make(map[string]DesiredStateRevisionRecord, len(ordered))
+	numbers := make(map[string]int, len(ordered))
+	for i, revision := range ordered {
+		record, err := ToDesiredStateRevisionRecord(revision)
+		if err != nil {
+			return nil, nil, err
+		}
+		records[revision.ID] = record
+		numbers[revision.ID] = i + 1
+	}
+	return records, numbers, nil
+}
+
+func buildDeploymentOverview(
+	deployment models.Deployment,
+	revision DesiredStateRevisionRecord,
+	hasRevision bool,
+	revisionNumber int,
+) DeploymentOverviewRecord {
+	buildState := RevisionStatusQueued
+	rolloutState := strings.TrimSpace(deployment.Status)
+	triggerKind := "manual"
+	commitSHA := ""
+	artifactRef := ""
+	imageRef := ""
+	runtimeMode := "standalone"
+	services := []BlueprintServiceContractRecord{}
+	placements := []PlacementAssignmentRecord{}
+
+	if rolloutState == "" {
+		rolloutState = DeploymentStatusQueued
+	}
+
+	if hasRevision {
+		if strings.TrimSpace(revision.Status) != "" {
+			buildState = revision.Status
+		}
+		if strings.TrimSpace(revision.TriggerKind) != "" {
+			triggerKind = revision.TriggerKind
+		}
+		commitSHA = revision.CommitSHA
+		artifactRef = revision.ArtifactRef
+		imageRef = revision.ImageRef
+		if strings.TrimSpace(revision.RuntimeMode) != "" {
+			runtimeMode = revision.RuntimeMode
+		}
+		services = revision.Services
+		placements = revision.PlacementAssignments
+	}
+
+	if revisionNumber <= 0 {
+		revisionNumber = 1
+	}
+
+	promoted := rolloutState == DeploymentStatusPromoted || buildState == RevisionStatusPromoted
+	return DeploymentOverviewRecord{
+		ID:                   deployment.ID,
+		ProjectID:            deployment.ProjectID,
+		RevisionID:           deployment.RevisionID,
+		Revision:             revisionNumber,
+		CommitSHA:            commitSHA,
+		ArtifactRef:          artifactRef,
+		ImageRef:             imageRef,
+		TriggerKind:          triggerKind,
+		BuildState:           buildState,
+		RolloutState:         rolloutState,
+		Promoted:             promoted,
+		TriggeredBy:          "system",
+		RuntimeMode:          runtimeMode,
+		Services:             services,
+		PlacementAssignments: placements,
+		StartedAt:            deployment.StartedAt,
+		CompletedAt:          deployment.CompletedAt,
+		CreatedAt:            deployment.CreatedAt,
+		UpdatedAt:            deployment.UpdatedAt,
+	}
+}
+
+func buildDeploymentDetail(
+	overview DeploymentOverviewRecord,
+	revision DesiredStateRevisionRecord,
+	deployment models.Deployment,
+) DeploymentDetailRecord {
+	canPromote := overview.RolloutState == DeploymentStatusCandidateReady && !overview.Promoted
+	canCancel := overview.RolloutState == DeploymentStatusQueued ||
+		overview.RolloutState == DeploymentStatusRunning ||
+		overview.RolloutState == DeploymentStatusCandidateReady
+	canRollback := overview.RolloutState == DeploymentStatusPromoted || overview.BuildState == RevisionStatusPromoted
+
+	return DeploymentDetailRecord{
+		DeploymentOverviewRecord: overview,
+		Timeline:                 buildDeploymentTimeline(overview, revision, deployment),
+		CanRollback:              canRollback,
+		CanPromote:               canPromote,
+		CanCancel:                canCancel,
+	}
+}
+
+func buildDeploymentTimeline(
+	overview DeploymentOverviewRecord,
+	revision DesiredStateRevisionRecord,
+	deployment models.Deployment,
+) []DeploymentTimelineEventRecord {
+	events := []DeploymentTimelineEventRecord{
+		{
+			Timestamp:   overview.CreatedAt,
+			State:       "queued",
+			Label:       "Deployment queued",
+			Description: "Deployment created and waiting for rollout.",
+		},
+	}
+
+	revisionState := strings.TrimSpace(overview.BuildState)
+	if revisionState != "" {
+		timestamp := revision.UpdatedAt
+		if timestamp.IsZero() {
+			timestamp = overview.UpdatedAt
+		}
+		events = append(events, DeploymentTimelineEventRecord{
+			Timestamp:   timestamp,
+			State:       revisionState,
+			Label:       humanizeStateLabel(revisionState),
+			Description: "Revision state updated.",
+		})
+	}
+
+	if deployment.StartedAt != nil {
+		events = append(events, DeploymentTimelineEventRecord{
+			Timestamp:   deployment.StartedAt.UTC(),
+			State:       DeploymentStatusRunning,
+			Label:       "Running",
+			Description: "Deployment rollout started.",
+		})
+	}
+
+	if rolloutState := strings.TrimSpace(overview.RolloutState); rolloutState != "" {
+		events = append(events, DeploymentTimelineEventRecord{
+			Timestamp:   overview.UpdatedAt,
+			State:       rolloutState,
+			Label:       humanizeStateLabel(rolloutState),
+			Description: "Rollout state updated.",
+		})
+	}
+
+	if deployment.CompletedAt != nil {
+		events = append(events, DeploymentTimelineEventRecord{
+			Timestamp:   deployment.CompletedAt.UTC(),
+			State:       strings.TrimSpace(overview.RolloutState),
+			Label:       "Completed",
+			Description: "Deployment reached terminal state.",
+		})
+	}
+
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
+	return events
+}
+
+func humanizeStateLabel(state string) string {
+	trimmed := strings.TrimSpace(state)
+	if trimmed == "" {
+		return "Unknown"
+	}
+
+	words := strings.Split(strings.ReplaceAll(trimmed, "_", " "), " ")
+	for i := range words {
+		if words[i] == "" {
+			continue
+		}
+		words[i] = strings.ToUpper(words[i][:1]) + strings.ToLower(words[i][1:])
+	}
+	return strings.Join(words, " ")
 }

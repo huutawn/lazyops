@@ -1,6 +1,6 @@
 'use client';
 
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { useDeployments } from '@/modules/deployments/deployment-hooks';
 import type { BuildState, RolloutState } from '@/modules/deployments/deployment-types';
 import { PageHeader } from '@/components/primitives/page-header';
@@ -95,7 +95,7 @@ export default function DeploymentsPage() {
                   >
                     <td className="px-4 py-3">
                       <Link
-                        href={projectId ? `/projects/${projectId}/deployments/${dep.id}` : `/deployments/${dep.id}`}
+                        href={`/projects/${dep.project_id}/deployments/${dep.id}`}
                         className="font-medium text-primary hover:underline"
                       >
                         r{dep.revision}

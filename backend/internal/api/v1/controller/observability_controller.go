@@ -143,6 +143,116 @@ func (ctl *ObservabilityController) StreamLogs(c *gin.Context) {
 	response.JSON(c, http.StatusOK, "logs loaded", preview)
 }
 
+func (ctl *ObservabilityController) ListLogs(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load logs", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load logs", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load logs", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load logs", "internal_error", err.Error())
+		}
+		return
+	}
+
+	limit := 100
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsedLimit, convErr := strconv.Atoi(rawLimit)
+		if convErr != nil || parsedLimit <= 0 {
+			response.Error(c, http.StatusBadRequest, "failed to load logs", "invalid_limit", "limit query parameter must be a positive integer")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	items, err := ctl.observability.ListRecentLogs(
+		c.Request.Context(),
+		project.ID,
+		c.Query("service"),
+		c.Query("level"),
+		c.Query("contains"),
+		limit,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load logs", "invalid_logs_query", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load logs", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "logs loaded", gin.H{"items": items})
+}
+
+func (ctl *ObservabilityController) ListIncidents(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load incidents", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load incidents", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load incidents", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load incidents", "internal_error", err.Error())
+		}
+		return
+	}
+
+	items, err := ctl.observability.ListIncidentsByProject(c.Request.Context(), project.ID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to load incidents", "internal_error", err.Error())
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "incidents loaded", gin.H{"items": items})
+}
+
+func (ctl *ObservabilityController) ListMetrics(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load metrics", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load metrics", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load metrics", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load metrics", "internal_error", err.Error())
+		}
+		return
+	}
+
+	limit := 200
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsedLimit, convErr := strconv.Atoi(rawLimit)
+		if convErr != nil || parsedLimit <= 0 {
+			response.Error(c, http.StatusBadRequest, "failed to load metrics", "invalid_limit", "limit query parameter must be a positive integer")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	items, err := ctl.observability.BuildServiceMetricSummary(c.Request.Context(), project.ID, limit)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "failed to load metrics", "internal_error", err.Error())
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "metrics loaded", gin.H{"items": items})
+}
+
 func (ctl *ObservabilityController) GetCorrelatedObservability(c *gin.Context) {
 	claims := middleware.MustClaims(c)
 	correlationID := strings.TrimSpace(c.Query("correlation_id"))

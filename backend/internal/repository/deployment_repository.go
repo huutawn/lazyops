@@ -33,6 +33,14 @@ func (r *DeploymentRepository) GetByIDForProject(projectID, deploymentID string)
 	return &deployment, nil
 }
 
+func (r *DeploymentRepository) ListByProject(projectID string) ([]models.Deployment, error) {
+	var deployments []models.Deployment
+	if err := r.db.Where("project_id = ?", projectID).Order("created_at DESC").Find(&deployments).Error; err != nil {
+		return nil, err
+	}
+	return deployments, nil
+}
+
 func (r *DeploymentRepository) UpdateStatus(deploymentID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
 	updates := map[string]any{
 		"status":     status,

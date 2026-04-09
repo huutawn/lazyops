@@ -107,7 +107,16 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				deploymentController.Create,
 			)
+			userProtected.GET("/projects/:id/deployments", deploymentController.List)
+			userProtected.GET("/projects/:id/deployments/:deployment_id", deploymentController.Get)
+			userProtected.POST("/projects/:id/deployments/:deployment_id/actions",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				deploymentController.Act,
+			)
 			userProtected.GET("/projects/:id/topology", observabilityController.GetTopology)
+			userProtected.GET("/projects/:id/observability/logs", observabilityController.ListLogs)
+			userProtected.GET("/projects/:id/observability/incidents", observabilityController.ListIncidents)
+			userProtected.GET("/projects/:id/observability/metrics", observabilityController.ListMetrics)
 			userProtected.GET("/traces/:correlation_id", observabilityController.GetTrace)
 			userProtected.GET("/ws/logs/stream", observabilityController.StreamLogs)
 			userProtected.GET("/observability/correlate", observabilityController.GetCorrelatedObservability)

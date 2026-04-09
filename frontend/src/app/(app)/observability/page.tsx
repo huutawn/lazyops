@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useLogs, useIncidents, useMetrics, useTrace } from '@/modules/observability/observability-hooks';
 import type { LogLevel } from '@/modules/observability/observability-types';
+import { useProjects } from '@/modules/projects/project-hooks';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { EmptyState } from '@/components/primitives/empty-state';
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
-import { HealthChip } from '@/components/primitives/health-chip';
 
 const LOG_LEVEL_COLORS: Record<LogLevel, string> = {
   info: 'text-lazyops-muted',
@@ -36,10 +36,27 @@ export default function ObservabilityPage() {
   const [logFilter, setLogFilter] = useState<LogLevel | 'all'>('all');
   const [followMode, setFollowMode] = useState(false);
   const [traceQuery, setTraceQuery] = useState('');
+  const [projectId, setProjectId] = useState('');
 
-  const { data: logs, isLoading: logsLoading } = useLogs();
-  const { data: incidents, isLoading: incidentsLoading } = useIncidents();
-  const { data: metrics, isLoading: metricsLoading } = useMetrics();
+  const {
+    data: projectsData,
+    isLoading: projectsLoading,
+    isError: projectsError,
+  } = useProjects();
+  const projects = useMemo(() => projectsData?.items ?? [], [projectsData?.items]);
+  const activeProjectId = useMemo(() => {
+    if (projects.length === 0) {
+      return '';
+    }
+    if (projectId && projects.some((p) => p.id === projectId)) {
+      return projectId;
+    }
+    return projects[0]?.id ?? '';
+  }, [projectId, projects]);
+
+  const { data: logs, isLoading: logsLoading, isError: logsError } = useLogs(activeProjectId);
+  const { data: incidents, isLoading: incidentsLoading, isError: incidentsError } = useIncidents(activeProjectId);
+  const { data: metrics, isLoading: metricsLoading, isError: metricsError } = useMetrics(activeProjectId);
   const { data: trace, isLoading: traceLoading } = useTrace(traceQuery);
 
   const filteredLogs = useMemo(
@@ -47,8 +64,31 @@ export default function ObservabilityPage() {
     [logs, logFilter],
   );
 
-  if (logsLoading || incidentsLoading || metricsLoading) {
+  if (projectsLoading || logsLoading || incidentsLoading || metricsLoading) {
     return <SkeletonPage title cards={3} />;
+  }
+
+  if (projectsError || logsError || incidentsError || metricsError) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Observability" subtitle="Logs, traces, incidents, and metrics for your services." />
+        <ErrorState title="Failed to load observability" message="Could not fetch observability data for this project." />
+      </div>
+    );
+  }
+
+  if (projects.length === 0) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Observability" subtitle="Logs, traces, incidents, and metrics for your services." />
+        <SectionCard title="No projects" description="Create a project to start collecting observability data.">
+          <EmptyState
+            title="No projects available"
+            description="Create your first project, then run deployments to see logs, incidents, and metrics."
+          />
+        </SectionCard>
+      </div>
+    );
   }
 
   const openIncidents = incidents?.filter((i) => i.status === 'open' || i.status === 'investigating') ?? [];
@@ -59,6 +99,19 @@ export default function ObservabilityPage() {
       <PageHeader
         title="Observability"
         subtitle="Logs, traces, incidents, and metrics for your services."
+        actions={(
+          <select
+            value={activeProjectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/50 px-3 py-2 text-sm text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+          >
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        )}
       />
 
       <div className="flex gap-2 border-b border-lazyops-border">

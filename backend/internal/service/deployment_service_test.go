@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -143,6 +144,24 @@ func (f *fakeDeploymentStore) GetByIDForProject(projectID, deploymentID string) 
 		return item, nil
 	}
 	return nil, nil
+}
+
+func (f *fakeDeploymentStore) ListByProject(projectID string) ([]models.Deployment, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	projectItems := f.byProjectID[projectID]
+	if projectItems == nil {
+		return []models.Deployment{}, nil
+	}
+	items := make([]models.Deployment, 0, len(projectItems))
+	for _, item := range projectItems {
+		items = append(items, *item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	return items, nil
 }
 
 func (f *fakeDeploymentStore) UpdateStatus(deploymentID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error {

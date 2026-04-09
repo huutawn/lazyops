@@ -80,3 +80,80 @@ func (ctl *DeploymentController) Create(c *gin.Context) {
 		})
 	}
 }
+
+func (ctl *DeploymentController) List(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	items, err := ctl.deployments.List(claims.UserID, claims.Role, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load deployments", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load deployments", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load deployments", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load deployments", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "deployments loaded", mapper.ToDeploymentListResponse(items))
+}
+
+func (ctl *DeploymentController) Get(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	record, err := ctl.deployments.Get(claims.UserID, claims.Role, c.Param("id"), c.Param("deployment_id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load deployment", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load deployment", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load deployment", "project_access_denied", err.Error())
+		case errors.Is(err, service.ErrDeploymentNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load deployment", "deployment_not_found", err.Error())
+		case errors.Is(err, service.ErrRevisionNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load deployment", "revision_not_found", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load deployment", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "deployment loaded", mapper.ToDeploymentDetailResponse(*record))
+}
+
+func (ctl *DeploymentController) Act(c *gin.Context) {
+	var req requestdto.DeploymentActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
+		return
+	}
+
+	claims := middleware.MustClaims(c)
+	record, err := ctl.deployments.Act(claims.UserID, claims.Role, c.Param("id"), c.Param("deployment_id"), req.Action)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "deployment action failed", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "deployment action failed", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "deployment action failed", "project_access_denied", err.Error())
+		case errors.Is(err, service.ErrDeploymentNotFound):
+			response.Error(c, http.StatusNotFound, "deployment action failed", "deployment_not_found", err.Error())
+		case errors.Is(err, service.ErrRevisionNotFound):
+			response.Error(c, http.StatusNotFound, "deployment action failed", "revision_not_found", err.Error())
+		case errors.Is(err, service.ErrInvalidRevisionStateTransition),
+			errors.Is(err, service.ErrInvalidDeploymentStateTransition):
+			response.Error(c, http.StatusConflict, "deployment action failed", "invalid_state_transition", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "deployment action failed", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "deployment action completed", mapper.ToDeploymentDetailResponse(*record))
+}

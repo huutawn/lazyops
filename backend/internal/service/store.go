@@ -86,6 +86,7 @@ type DesiredStateRevisionStore interface {
 type DeploymentStore interface {
 	Create(deployment *models.Deployment) error
 	GetByIDForProject(projectID, deploymentID string) (*models.Deployment, error)
+	ListByProject(projectID string) ([]models.Deployment, error)
 	UpdateStatus(deploymentID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error
 }
 

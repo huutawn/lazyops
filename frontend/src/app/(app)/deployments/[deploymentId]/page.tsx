@@ -1,7 +1,7 @@
 'use client';
 
-import { useParams, useRouter } from 'next/navigation';
-import { useDeployment } from '@/modules/deployments/deployment-hooks';
+import { useParams } from 'next/navigation';
+import { useDeployment, useDeploymentAction } from '@/modules/deployments/deployment-hooks';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { ErrorState } from '@/components/primitives/error-state';
@@ -39,8 +39,10 @@ function formatState(state: string): string {
 
 export default function DeploymentDetailPage() {
   const params = useParams();
+  const projectId = params?.projectId as string | undefined;
   const deploymentId = params?.deploymentId as string;
-  const { data, isLoading, isError } = useDeployment(deploymentId);
+  const { data, isLoading, isError } = useDeployment(projectId, deploymentId);
+  const deploymentAction = useDeploymentAction(projectId, deploymentId);
 
   if (isLoading) {
     return <SkeletonPage title cards={3} />;
@@ -180,16 +182,20 @@ export default function DeploymentDetailPage() {
               <button
                 type="button"
                 className="rounded-lg border border-health-degraded/30 bg-health-degraded/10 px-4 py-2 text-sm font-medium text-health-degraded transition-colors hover:bg-health-degraded/20"
+                disabled={deploymentAction.isPending}
+                onClick={() => deploymentAction.mutate('cancel')}
               >
-                Cancel deployment
+                {deploymentAction.isPending ? 'Cancelling...' : 'Cancel deployment'}
               </button>
             )}
             {dep.can_promote && (
               <button
                 type="button"
                 className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                disabled={deploymentAction.isPending}
+                onClick={() => deploymentAction.mutate('promote')}
               >
-                Promote to production
+                {deploymentAction.isPending ? 'Promoting...' : 'Promote to production'}
               </button>
             )}
           </div>
@@ -201,8 +207,10 @@ export default function DeploymentDetailPage() {
           <button
             type="button"
             className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-4 py-2 text-sm font-medium text-health-unhealthy transition-colors hover:bg-health-unhealthy/20"
+            disabled={deploymentAction.isPending}
+            onClick={() => deploymentAction.mutate('rollback')}
           >
-            Rollback to previous revision
+            {deploymentAction.isPending ? 'Rolling back...' : 'Rollback to previous revision'}
           </button>
         </SectionCard>
       )}
