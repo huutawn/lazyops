@@ -73,12 +73,19 @@ jobs:
 
             compose -f docker-compose.prod.yml config >/dev/null
 
-            if [ "$RUN_LOCAL_AGENT" = "true" ]; then
-              compose -f docker-compose.prod.yml --profile local-agent pull
-              compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
-            else
-              compose -f docker-compose.prod.yml pull
-              compose -f docker-compose.prod.yml up -d --remove-orphans
-            fi
+            case "${RUN_LOCAL_AGENT}" in
+              true)
+                compose -f docker-compose.prod.yml --profile local-agent pull
+                compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
+                ;;
+              false|"")
+                compose -f docker-compose.prod.yml pull
+                compose -f docker-compose.prod.yml up -d --remove-orphans
+                ;;
+              *)
+                echo "Invalid RUN_LOCAL_AGENT value: ${RUN_LOCAL_AGENT}"
+                exit 1
+                ;;
+            esac
 
             compose -f docker-compose.prod.yml ps
