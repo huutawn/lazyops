@@ -98,13 +98,13 @@ function LoginForm() {
 
         <div className="grid grid-cols-2 gap-4">
           <a
-            href="/api/auth/oauth/google/start"
+            href="/api/v1/auth/oauth/google/start"
             className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card/50 text-sm font-medium text-foreground transition-all hover:bg-card hover:border-primary/50 hover:shadow-sm"
           >
             Google
           </a>
           <a
-            href="/api/auth/oauth/github/start"
+            href="/api/v1/auth/oauth/github/start"
             className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card/50 text-sm font-medium text-foreground transition-all hover:bg-card hover:border-primary/50 hover:shadow-sm"
           >
             GitHub
