@@ -45,7 +45,9 @@ jobs:
           script_stop: true
           envs: IMAGE_TAG,GIT_REF,RUN_LOCAL_AGENT,DOCKER_USERNAME,DOCKER_TOKEN
           script: |
-            set -euo pipefail
+            set -Eeuo pipefail
+            trap 'echo "[deploy] failed at line $LINENO"' ERR
+            set -x
 
             cd ~/lazyops
 
@@ -53,24 +55,30 @@ jobs:
               git pull --ff-only origin "$GIT_REF"
             fi
 
+            test -f .env
+            test -f docker-compose.prod.yml
+            test -f nginx.config
+
             echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin
             export IMAGE_TAG
 
             if docker compose version >/dev/null 2>&1; then
-              COMPOSE_CMD="docker compose"
+              compose() { docker compose "$@"; }
             elif command -v docker-compose >/dev/null 2>&1; then
-              COMPOSE_CMD="docker-compose"
+              compose() { docker-compose "$@"; }
             else
               echo "Docker Compose is not installed on VPS"
               exit 1
             fi
 
+            compose -f docker-compose.prod.yml config >/dev/null
+
             if [ "$RUN_LOCAL_AGENT" = "true" ]; then
-              $COMPOSE_CMD -f docker-compose.prod.yml --profile local-agent pull
-              $COMPOSE_CMD -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
+              compose -f docker-compose.prod.yml --profile local-agent pull
+              compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
             else
-              $COMPOSE_CMD -f docker-compose.prod.yml pull
-              $COMPOSE_CMD -f docker-compose.prod.yml up -d --remove-orphans
+              compose -f docker-compose.prod.yml pull
+              compose -f docker-compose.prod.yml up -d --remove-orphans
             fi
 
-            $COMPOSE_CMD -f docker-compose.prod.yml ps
+            compose -f docker-compose.prod.yml ps
