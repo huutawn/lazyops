@@ -139,6 +139,7 @@ type BootstrapTokenIssue struct {
 
 type InstallInstanceAgentSSHCommand struct {
 	UserID                  string
+	ProjectID               string
 	InstanceID              string
 	Host                    string
 	Port                    int
@@ -160,6 +161,7 @@ type InstallInstanceAgentSSHResult struct {
 	Bootstrap          BootstrapTokenIssue
 	StartedAt          time.Time
 	HostKeyFingerprint string
+	AttachedProjectID  string
 }
 
 type AgentMachineInfo struct {

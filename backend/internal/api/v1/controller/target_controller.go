@@ -16,6 +16,7 @@ import (
 type TargetController struct {
 	meshNetworks *service.MeshNetworkService
 	clusters     *service.ClusterService
+	bootstrap    *service.BootstrapOrchestrator
 }
 
 func NewTargetController(meshNetworks *service.MeshNetworkService, clusters *service.ClusterService) *TargetController {
@@ -23,6 +24,11 @@ func NewTargetController(meshNetworks *service.MeshNetworkService, clusters *ser
 		meshNetworks: meshNetworks,
 		clusters:     clusters,
 	}
+}
+
+func (ctl *TargetController) WithBootstrapOrchestrator(bootstrap *service.BootstrapOrchestrator) *TargetController {
+	ctl.bootstrap = bootstrap
+	return ctl
 }
 
 func (ctl *TargetController) CreateMeshNetwork(c *gin.Context) {
@@ -51,6 +57,10 @@ func (ctl *TargetController) CreateMeshNetwork(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusCreated, "mesh network created", mapper.ToMeshNetworkSummaryResponse(*result))
+
+	if ctl.bootstrap != nil {
+		_ = ctl.bootstrap.OnInventoryChanged(claims.UserID)
+	}
 }
 
 func (ctl *TargetController) ListMeshNetworks(c *gin.Context) {
@@ -93,6 +103,10 @@ func (ctl *TargetController) CreateCluster(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusCreated, "cluster created", mapper.ToClusterSummaryResponse(*result))
+
+	if ctl.bootstrap != nil {
+		_ = ctl.bootstrap.OnInventoryChanged(claims.UserID)
+	}
 }
 
 func (ctl *TargetController) ListClusters(c *gin.Context) {

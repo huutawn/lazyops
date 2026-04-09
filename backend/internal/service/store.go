@@ -60,6 +60,7 @@ type BuildJobStore interface {
 
 type DeploymentBindingStore interface {
 	Create(binding *models.DeploymentBinding) error
+	UpsertAuto(binding *models.DeploymentBinding) error
 	ListByProject(projectID string) ([]models.DeploymentBinding, error)
 	GetByTargetRefForProject(projectID, targetRef string) (*models.DeploymentBinding, error)
 	GetByIDForProject(projectID, bindingID string) (*models.DeploymentBinding, error)

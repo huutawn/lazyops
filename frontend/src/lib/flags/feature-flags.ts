@@ -1,5 +1,6 @@
 export type FeatureFlag =
   | 'mock_mode'
+  | 'ux_three_step_flow'
   | 'module_instances'
   | 'module_mesh_networks'
   | 'module_clusters'
@@ -14,6 +15,7 @@ type FeatureFlagConfig = Record<FeatureFlag, boolean>;
 
 const DEFAULT_FLAGS: FeatureFlagConfig = {
   mock_mode: false,
+  ux_three_step_flow: false,
   module_instances: false,
   module_mesh_networks: false,
   module_clusters: false,

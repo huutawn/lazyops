@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useGitHubAppConfig, useGitHubInstallations, useSyncGitHubInstallations } from '@/modules/github-sync/github-hooks';
@@ -14,23 +15,24 @@ import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
 
-const GITHUB_EXPLAINER = {
-  title: 'How GitHub App sync works',
-  description:
-    'Syncing fetches all GitHub App installations from your linked GitHub account. This lets LazyOps see which repositories are available for deployment.',
-  steps: [
-    { title: 'Link your GitHub account', desc: 'Sign in with GitHub OAuth to link your account.' },
-    { title: 'Sync installations', desc: 'Fetch all GitHub App installations and their repository scopes.' },
-    { title: 'Link repos to projects', desc: 'Connect repositories to your LazyOps projects for automated deployments.' },
-  ],
-};
-
 export default function GitHubIntegrationsPage() {
+  const searchParams = useSearchParams();
   const { data: reposData, isLoading: reposLoading, isError: reposError } = useGitHubInstallations();
   const { data: appConfig } = useGitHubAppConfig();
+  const quickSync = useSyncGitHubInstallations();
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const autoSyncTriggered = useRef(false);
   const appInstallURL = appConfig?.install_url ?? '';
   const appName = appConfig?.name?.trim() || 'LazyOps';
+  const fromInstallFlow = !!searchParams.get('installation_id') || !!searchParams.get('setup_action');
+
+  useEffect(() => {
+    if (!fromInstallFlow || autoSyncTriggered.current) {
+      return;
+    }
+    autoSyncTriggered.current = true;
+    quickSync.mutate({ github_access_token: '' });
+  }, [fromInstallFlow, quickSync]);
 
   if (reposLoading) {
     return <SkeletonPage title cards={2} />;
@@ -44,13 +46,23 @@ export default function GitHubIntegrationsPage() {
           title="Failed to load GitHub data"
           message="Could not fetch GitHub repository data. Make sure your GitHub account is linked."
           action={
-            <button
-              type="button"
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-              onClick={() => setShowSyncModal(true)}
-            >
-              Sync installations
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
+                onClick={() => quickSync.mutate({ github_access_token: '' })}
+                disabled={quickSync.isPending}
+              >
+                {quickSync.isPending ? 'Refreshing...' : 'Refresh installations'}
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+                onClick={() => setShowSyncModal(true)}
+              >
+                Advanced sync
+              </button>
+            </div>
           }
         />
       </div>
@@ -72,42 +84,59 @@ export default function GitHubIntegrationsPage() {
         title="GitHub App"
         subtitle="Manage GitHub App installations and linked repositories."
         actions={
-          <button
-            type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-            onClick={() => setShowSyncModal(true)}
-          >
-            Sync installations
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href="/api/auth/oauth/github/start?next=/integrations/github"
+              className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+            >
+              Link GitHub
+            </a>
+            {appInstallURL && (
+              <a
+                href={appInstallURL}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+              >
+                Install GitHub App
+              </a>
+            )}
+            <button
+              type="button"
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
+              onClick={() => quickSync.mutate({ github_access_token: '' })}
+              disabled={quickSync.isPending}
+            >
+              {quickSync.isPending ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         }
       />
 
-      <SectionCard
-        title={GITHUB_EXPLAINER.title}
-        description={GITHUB_EXPLAINER.description}
-      >
-        <div className="flex flex-col gap-3">
-          {GITHUB_EXPLAINER.steps.map((step, i) => (
-            <div key={step.title} className="flex items-start gap-3">
-              <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
-                {i + 1}
-              </div>
-              <div>
-                <span className="text-sm font-medium text-lazyops-text">{step.title}</span>
-                <p className="text-xs text-lazyops-muted">{step.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+      <SectionCard title="Faster flow" description="Install app -> return here -> Refresh once.">
+        <p className="text-sm text-lazyops-muted">
+          You do not need to enter a token every time. Use <span className="font-medium text-lazyops-text">Advanced sync</span> only when PAT-based force sync is needed.
+        </p>
+        {quickSync.error && (
+          <div className="mt-3 rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+            {(quickSync.error as Error).message}
+          </div>
+        )}
       </SectionCard>
 
       {repos.length === 0 ? (
         <SectionCard title="No installations" description="Sync your GitHub App to see available installations and repositories.">
           <EmptyState
             title="No GitHub installations found"
-            description={`Make sure you have the ${appName} GitHub App installed, then sync to fetch your installations.`}
+            description={`If refresh stays empty, click Link GitHub once, install ${appName}, then refresh.`}
             action={
               <div className="flex items-center gap-2">
+                <a
+                  href="/api/auth/oauth/github/start?next=/integrations/github"
+                  className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+                >
+                  Link GitHub
+                </a>
                 {appInstallURL && (
                   <a
                     href={appInstallURL}
@@ -120,10 +149,18 @@ export default function GitHubIntegrationsPage() {
                 )}
                 <button
                   type="button"
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
+                  onClick={() => quickSync.mutate({ github_access_token: '' })}
+                  disabled={quickSync.isPending}
+                >
+                  {quickSync.isPending ? 'Refreshing...' : 'Refresh installations'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
                   onClick={() => setShowSyncModal(true)}
                 >
-                  Sync installations
+                  Advanced sync
                 </button>
               </div>
             }
@@ -227,13 +264,13 @@ function SyncInstallationsModal({ open, onClose }: SyncInstallationsModalProps) 
     <Modal open={open} onClose={onClose} title="Sync GitHub installations" size="md">
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
         <p className="text-sm text-lazyops-muted">
-          Enter your GitHub personal access token to sync installations. The token needs <code className="rounded bg-lazyops-border/20 px-1 text-xs">read:org</code> scope.
+          Provide a GitHub PAT only when you want to force sync from GitHub API. You can leave it empty to reload current cache.
         </p>
 
         <FormField label="GitHub access token" error={errors.github_access_token?.message}>
           <FormInput
             type="password"
-            placeholder="ghp_xxxxxxxxxxxx"
+            placeholder="(optional) ghp_xxxxxxxxxxxx"
             error={!!errors.github_access_token}
             {...register('github_access_token')}
           />

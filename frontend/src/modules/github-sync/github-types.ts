@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const syncGitHubInstallationsSchema = z.object({
-  github_access_token: z.string().min(1, 'GitHub access token is required'),
+  github_access_token: z.string(),
 });
 
 export type SyncGitHubInstallationsFormData = z.infer<typeof syncGitHubInstallationsSchema>;

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useMemo, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useLinkProjectRepo, repoLinkQueryKey } from '@/modules/repo-link/repo-link-hooks';
@@ -15,14 +15,27 @@ import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
+import { isFeatureEnabled } from '@/lib/flags/feature-flags';
 
 export default function RepoLinkPage() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params?.projectId as string;
+  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
+
+  useEffect(() => {
+    if (threeStepFlowEnabled && projectId) {
+      router.replace(`/projects/${projectId}`);
+    }
+  }, [threeStepFlowEnabled, projectId, router]);
 
   const { data: reposData, isLoading: reposLoading, isError: reposError } = useGitHubInstallations();
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkedRepo, setLinkedRepo] = useState<ProjectRepoLink | null>(null);
+
+  if (threeStepFlowEnabled) {
+    return <SkeletonPage title cards={2} />;
+  }
 
   if (reposLoading) {
     return <SkeletonPage title cards={2} />;

@@ -78,8 +78,34 @@ type DeploymentOverviewRecord struct {
 
 type DeploymentDetailRecord struct {
 	DeploymentOverviewRecord
-	Timeline    []DeploymentTimelineEventRecord
-	CanRollback bool
-	CanPromote  bool
-	CanCancel   bool
+	Timeline        []DeploymentTimelineEventRecord
+	CanRollback     bool
+	CanPromote      bool
+	CanCancel       bool
+	SafetyPolicy    DeploymentSafetyPolicyRecord
+	IncidentSummary *DeploymentIncidentSummaryRecord
+}
+
+type DeploymentSafetyPolicyRecord struct {
+	AutoRollbackEnabled bool     `json:"auto_rollback_enabled"`
+	Triggers            []string `json:"triggers"`
+	Description         string   `json:"description"`
+}
+
+type DeploymentFixActionRecord struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Href   string `json:"href"`
+	Method string `json:"method"`
+}
+
+type DeploymentIncidentSummaryRecord struct {
+	State         string                     `json:"state"`
+	Headline      string                     `json:"headline"`
+	Reason        string                     `json:"reason"`
+	Recommended   string                     `json:"recommended"`
+	IncidentID    string                     `json:"incident_id,omitempty"`
+	IncidentKind  string                     `json:"incident_kind,omitempty"`
+	IncidentLevel string                     `json:"incident_level,omitempty"`
+	PrimaryAction *DeploymentFixActionRecord `json:"primary_action,omitempty"`
 }

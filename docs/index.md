@@ -7,6 +7,8 @@ Mô hình tài liệu được thiết kế theo dạng lai:
 - `guide/lazyops-implementation-master-plan.md` vẫn là hợp đồng mục tiêu.
 - `docs/contracts-matrix.md` là ma trận hợp đồng trạng thái hiện tại và là nơi chính thức để kiểm tra xem một bề mặt có `implemented`, `adapter/composed`, `mock-only`, hay `missing`.
 - `docs/feature-catalog.md` giải thích sản phẩm theo tính năng, luồng công việc và công nghệ.
+- `docs/short-flow-spec.md` chốt đặc tả Day 1 cho luồng rút gọn 3 bước (`Connect Code`, `Connect Infra`, `Deploy`) và Auto Mode Engine.
+- `docs/day7_manual_qa_release.md` là checklist Day 7 cho manual QA, go-live gates, và release artifacts (GIF/video 3-step).
 - `/docs.md` là sổ tay kiểm thử thủ công, được tổ chức cả theo slice giao hàng và theo tính năng.
 - `docs/production_cicd.md` mô tả workflow CI/CD production, deploy VPS, và kế hoạch vận hành CLI/agent.
 

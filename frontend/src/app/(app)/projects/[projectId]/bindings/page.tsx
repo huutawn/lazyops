@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useMemo, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, useWatch } from 'react-hook-form';
 import { useDeploymentBindings, useCreateDeploymentBinding } from '@/modules/deployment-bindings/binding-hooks';
@@ -22,6 +22,7 @@ import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
+import { isFeatureEnabled } from '@/lib/flags/feature-flags';
 
 const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
   standalone: 'Standalone',
@@ -37,10 +38,22 @@ const TARGET_KIND_LABELS: Record<TargetKind, string> = {
 
 export default function DeploymentBindingsPage() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params?.projectId as string;
+  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
+
+  useEffect(() => {
+    if (threeStepFlowEnabled && projectId) {
+      router.replace(`/projects/${projectId}`);
+    }
+  }, [threeStepFlowEnabled, projectId, router]);
 
   const { data, isLoading, isError } = useDeploymentBindings(projectId);
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  if (threeStepFlowEnabled) {
+    return <SkeletonPage title cards={1} />;
+  }
 
   if (isLoading) {
     return <SkeletonPage title cards={1} />;
@@ -74,7 +87,10 @@ export default function DeploymentBindingsPage() {
       />
 
       {bindings.length === 0 ? (
-        <SectionCard title="No bindings" description="Create a binding to connect this project to a deployment target.">
+        <SectionCard
+          title="No bindings"
+          description="Create a binding to connect this project to a deployment target."
+        >
           <EmptyState
             title="No deployment bindings"
             description="A binding links this project to a target (instance, mesh, or cluster) and defines how services are deployed."

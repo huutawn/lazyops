@@ -19,6 +19,7 @@ func ToCreateInstanceCommand(userID string, req requestdto.CreateInstanceRequest
 func ToInstallInstanceAgentSSHCommand(userID, instanceID string, req requestdto.InstallInstanceAgentSSHRequest) service.InstallInstanceAgentSSHCommand {
 	return service.InstallInstanceAgentSSHCommand{
 		UserID:             userID,
+		ProjectID:          req.ProjectID,
 		InstanceID:         instanceID,
 		Host:               req.Host,
 		Port:               req.Port,
@@ -47,6 +48,7 @@ func ToInstallInstanceAgentSSHResponse(result service.InstallInstanceAgentSSHRes
 		Bootstrap:          ToBootstrapTokenIssueResponse(result.Bootstrap),
 		StartedAt:          result.StartedAt,
 		HostKeyFingerprint: result.HostKeyFingerprint,
+		AttachedProjectID:  result.AttachedProjectID,
 	}
 }
 

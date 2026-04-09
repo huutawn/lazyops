@@ -48,6 +48,42 @@ func (f *fakeDeploymentBindingStore) Create(binding *models.DeploymentBinding) e
 	return nil
 }
 
+func (f *fakeDeploymentBindingStore) UpsertAuto(binding *models.DeploymentBinding) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+
+	key := binding.ProjectID + ":" + binding.TargetRef
+	now := time.Now().UTC()
+	if existing, ok := f.byProjectTargetRef[key]; ok {
+		existing.Name = binding.Name
+		existing.RuntimeMode = binding.RuntimeMode
+		existing.TargetKind = binding.TargetKind
+		existing.TargetID = binding.TargetID
+		existing.PlacementPolicyJSON = binding.PlacementPolicyJSON
+		existing.DomainPolicyJSON = binding.DomainPolicyJSON
+		existing.CompatibilityPolicyJSON = binding.CompatibilityPolicyJSON
+		existing.ScaleToZeroPolicyJSON = binding.ScaleToZeroPolicyJSON
+		existing.UpdatedAt = now
+		binding.ID = existing.ID
+		binding.CreatedAt = existing.CreatedAt
+		binding.UpdatedAt = existing.UpdatedAt
+		return nil
+	}
+
+	cloned := *binding
+	if cloned.CreatedAt.IsZero() {
+		cloned.CreatedAt = now
+	}
+	if cloned.UpdatedAt.IsZero() {
+		cloned.UpdatedAt = cloned.CreatedAt
+	}
+	f.byProjectTargetRef[key] = &cloned
+	binding.CreatedAt = cloned.CreatedAt
+	binding.UpdatedAt = cloned.UpdatedAt
+	return nil
+}
+
 func (f *fakeDeploymentBindingStore) ListByProject(projectID string) ([]models.DeploymentBinding, error) {
 	if f.getErr != nil {
 		return nil, f.getErr

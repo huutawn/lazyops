@@ -50,6 +50,7 @@ type Application struct {
 	BuildCallbackSvc      *service.BuildCallbackService
 	ProjectService        *service.ProjectService
 	ProjectRepoLinkSvc    *service.ProjectRepoLinkService
+	BootstrapOrchestrator *service.BootstrapOrchestrator
 	BuildJobSvc           *service.BuildJobService
 	DeploymentBindingSvc  *service.DeploymentBindingService
 	InitContractSvc       *service.InitContractService
@@ -140,16 +141,32 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		githubInstallRepo,
 		githubInstallProvider,
 	)
+	githubOAuthService.WithInstallationSync(githubInstallSvc)
 	projectService := service.NewProjectService(projectRepo)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
 	buildJobSvc := service.NewBuildJobService(projectRepoLinkRepo, buildJobRepo)
 	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
+	bootstrapOrchestrator := service.NewBootstrapOrchestrator(
+		projectRepo,
+		projectService,
+		projectRepoLinkSvc,
+		projectRepoLinkRepo,
+		deploymentBindingSvc,
+		deploymentBindingRepo,
+		deploymentRepo,
+		instanceRepo,
+		meshNetworkRepo,
+		clusterRepo,
+		githubInstallRepo,
+	)
 	initContractSvc := service.NewInitContractService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
 	blueprintSvc := service.NewBlueprintService(projectRepo, projectRepoLinkRepo, deploymentBindingRepo, serviceRepo, blueprintRepo)
-	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo)
+	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo).
+		WithIncidentStore(incidentRepo)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
-	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor())
+	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor()).
+		WithBootstrapOrchestrator(bootstrapOrchestrator)
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
@@ -186,6 +203,13 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		instanceRepo,
 		controlService,
 		operatorStreamHub,
+	)
+	bootstrapOrchestrator.WithOneClickPipeline(
+		serviceRepo,
+		initContractSvc,
+		blueprintSvc,
+		deploymentSvc,
+		rolloutExecutionSvc,
 	)
 
 	previewService := service.NewPreviewEnvironmentService(
@@ -236,6 +260,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		BuildCallbackSvc:      buildCallbackSvc,
 		ProjectService:        projectService,
 		ProjectRepoLinkSvc:    projectRepoLinkSvc,
+		BootstrapOrchestrator: bootstrapOrchestrator,
 		BuildJobSvc:           buildJobSvc,
 		DeploymentBindingSvc:  deploymentBindingSvc,
 		InitContractSvc:       initContractSvc,

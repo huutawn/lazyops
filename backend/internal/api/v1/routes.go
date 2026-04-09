@@ -16,12 +16,13 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
 	buildController := controller.NewBuildController(app.BuildCallbackSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
+	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
 	initContractController := controller.NewInitContractController(app.InitContractSvc)
 	blueprintController := controller.NewBlueprintController(app.BlueprintSvc)
 	deploymentController := controller.NewDeploymentController(app.DeploymentSvc, app.RolloutExecutionSvc)
-	instanceController := controller.NewInstanceController(app.InstanceService, app.InstanceSSHInstallSvc)
-	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService)
+	instanceController := controller.NewInstanceController(app.InstanceService, app.InstanceSSHInstallSvc).WithBootstrapOrchestrator(app.BootstrapOrchestrator)
+	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService).WithBootstrapOrchestrator(app.BootstrapOrchestrator)
 	observabilityController := controller.NewObservabilityController(app.ProjectRepo, app.ObservabilitySvc)
 	tunnelController := controller.NewTunnelController(app.ProjectRepo, app.DeploymentBindingRepo, app.TunnelSessionRepo, app.MeshPlanningSvc)
 	agentRuntimeController := controller.NewAgentRuntimeController(app.AgentEnrollmentSvc)
@@ -90,6 +91,12 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.POST("/projects", projectController.Create)
 			userProtected.GET("/projects", projectController.List)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+			userProtected.GET("/projects/:id/bootstrap/status", bootstrapController.Status)
+			userProtected.POST("/projects/bootstrap/auto", bootstrapController.Auto)
+			userProtected.POST("/projects/:id/deploy/one-click",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				bootstrapController.OneClickDeploy,
+			)
 			userProtected.GET("/projects/:id/deployment-bindings", deploymentBindingController.List)
 			userProtected.POST("/projects/:id/deployment-bindings",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),

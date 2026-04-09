@@ -16,6 +16,7 @@ import (
 type InstanceController struct {
 	instances     *service.InstanceService
 	sshInstallSvc *service.InstanceSSHInstallService
+	bootstrap     *service.BootstrapOrchestrator
 }
 
 func NewInstanceController(instances *service.InstanceService, sshInstallSvc *service.InstanceSSHInstallService) *InstanceController {
@@ -23,6 +24,11 @@ func NewInstanceController(instances *service.InstanceService, sshInstallSvc *se
 		instances:     instances,
 		sshInstallSvc: sshInstallSvc,
 	}
+}
+
+func (ctl *InstanceController) WithBootstrapOrchestrator(bootstrap *service.BootstrapOrchestrator) *InstanceController {
+	ctl.bootstrap = bootstrap
+	return ctl
 }
 
 func (ctl *InstanceController) Create(c *gin.Context) {
@@ -49,6 +55,10 @@ func (ctl *InstanceController) Create(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusCreated, "instance created", mapper.ToCreateInstanceResponse(*result))
+
+	if ctl.bootstrap != nil {
+		_ = ctl.bootstrap.OnInventoryChanged(claims.UserID)
+	}
 }
 
 func (ctl *InstanceController) List(c *gin.Context) {
@@ -125,4 +135,8 @@ func (ctl *InstanceController) InstallAgentViaSSH(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, "ssh install started", mapper.ToInstallInstanceAgentSSHResponse(*result))
+
+	if ctl.bootstrap != nil {
+		_ = ctl.bootstrap.OnInventoryChanged(claims.UserID)
+	}
 }

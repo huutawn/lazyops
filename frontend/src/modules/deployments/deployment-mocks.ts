@@ -136,5 +136,31 @@ export async function mockGetDeployment(id: string): Promise<DeploymentDetail> {
     can_rollback: deployment.promoted && deployment.build_state === 'promoted',
     can_promote: deployment.rollout_state === 'candidate_ready' && !deployment.promoted,
     can_cancel: deployment.rollout_state === 'running' || deployment.rollout_state === 'queued',
+    safety_policy: {
+      auto_rollback_enabled: true,
+      triggers: ['health_gate_failed', 'health_gate_timeout', 'candidate_command_failed'],
+      description: 'Auto rollback is enabled by default for failed rollout safety checks.',
+    },
+    incident_summary: deployment.rollout_state === 'failed' || deployment.rollout_state === 'rolled_back'
+      ? {
+          state: 'attention',
+          headline: 'Deployment was auto-rolled back',
+          reason: 'Candidate revision failed health checks during rollout.',
+          recommended: 'Inspect logs and retry deployment after fixing the service.',
+          incident_kind: 'unhealthy_candidate',
+          incident_level: 'critical',
+          primary_action: {
+            id: 'retry_deployment',
+            label: 'Retry deployment',
+            href: `/projects/${deployment.project_id}`,
+            method: 'GET',
+          },
+        }
+      : {
+          state: 'healthy',
+          headline: 'No active incidents',
+          reason: 'Deployment is healthy.',
+          recommended: 'No action needed.',
+        },
   };
 }

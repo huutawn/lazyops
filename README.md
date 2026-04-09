@@ -25,6 +25,7 @@ The repo is no longer a generic Gin boilerplate. It already carries product-spec
 - Feature overview: [`docs/feature-catalog.md`](docs/feature-catalog.md)
 - Canonical contract matrix: [`docs/contracts-matrix.md`](docs/contracts-matrix.md)
 - Manual test playbook: [`docs.md`](docs.md)
+- Day 7 go-live QA checklist: [`docs/day7_manual_qa_release.md`](docs/day7_manual_qa_release.md)
 - Production CI/CD playbook: [`docs/production_cicd.md`](docs/production_cicd.md)
 
 ## Canonical Surface Notes

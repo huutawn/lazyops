@@ -70,10 +70,36 @@ type DeploymentOverviewResponse struct {
 
 type DeploymentDetailResponse struct {
 	DeploymentOverviewResponse
-	Timeline    []DeploymentTimelineEventResponse `json:"timeline"`
-	CanRollback bool                              `json:"can_rollback"`
-	CanPromote  bool                              `json:"can_promote"`
-	CanCancel   bool                              `json:"can_cancel"`
+	Timeline        []DeploymentTimelineEventResponse  `json:"timeline"`
+	CanRollback     bool                               `json:"can_rollback"`
+	CanPromote      bool                               `json:"can_promote"`
+	CanCancel       bool                               `json:"can_cancel"`
+	SafetyPolicy    DeploymentSafetyPolicyResponse     `json:"safety_policy"`
+	IncidentSummary *DeploymentIncidentSummaryResponse `json:"incident_summary,omitempty"`
+}
+
+type DeploymentSafetyPolicyResponse struct {
+	AutoRollbackEnabled bool     `json:"auto_rollback_enabled"`
+	Triggers            []string `json:"triggers"`
+	Description         string   `json:"description"`
+}
+
+type DeploymentFixActionResponse struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Href   string `json:"href"`
+	Method string `json:"method"`
+}
+
+type DeploymentIncidentSummaryResponse struct {
+	State         string                       `json:"state"`
+	Headline      string                       `json:"headline"`
+	Reason        string                       `json:"reason"`
+	Recommended   string                       `json:"recommended"`
+	IncidentID    string                       `json:"incident_id,omitempty"`
+	IncidentKind  string                       `json:"incident_kind,omitempty"`
+	IncidentLevel string                       `json:"incident_level,omitempty"`
+	PrimaryAction *DeploymentFixActionResponse `json:"primary_action,omitempty"`
 }
 
 type DeploymentListResponse struct {

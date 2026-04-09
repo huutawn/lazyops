@@ -10,38 +10,65 @@ import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { HealthChip } from '@/components/primitives/health-chip';
 import { SkeletonPage } from '@/components/primitives/skeleton';
+import { isFeatureEnabled } from '@/lib/flags/feature-flags';
 import Link from 'next/link';
 
-const NEXT_STEPS = [
-  {
-    title: 'Link a repository',
-    description: 'Connect a GitHub repo to this project.',
-    href: '/repo-link',
-    done: false,
-  },
-  {
-    title: 'Create a deployment binding',
-    description: 'Define where services will be deployed.',
-    href: '/bindings',
-    done: false,
-  },
-  {
-    title: 'Review the deploy contract',
-    description: 'Validate your lazyops.yaml configuration.',
-    href: '/validate',
-    done: false,
-  },
-  {
-    title: 'Compile the blueprint',
-    description: 'Generate the deployment plan.',
-    href: '/blueprint',
-    done: false,
-  },
-];
+function getNextSteps(threeStepFlowEnabled: boolean) {
+  if (threeStepFlowEnabled) {
+    return [
+      {
+        title: 'Connect code',
+        description: 'Link a GitHub repo to this project.',
+        href: '',
+        done: false,
+      },
+      {
+        title: 'Connect infra',
+        description: 'Add at least one target instance/mesh/cluster.',
+        href: '/instances',
+        done: false,
+      },
+      {
+        title: 'Deploy',
+        description: 'Open the 3-step project setup and run deploy.',
+        href: '',
+        done: false,
+      },
+    ];
+  }
+
+  return [
+    {
+      title: 'Link a repository',
+      description: 'Connect a GitHub repo to this project.',
+      href: '/repo-link',
+      done: false,
+    },
+    {
+      title: 'Create a deployment binding',
+      description: 'Define where services will be deployed.',
+      href: '/bindings',
+      done: false,
+    },
+    {
+      title: 'Review the deploy contract',
+      description: 'Validate your lazyops.yaml configuration.',
+      href: '/validate',
+      done: false,
+    },
+    {
+      title: 'Compile the blueprint',
+      description: 'Generate the deployment plan.',
+      href: '/blueprint',
+      done: false,
+    },
+  ];
+}
 
 export default function ProjectIntegrationsPage() {
   const params = useParams();
   const projectId = params?.projectId as string;
+  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
 
   const { data: reposData, isLoading: reposLoading } = useGitHubInstallations();
   const { data: appConfig } = useGitHubAppConfig();
@@ -60,10 +87,10 @@ export default function ProjectIntegrationsPage() {
   const hasGitHub = repos.length > 0;
   const hasRepoLink = !!repoLink;
 
-  const steps = NEXT_STEPS.map((step) => ({
+  const steps = getNextSteps(threeStepFlowEnabled).map((step) => ({
     ...step,
-    href: `/projects/${projectId}${step.href}`,
-    done: step.title === 'Link a repository' ? hasRepoLink : false,
+    href: step.href ? `/projects/${projectId}${step.href}` : `/projects/${projectId}`,
+    done: step.title.toLowerCase().includes('link') || step.title.toLowerCase().includes('code') ? hasRepoLink : false,
   }));
 
   const completedSteps = steps.filter((s) => s.done).length;
@@ -72,7 +99,11 @@ export default function ProjectIntegrationsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Integrations"
-        subtitle="Manage all external connections for this project."
+        subtitle={
+          threeStepFlowEnabled
+            ? 'Manage external connections. Infrastructure + binding are handled in the 3-step project setup.'
+            : 'Manage all external connections for this project.'
+        }
       />
 
       <SectionCard title="Setup progress" description={`${completedSteps} of ${steps.length} steps completed.`}>

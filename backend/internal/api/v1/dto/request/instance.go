@@ -8,6 +8,7 @@ type CreateInstanceRequest struct {
 }
 
 type InstallInstanceAgentSSHRequest struct {
+	ProjectID          string `json:"project_id"`
 	Host               string `json:"host"`
 	Port               int    `json:"port"`
 	Username           string `json:"username"`

@@ -20,6 +20,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	router.Use(middleware.RequestID())
 
 	projectController := NewProjectController(nil, nil)
+	bootstrapController := NewBootstrapController(nil)
 	githubController := NewGitHubController(nil, config.Config{})
 	targetController := NewTargetController(nil, nil)
 	deploymentBindingController := NewDeploymentBindingController(nil)
@@ -33,6 +34,9 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	protected.GET("/projects", projectController.List)
 	protected.POST("/projects", projectController.Create)
 	protected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+	protected.GET("/projects/:id/bootstrap/status", bootstrapController.Status)
+	protected.POST("/projects/bootstrap/auto", bootstrapController.Auto)
+	protected.POST("/projects/:id/deploy/one-click", bootstrapController.OneClickDeploy)
 	protected.GET("/projects/:id/deployment-bindings", deploymentBindingController.List)
 	protected.POST("/projects/:id/deployment-bindings", deploymentBindingController.Create)
 	protected.POST("/projects/:id/init/validate-lazyops-yaml", initContractController.ValidateLazyopsYAML)
@@ -55,6 +59,9 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 		{name: "list projects", method: http.MethodGet, target: "/api/v1/projects"},
 		{name: "create project", method: http.MethodPost, target: "/api/v1/projects", body: `{"name":"Acme"}`},
 		{name: "link repo", method: http.MethodPost, target: "/api/v1/projects/prj_123/repo-link", body: `{"github_installation_id":1,"github_repo_id":2}`},
+		{name: "bootstrap status", method: http.MethodGet, target: "/api/v1/projects/prj_123/bootstrap/status"},
+		{name: "bootstrap auto", method: http.MethodPost, target: "/api/v1/projects/bootstrap/auto", body: `{"project_id":"prj_123"}`},
+		{name: "bootstrap one-click deploy", method: http.MethodPost, target: "/api/v1/projects/prj_123/deploy/one-click", body: `{}`},
 		{name: "list deployment bindings", method: http.MethodGet, target: "/api/v1/projects/prj_123/deployment-bindings"},
 		{name: "create deployment binding", method: http.MethodPost, target: "/api/v1/projects/prj_123/deployment-bindings", body: `{"name":"prod binding","target_ref":"prod-main","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_123"}`},
 		{name: "validate lazyops yaml", method: http.MethodPost, target: "/api/v1/projects/prj_123/init/validate-lazyops-yaml", body: `{"project_slug":"acme","runtime_mode":"standalone","deployment_binding":{"target_ref":"prod-main"},"services":[{"name":"api","path":"apps/api"}],"compatibility_policy":{"env_injection":true}}`},

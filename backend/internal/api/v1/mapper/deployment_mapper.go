@@ -96,12 +96,41 @@ func ToDeploymentDetailResponse(record service.DeploymentDetailRecord) responsed
 		})
 	}
 
+	var incidentSummary *responsedto.DeploymentIncidentSummaryResponse
+	if record.IncidentSummary != nil {
+		var action *responsedto.DeploymentFixActionResponse
+		if record.IncidentSummary.PrimaryAction != nil {
+			action = &responsedto.DeploymentFixActionResponse{
+				ID:     record.IncidentSummary.PrimaryAction.ID,
+				Label:  record.IncidentSummary.PrimaryAction.Label,
+				Href:   record.IncidentSummary.PrimaryAction.Href,
+				Method: record.IncidentSummary.PrimaryAction.Method,
+			}
+		}
+		incidentSummary = &responsedto.DeploymentIncidentSummaryResponse{
+			State:         record.IncidentSummary.State,
+			Headline:      record.IncidentSummary.Headline,
+			Reason:        record.IncidentSummary.Reason,
+			Recommended:   record.IncidentSummary.Recommended,
+			IncidentID:    record.IncidentSummary.IncidentID,
+			IncidentKind:  record.IncidentSummary.IncidentKind,
+			IncidentLevel: record.IncidentSummary.IncidentLevel,
+			PrimaryAction: action,
+		}
+	}
+
 	return responsedto.DeploymentDetailResponse{
 		DeploymentOverviewResponse: ToDeploymentOverviewResponse(record.DeploymentOverviewRecord),
 		Timeline:                   timeline,
 		CanRollback:                record.CanRollback,
 		CanPromote:                 record.CanPromote,
 		CanCancel:                  record.CanCancel,
+		SafetyPolicy: responsedto.DeploymentSafetyPolicyResponse{
+			AutoRollbackEnabled: record.SafetyPolicy.AutoRollbackEnabled,
+			Triggers:            record.SafetyPolicy.Triggers,
+			Description:         record.SafetyPolicy.Description,
+		},
+		IncidentSummary: incidentSummary,
 	}
 }
 

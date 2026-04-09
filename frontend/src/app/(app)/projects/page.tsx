@@ -31,7 +31,7 @@ export default function ProjectsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Projects"
-        subtitle="Manage repositories, bindings, blueprints, and deployments per project."
+        subtitle="Manage repositories, infrastructure readiness, and deployments per project."
         actions={
           <Link
             href="/onboarding"

@@ -270,13 +270,14 @@ func (s *ObservabilityService) ListRecentLogs(
 	lines := make([]LogLineRecord, 0, len(entries))
 	for _, entry := range entries {
 		lines = append(lines, LogLineRecord{
-			ID:         entry.ID,
-			Service:    entry.ServiceName,
-			RevisionID: entry.RevisionID,
-			Timestamp:  entry.OccurredAt,
-			Level:      entry.Level,
-			Message:    entry.Message,
-			Node:       entry.Node,
+			ID:            entry.ID,
+			Service:       entry.ServiceName,
+			RevisionID:    entry.RevisionID,
+			CorrelationID: entry.CorrelationID,
+			Timestamp:     entry.OccurredAt,
+			Level:         entry.Level,
+			Message:       entry.Message,
+			Node:          entry.Node,
 		})
 	}
 	return lines, nil
@@ -1162,13 +1163,14 @@ type LogsStreamPreview struct {
 }
 
 type LogLineRecord struct {
-	ID         string    `json:"id,omitempty"`
-	Service    string    `json:"service,omitempty"`
-	RevisionID string    `json:"revision_id,omitempty"`
-	Timestamp  time.Time `json:"timestamp"`
-	Level      string    `json:"level"`
-	Message    string    `json:"message"`
-	Node       string    `json:"node,omitempty"`
+	ID            string    `json:"id,omitempty"`
+	Service       string    `json:"service,omitempty"`
+	RevisionID    string    `json:"revision_id,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	Timestamp     time.Time `json:"timestamp"`
+	Level         string    `json:"level"`
+	Message       string    `json:"message"`
+	Node          string    `json:"node,omitempty"`
 }
 
 func toTraceRecord(item models.TraceSummary) *TraceRecord {

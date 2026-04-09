@@ -326,6 +326,112 @@ func TestDeploymentServicePersistsDeploymentRecord(t *testing.T) {
 	}
 }
 
+func TestDeploymentServiceGetIncludesSafetyAndIncidentSummary(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123def456",
+		TriggerKind:          "manual",
+		Status:               RevisionStatusRolledBack,
+		CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+		CreatedAt:            time.Date(2026, 4, 9, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:            time.Date(2026, 4, 9, 9, 5, 0, 0, time.UTC),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusRolledBack,
+		CreatedAt:  time.Date(2026, 4, 9, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:  time.Date(2026, 4, 9, 9, 10, 0, 0, time.UTC),
+	})
+	incidentStore := newFakeRuntimeIncidentStore(models.RuntimeIncident{
+		ID:           "inc_123",
+		ProjectID:    "prj_123",
+		DeploymentID: "dep_123",
+		RevisionID:   "rev_123",
+		Kind:         IncidentKindUnhealthyCandidate,
+		Severity:     IncidentSeverityCritical,
+		Status:       IncidentStatusOpen,
+		Summary:      "candidate failed health gate",
+		CreatedAt:    time.Date(2026, 4, 9, 9, 6, 0, 0, time.UTC),
+	})
+
+	service := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
+		WithIncidentStore(incidentStore)
+
+	record, err := service.Get("usr_123", RoleOperator, "prj_123", "dep_123")
+	if err != nil {
+		t.Fatalf("get deployment detail: %v", err)
+	}
+	if !record.SafetyPolicy.AutoRollbackEnabled {
+		t.Fatal("expected auto rollback to be enabled by default")
+	}
+	if len(record.SafetyPolicy.Triggers) == 0 {
+		t.Fatal("expected rollback triggers to be present")
+	}
+	if record.IncidentSummary == nil {
+		t.Fatal("expected incident summary for rolled back deployment")
+	}
+	if record.IncidentSummary.Headline != "Deployment was auto-rolled back" {
+		t.Fatalf("unexpected headline: %q", record.IncidentSummary.Headline)
+	}
+	if record.IncidentSummary.PrimaryAction == nil || record.IncidentSummary.PrimaryAction.ID != "retry_deployment" {
+		t.Fatalf("expected retry_deployment action, got %#v", record.IncidentSummary.PrimaryAction)
+	}
+}
+
+func TestDeploymentServiceGetHealthySummaryWhenNoIncident(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123def456",
+		TriggerKind:          "manual",
+		Status:               RevisionStatusPromoted,
+		CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+		CreatedAt:            time.Date(2026, 4, 9, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:            time.Date(2026, 4, 9, 9, 5, 0, 0, time.UTC),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusPromoted,
+		CreatedAt:  time.Date(2026, 4, 9, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:  time.Date(2026, 4, 9, 9, 10, 0, 0, time.UTC),
+	})
+	service := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore)
+
+	record, err := service.Get("usr_123", RoleOperator, "prj_123", "dep_123")
+	if err != nil {
+		t.Fatalf("get deployment detail: %v", err)
+	}
+	if record.IncidentSummary == nil {
+		t.Fatal("expected incident summary for healthy deployment")
+	}
+	if record.IncidentSummary.State != "healthy" {
+		t.Fatalf("expected healthy state, got %q", record.IncidentSummary.State)
+	}
+}
+
 func mustBlueprintModel(t *testing.T, blueprintID, projectID string) models.Blueprint {
 	t.Helper()
 

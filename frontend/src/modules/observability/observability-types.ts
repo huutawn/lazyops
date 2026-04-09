@@ -2,11 +2,14 @@ export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
 
 export type LogEntry = {
   id: string;
-  deployment_id: string;
+  deployment_id?: string;
   service: string;
+  revision_id?: string;
+  correlation_id?: string;
   level: LogLevel;
   message: string;
   timestamp: string;
+  node?: string;
 };
 
 export type TraceSpan = {

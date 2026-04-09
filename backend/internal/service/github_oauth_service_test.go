@@ -21,6 +21,15 @@ type fakeGitHubProvider struct {
 	fetchErr    error
 }
 
+type fakeGitHubInstallationSyncer struct {
+	calls []SyncGitHubInstallationsCommand
+}
+
+func (f *fakeGitHubInstallationSyncer) SyncInstallations(ctx context.Context, cmd SyncGitHubInstallationsCommand) (*GitHubInstallationSyncResult, error) {
+	f.calls = append(f.calls, cmd)
+	return &GitHubInstallationSyncResult{}, nil
+}
+
 func (f *fakeGitHubProvider) AuthorizationURL(state string) string {
 	f.lastState = state
 	query := url.Values{}
@@ -123,6 +132,51 @@ func TestGitHubOAuthServiceSuccessfulLogin(t *testing.T) {
 	}
 	if claims.AuthKind != "web_session" {
 		t.Fatalf("expected web_session, got %q", claims.AuthKind)
+	}
+}
+
+func TestGitHubOAuthServiceAutoSyncsInstallationsOnCallback(t *testing.T) {
+	userStore := newFakeUserStore()
+	identityStore := newFakeOAuthIdentityStore()
+	patStore := newFakePATStore()
+	provider := &fakeGitHubProvider{
+		accessToken: "github-access-token",
+		identity: &GitHubIdentity{
+			Subject: "github-subject-1",
+			Login:   "janedoe",
+			Email:   "jane@example.com",
+			Name:    "Jane Doe",
+		},
+	}
+	service := newGitHubOAuthServiceForTest(userStore, identityStore, patStore, provider)
+	syncer := &fakeGitHubInstallationSyncer{}
+	service.WithInstallationSync(syncer)
+
+	start, err := service.Start()
+	if err != nil {
+		t.Fatalf("start github oauth: %v", err)
+	}
+
+	result, err := service.HandleCallback(context.Background(), GitHubOAuthCallbackInput{
+		State:      provider.lastState,
+		StateNonce: start.StateNonce,
+		Code:       "callback-code",
+	})
+	if err != nil {
+		t.Fatalf("handle callback: %v", err)
+	}
+
+	if result == nil || result.AuthResult == nil {
+		t.Fatal("expected callback result with auth")
+	}
+	if len(syncer.calls) != 1 {
+		t.Fatalf("expected one installation sync call, got %d", len(syncer.calls))
+	}
+	if syncer.calls[0].UserID == "" {
+		t.Fatal("expected sync call to include user id")
+	}
+	if syncer.calls[0].GitHubAccessToken != "github-access-token" {
+		t.Fatalf("expected callback access token to be forwarded, got %q", syncer.calls[0].GitHubAccessToken)
 	}
 }
 

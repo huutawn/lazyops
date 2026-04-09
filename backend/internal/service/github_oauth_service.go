@@ -32,6 +32,10 @@ type GitHubOAuthProvider interface {
 	FetchIdentity(ctx context.Context, accessToken string) (*GitHubIdentity, error)
 }
 
+type GitHubInstallationSyncer interface {
+	SyncInstallations(ctx context.Context, cmd SyncGitHubInstallationsCommand) (*GitHubInstallationSyncResult, error)
+}
+
 type GitHubOAuthStartResult struct {
 	AuthorizationURL string
 	StateNonce       string
@@ -61,6 +65,7 @@ type GitHubOAuthService struct {
 	identities  OAuthIdentityStore
 	auth        *AuthService
 	provider    GitHubOAuthProvider
+	installSync GitHubInstallationSyncer
 	cfg         config.GitHubOAuthConfig
 	stateSecret string
 }
@@ -81,6 +86,11 @@ func NewGitHubOAuthService(
 		cfg:         cfg,
 		stateSecret: stateSecret,
 	}
+}
+
+func (s *GitHubOAuthService) WithInstallationSync(syncer GitHubInstallationSyncer) *GitHubOAuthService {
+	s.installSync = syncer
+	return s
 }
 
 func (s *GitHubOAuthService) Start() (*GitHubOAuthStartResult, error) {
@@ -132,6 +142,13 @@ func (s *GitHubOAuthService) HandleCallback(ctx context.Context, input GitHubOAu
 	user, linked, err := s.resolveUser(identity)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.installSync != nil && strings.TrimSpace(accessToken) != "" {
+		_, _ = s.installSync.SyncInstallations(ctx, SyncGitHubInstallationsCommand{
+			UserID:            user.ID,
+			GitHubAccessToken: accessToken,
+		})
 	}
 
 	now := time.Now().UTC()

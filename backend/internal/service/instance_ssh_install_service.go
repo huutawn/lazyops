@@ -139,6 +139,7 @@ func (e *NativeSSHExecutor) Execute(ctx context.Context, input SSHExecutionInput
 type InstanceSSHInstallService struct {
 	instances *InstanceService
 	executor  SSHExecutor
+	bootstrap *BootstrapOrchestrator
 }
 
 func NewInstanceSSHInstallService(instances *InstanceService, executor SSHExecutor) *InstanceSSHInstallService {
@@ -149,6 +150,11 @@ func NewInstanceSSHInstallService(instances *InstanceService, executor SSHExecut
 		instances: instances,
 		executor:  executor,
 	}
+}
+
+func (s *InstanceSSHInstallService) WithBootstrapOrchestrator(bootstrap *BootstrapOrchestrator) *InstanceSSHInstallService {
+	s.bootstrap = bootstrap
+	return s
 }
 
 func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInstanceAgentSSHCommand) (*InstallInstanceAgentSSHResult, error) {
@@ -198,11 +204,25 @@ func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInst
 		return nil, err
 	}
 
+	attachedProjectID := ""
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	if projectID != "" && s.bootstrap != nil {
+		if _, autoErr := s.bootstrap.AutoBootstrap(BootstrapAutoCommand{
+			RequesterUserID: userID,
+			RequesterRole:   RoleViewer,
+			ProjectID:       projectID,
+			InstanceID:      instanceID,
+		}); autoErr == nil {
+			attachedProjectID = projectID
+		}
+	}
+
 	return &InstallInstanceAgentSSHResult{
 		InstanceID:         instanceID,
 		Bootstrap:          *bootstrapIssue,
 		StartedAt:          time.Now().UTC(),
 		HostKeyFingerprint: strings.TrimSpace(execResult.HostKeyFingerprint),
+		AttachedProjectID:  attachedProjectID,
 	}, nil
 }
 

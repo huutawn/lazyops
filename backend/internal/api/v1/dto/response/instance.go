@@ -33,6 +33,7 @@ type InstallInstanceAgentSSHResponse struct {
 	Bootstrap          BootstrapTokenIssueResponse `json:"bootstrap"`
 	StartedAt          time.Time                   `json:"started_at"`
 	HostKeyFingerprint string                      `json:"host_key_fingerprint,omitempty"`
+	AttachedProjectID  string                      `json:"attached_project_id,omitempty"`
 }
 
 type InstanceListResponse struct {

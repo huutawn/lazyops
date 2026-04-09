@@ -64,6 +64,7 @@ type DeploymentService struct {
 	blueprints  BlueprintStore
 	revisions   DesiredStateRevisionStore
 	deployments DeploymentStore
+	incidents   RuntimeIncidentStore
 }
 
 func NewDeploymentService(
@@ -78,6 +79,14 @@ func NewDeploymentService(
 		revisions:   revisions,
 		deployments: deployments,
 	}
+}
+
+func (s *DeploymentService) WithIncidentStore(incidents RuntimeIncidentStore) *DeploymentService {
+	if s == nil {
+		return s
+	}
+	s.incidents = incidents
+	return s
 }
 
 func (s *DeploymentService) Create(cmd CreateDeploymentCommand) (*CreateDeploymentResult, error) {
@@ -224,7 +233,16 @@ func (s *DeploymentService) Get(requesterUserID, requesterRole, projectID, deplo
 	}
 
 	overview := buildDeploymentOverview(*deployment, revisionRecord, true, revisionNumbers[deployment.RevisionID])
-	detail := buildDeploymentDetail(overview, revisionRecord, *deployment)
+	incidentRecords := []models.RuntimeIncident{}
+	if s.incidents != nil {
+		items, listErr := s.incidents.ListByDeployment(project.ID, deployment.ID)
+		if listErr != nil {
+			return nil, listErr
+		}
+		incidentRecords = items
+	}
+
+	detail := buildDeploymentDetail(overview, revisionRecord, *deployment, incidentRecords)
 	return &detail, nil
 }
 
@@ -623,6 +641,7 @@ func buildDeploymentDetail(
 	overview DeploymentOverviewRecord,
 	revision DesiredStateRevisionRecord,
 	deployment models.Deployment,
+	incidents []models.RuntimeIncident,
 ) DeploymentDetailRecord {
 	canPromote := overview.RolloutState == DeploymentStatusCandidateReady && !overview.Promoted
 	canCancel := overview.RolloutState == DeploymentStatusQueued ||
@@ -636,6 +655,8 @@ func buildDeploymentDetail(
 		CanRollback:              canRollback,
 		CanPromote:               canPromote,
 		CanCancel:                canCancel,
+		SafetyPolicy:             buildDeploymentSafetyPolicy(),
+		IncidentSummary:          buildDeploymentIncidentSummary(overview, incidents),
 	}
 }
 
@@ -714,4 +735,163 @@ func humanizeStateLabel(state string) string {
 		words[i] = strings.ToUpper(words[i][:1]) + strings.ToLower(words[i][1:])
 	}
 	return strings.Join(words, " ")
+}
+
+func buildDeploymentSafetyPolicy() DeploymentSafetyPolicyRecord {
+	return DeploymentSafetyPolicyRecord{
+		AutoRollbackEnabled: true,
+		Triggers: []string{
+			"health_gate_failed",
+			"health_gate_timeout",
+			"candidate_command_failed",
+		},
+		Description: "Auto rollback is enabled by default. LazyOps restores the latest stable revision when rollout safety checks fail.",
+	}
+}
+
+func buildDeploymentIncidentSummary(
+	overview DeploymentOverviewRecord,
+	incidents []models.RuntimeIncident,
+) *DeploymentIncidentSummaryRecord {
+	latest := latestIncident(incidents)
+	if latest == nil {
+		switch overview.RolloutState {
+		case DeploymentStatusPromoted:
+			return &DeploymentIncidentSummaryRecord{
+				State:       "healthy",
+				Headline:    "No active incidents",
+				Reason:      "Deployment passed rollout checks and is currently promoted.",
+				Recommended: "No action needed.",
+			}
+		case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
+			return &DeploymentIncidentSummaryRecord{
+				State:       "monitoring",
+				Headline:    "Monitoring rollout",
+				Reason:      "Safety checks are still running for this deployment.",
+				Recommended: "Wait for rollout to complete. Open deployment timeline for live events.",
+			}
+		case DeploymentStatusFailed, DeploymentStatusRolledBack, DeploymentStatusCanceled:
+			return &DeploymentIncidentSummaryRecord{
+				State:       "attention",
+				Headline:    "Deployment needs attention",
+				Reason:      "Deployment reached a terminal failure state but no runtime incident record was attached.",
+				Recommended: "Open observability to inspect runtime logs, then retry deployment.",
+				PrimaryAction: &DeploymentFixActionRecord{
+					ID:     "open_observability",
+					Label:  "Open observability",
+					Href:   "/observability",
+					Method: "GET",
+				},
+			}
+		}
+		return nil
+	}
+
+	headline := "Deployment incident detected"
+	switch overview.RolloutState {
+	case DeploymentStatusRolledBack:
+		headline = "Deployment was auto-rolled back"
+	case DeploymentStatusFailed:
+		headline = "Deployment failed before promotion"
+	case DeploymentStatusPromoted:
+		headline = "Deployment recovered after incident"
+	}
+
+	reason := incidentReason(*latest)
+	recommended, action := mapIncidentToFix(*latest, overview.ProjectID)
+
+	state := "attention"
+	switch strings.TrimSpace(strings.ToLower(latest.Severity)) {
+	case IncidentSeverityWarning:
+		state = "warning"
+	case IncidentSeverityInfo:
+		state = "info"
+	}
+
+	return &DeploymentIncidentSummaryRecord{
+		State:         state,
+		Headline:      headline,
+		Reason:        reason,
+		Recommended:   recommended,
+		IncidentID:    latest.ID,
+		IncidentKind:  latest.Kind,
+		IncidentLevel: latest.Severity,
+		PrimaryAction: action,
+	}
+}
+
+func latestIncident(items []models.RuntimeIncident) *models.RuntimeIncident {
+	if len(items) == 0 {
+		return nil
+	}
+
+	sorted := make([]models.RuntimeIncident, len(items))
+	copy(sorted, items)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].ID > sorted[j].ID
+		}
+		return sorted[i].CreatedAt.After(sorted[j].CreatedAt)
+	})
+	for i := range sorted {
+		if strings.EqualFold(sorted[i].Status, IncidentStatusOpen) {
+			return &sorted[i]
+		}
+	}
+	return &sorted[0]
+}
+
+func incidentReason(incident models.RuntimeIncident) string {
+	summary := strings.TrimSpace(incident.Summary)
+	if summary != "" {
+		return summary
+	}
+
+	switch incident.Kind {
+	case IncidentKindUnhealthyCandidate:
+		return "Candidate revision failed health checks."
+	case IncidentKindHealthGateTimeout:
+		return "Health gate timed out before checks completed."
+	case IncidentKindRollbackFailure:
+		return "Rollback did not complete successfully."
+	case IncidentKindPromotionFailure:
+		return "Promotion failed while moving candidate to live."
+	case IncidentKindCrashLoop:
+		return "Runtime detected repeated restarts (crash loop)."
+	default:
+		return "An incident was recorded for this deployment."
+	}
+}
+
+func mapIncidentToFix(incident models.RuntimeIncident, projectID string) (string, *DeploymentFixActionRecord) {
+	switch incident.Kind {
+	case IncidentKindUnhealthyCandidate, IncidentKindHealthGateTimeout, IncidentKindPromotionFailure:
+		return "Inspect logs, fix the failing service, then run a new deploy.", &DeploymentFixActionRecord{
+			ID:     "retry_deployment",
+			Label:  "Retry deployment",
+			Href:   fmt.Sprintf("/projects/%s", projectID),
+			Method: "GET",
+		}
+	case IncidentKindRollbackFailure:
+		return "Rollback could not finish. Review incidents and runtime health before retrying.", &DeploymentFixActionRecord{
+			ID:     "open_observability",
+			Label:  "Open observability",
+			Href:   "/observability",
+			Method: "GET",
+		}
+	case IncidentKindCrashLoop:
+		return "Check runtime logs and instance health, then redeploy after fixes.", &DeploymentFixActionRecord{
+			ID:     "inspect_instances",
+			Label:  "Check instances",
+			Href:   "/instances",
+			Method: "GET",
+		}
+	default:
+		return "Review incident details, then retry deployment when safe.", &DeploymentFixActionRecord{
+			ID:     "open_observability",
+			Label:  "Open observability",
+			Href:   "/observability",
+			Method: "GET",
+		}
+	}
 }

@@ -138,6 +138,74 @@ func TestInstanceSSHInstallServicePropagatesExecutorError(t *testing.T) {
 	}
 }
 
+func TestInstanceSSHInstallServiceAutoAttachesProjectBinding(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_1",
+		Name:          "Acme",
+		Slug:          "acme",
+		DefaultBranch: "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_1",
+		UserID:                  "usr_1",
+		Name:                    "edge-1",
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore()
+	instanceSvc := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+	bindingStore := newFakeDeploymentBindingStore()
+	bindingSvc := NewDeploymentBindingService(projectStore, bindingStore, instanceStore, newFakeMeshNetworkStore(), newFakeClusterStore())
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		newFakeProjectRepoLinkStore(),
+		bindingSvc,
+		bindingStore,
+		newFakeDeploymentStore(),
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		nil,
+	)
+
+	sshExec := &fakeSSHExecutor{
+		result: SSHExecutionResult{HostKeyFingerprint: "SHA256:auto"},
+	}
+	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec).WithBootstrapOrchestrator(orchestrator)
+
+	result, err := installSvc.Install(context.Background(), InstallInstanceAgentSSHCommand{
+		UserID:          "usr_1",
+		ProjectID:       "prj_1",
+		InstanceID:      "inst_1",
+		Host:            "203.0.113.10",
+		Port:            22,
+		Username:        "root",
+		Password:        "secret",
+		ControlPlaneURL: "http://control.example:8080",
+	})
+	if err != nil {
+		t.Fatalf("install via ssh: %v", err)
+	}
+	if result.AttachedProjectID != "prj_1" {
+		t.Fatalf("expected attached project id prj_1, got %q", result.AttachedProjectID)
+	}
+
+	bindings, err := bindingStore.ListByProject("prj_1")
+	if err != nil {
+		t.Fatalf("list bindings: %v", err)
+	}
+	if len(bindings) != 1 {
+		t.Fatalf("expected one auto binding, got %d", len(bindings))
+	}
+	if bindings[0].TargetKind != "instance" || bindings[0].TargetID != "inst_1" {
+		t.Fatalf("expected auto binding to instance inst_1, got kind=%q id=%q", bindings[0].TargetKind, bindings[0].TargetID)
+	}
+}
+
 func TestBuildInstallAgentCommandUsesDefaultAgentImage(t *testing.T) {
 	command := buildInstallAgentCommand(InstallInstanceAgentSSHCommand{
 		InstanceID: "inst_1",

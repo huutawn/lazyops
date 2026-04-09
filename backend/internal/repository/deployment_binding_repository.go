@@ -2,8 +2,10 @@ package repository
 
 import (
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"lazyops-server/internal/models"
 )
@@ -18,6 +20,26 @@ func NewDeploymentBindingRepository(db *gorm.DB) *DeploymentBindingRepository {
 
 func (r *DeploymentBindingRepository) Create(binding *models.DeploymentBinding) error {
 	return r.db.Create(binding).Error
+}
+
+func (r *DeploymentBindingRepository) UpsertAuto(binding *models.DeploymentBinding) error {
+	return r.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "project_id"},
+			{Name: "target_ref"},
+		},
+		DoUpdates: clause.Assignments(map[string]any{
+			"name":                      binding.Name,
+			"runtime_mode":              binding.RuntimeMode,
+			"target_kind":               binding.TargetKind,
+			"target_id":                 binding.TargetID,
+			"placement_policy_json":     binding.PlacementPolicyJSON,
+			"domain_policy_json":        binding.DomainPolicyJSON,
+			"compatibility_policy_json": binding.CompatibilityPolicyJSON,
+			"scale_to_zero_policy_json": binding.ScaleToZeroPolicyJSON,
+			"updated_at":                time.Now().UTC(),
+		}),
+	}).Create(binding).Error
 }
 
 func (r *DeploymentBindingRepository) ListByProject(projectID string) ([]models.DeploymentBinding, error) {

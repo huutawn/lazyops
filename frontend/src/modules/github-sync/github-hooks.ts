@@ -22,7 +22,16 @@ export function useSyncGitHubInstallations() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: SyncGitHubInstallationsFormData) => syncGitHubInstallations(data),
+    mutationFn: async (data: SyncGitHubInstallationsFormData): Promise<GitHubInstallationSyncResponse> => {
+      const result = await syncGitHubInstallations(data);
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      if (!result.data) {
+        throw new Error('GitHub sync failed: missing response payload');
+      }
+      return result.data;
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: INSTALLATIONS_KEY });
       void queryClient.invalidateQueries({ queryKey: REPOS_KEY });

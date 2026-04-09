@@ -48,9 +48,35 @@ export type DeploymentTimelineEvent = {
   description: string;
 };
 
+export type DeploymentSafetyPolicy = {
+  auto_rollback_enabled: boolean;
+  triggers: string[];
+  description: string;
+};
+
+export type DeploymentFixAction = {
+  id: string;
+  label: string;
+  href: string;
+  method: string;
+};
+
+export type DeploymentIncidentSummary = {
+  state: string;
+  headline: string;
+  reason: string;
+  recommended: string;
+  incident_id?: string;
+  incident_kind?: string;
+  incident_level?: string;
+  primary_action?: DeploymentFixAction;
+};
+
 export type DeploymentDetail = DeploymentRecord & {
   timeline: DeploymentTimelineEvent[];
   can_rollback: boolean;
   can_promote: boolean;
   can_cancel: boolean;
+  safety_policy: DeploymentSafetyPolicy;
+  incident_summary?: DeploymentIncidentSummary;
 };

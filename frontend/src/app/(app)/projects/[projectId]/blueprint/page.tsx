@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { compileBlueprint } from '@/modules/blueprint/blueprint-api';
 import type { CompileBlueprintResponse, BlueprintService, PlacementAssignment } from '@/modules/blueprint/blueprint-types';
 import { PageHeader } from '@/components/primitives/page-header';
@@ -11,6 +11,7 @@ import { HealthChip } from '@/components/primitives/health-chip';
 import { LoadingPage } from '@/components/primitives/loading';
 import { ErrorState } from '@/components/primitives/error-state';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
+import { isFeatureEnabled } from '@/lib/flags/feature-flags';
 
 const EXPLANATION = {
   title: 'What is a blueprint?',
@@ -20,7 +21,15 @@ const EXPLANATION = {
 
 export default function BlueprintReviewPage() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params?.projectId as string;
+  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
+
+  useEffect(() => {
+    if (threeStepFlowEnabled && projectId) {
+      router.replace(`/projects/${projectId}`);
+    }
+  }, [threeStepFlowEnabled, projectId, router]);
 
   const [result, setResult] = useState<CompileBlueprintResponse | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
@@ -34,6 +43,10 @@ export default function BlueprintReviewPage() {
     image_ref: '',
     trigger_kind: 'api_blueprint_compile',
   });
+
+  if (threeStepFlowEnabled) {
+    return <LoadingPage label="Redirecting to 3-step setup…" />;
+  }
 
   const handleCompile = async () => {
     if (!formData.commit_sha.trim()) {

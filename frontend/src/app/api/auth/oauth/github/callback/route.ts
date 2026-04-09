@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
 import type { AuthTokens } from '@/lib/auth/auth-types';
 
+const OAUTH_NEXT_COOKIE = 'lazyops_oauth_next';
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
@@ -47,8 +49,17 @@ export async function GET(request: NextRequest) {
     }
     const cookieOpts = sessionCookieOptions(isSecureRequest(request));
 
-    const redirectResponse = NextResponse.redirect(new URL('/dashboard', request.url));
+    const nextPathRaw = request.cookies.get(OAUTH_NEXT_COOKIE)?.value ?? '';
+    const nextPath = nextPathRaw.startsWith('/') ? nextPathRaw : '/dashboard';
+    const redirectResponse = NextResponse.redirect(new URL(nextPath, request.url));
     redirectResponse.cookies.set(SESSION_COOKIE_NAME, data.access_token, cookieOpts);
+    redirectResponse.cookies.set(OAUTH_NEXT_COOKIE, '', {
+      path: '/',
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: isSecureRequest(request),
+    });
 
     return redirectResponse;
   } catch {
