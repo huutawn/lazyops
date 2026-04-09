@@ -1,0 +1,161 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"lazyops-server/internal/models"
+)
+
+type fakeSSHExecutor struct {
+	lastInput SSHExecutionInput
+	result    SSHExecutionResult
+	err       error
+}
+
+func (f *fakeSSHExecutor) Execute(_ context.Context, input SSHExecutionInput) (SSHExecutionResult, error) {
+	f.lastInput = input
+	if f.err != nil {
+		return SSHExecutionResult{}, f.err
+	}
+	return f.result, nil
+}
+
+func TestInstanceSSHInstallServiceRejectsMissingAuth(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_1",
+		UserID:                  "usr_1",
+		Name:                    "edge-1",
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore()
+	instanceSvc := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+	sshExec := &fakeSSHExecutor{}
+	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec)
+
+	_, err := installSvc.Install(context.Background(), InstallInstanceAgentSSHCommand{
+		UserID:          "usr_1",
+		InstanceID:      "inst_1",
+		Host:            "203.0.113.10",
+		Port:            22,
+		Username:        "root",
+		ControlPlaneURL: "http://control.example:8080",
+	})
+	if !errors.Is(err, ErrSSHAuthenticationRequired) {
+		t.Fatalf("expected ErrSSHAuthenticationRequired, got %v", err)
+	}
+}
+
+func TestInstanceSSHInstallServiceIssuesTokenAndExecutesCommand(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_1",
+		UserID:                  "usr_1",
+		Name:                    "edge-1",
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore(&models.BootstrapToken{
+		ID:         "boot_old",
+		UserID:     "usr_1",
+		InstanceID: "inst_1",
+		TokenHash:  "hash_old",
+		ExpiresAt:  time.Now().UTC().Add(5 * time.Minute),
+	})
+	instanceSvc := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+	sshExec := &fakeSSHExecutor{
+		result: SSHExecutionResult{HostKeyFingerprint: "SHA256:abc123"},
+	}
+	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec)
+
+	result, err := installSvc.Install(context.Background(), InstallInstanceAgentSSHCommand{
+		UserID:             "usr_1",
+		InstanceID:         "inst_1",
+		Host:               "203.0.113.10",
+		Port:               22,
+		Username:           "root",
+		Password:           "secret",
+		ControlPlaneURL:    "http://control.example:8080",
+		HostKeyFingerprint: "SHA256:abc123",
+		AgentImage:         "tawn/lazyops-agent:test",
+	})
+	if err != nil {
+		t.Fatalf("install via ssh: %v", err)
+	}
+
+	if result.InstanceID != "inst_1" {
+		t.Fatalf("expected instance id inst_1, got %q", result.InstanceID)
+	}
+	if !strings.HasPrefix(result.Bootstrap.Token, "lop_boot_") {
+		t.Fatalf("expected lop_boot_ token, got %q", result.Bootstrap.Token)
+	}
+	if strings.TrimSpace(result.HostKeyFingerprint) == "" {
+		t.Fatal("expected host key fingerprint in result")
+	}
+	if !strings.Contains(sshExec.lastInput.Command, "docker run -d") {
+		t.Fatalf("expected docker run command, got %q", sshExec.lastInput.Command)
+	}
+	if !strings.Contains(sshExec.lastInput.Command, "AGENT_BOOTSTRAP_TOKEN") {
+		t.Fatalf("expected bootstrap token env in command, got %q", sshExec.lastInput.Command)
+	}
+
+	oldRecord := tokenStore.byID["boot_old"]
+	if oldRecord == nil || oldRecord.UsedAt == nil {
+		t.Fatalf("expected old bootstrap token revoked, got %#v", oldRecord)
+	}
+}
+
+func TestInstanceSSHInstallServicePropagatesExecutorError(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_1",
+		UserID:                  "usr_1",
+		Name:                    "edge-1",
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore()
+	instanceSvc := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+	sshExec := &fakeSSHExecutor{err: ErrSSHConnectionFailed}
+	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec)
+
+	_, err := installSvc.Install(context.Background(), InstallInstanceAgentSSHCommand{
+		UserID:          "usr_1",
+		InstanceID:      "inst_1",
+		Host:            "203.0.113.10",
+		Port:            22,
+		Username:        "root",
+		Password:        "secret",
+		ControlPlaneURL: "http://control.example:8080",
+	})
+	if !errors.Is(err, ErrSSHConnectionFailed) {
+		t.Fatalf("expected ErrSSHConnectionFailed, got %v", err)
+	}
+}
+
+func TestBuildInstallAgentCommandUsesDefaultAgentImage(t *testing.T) {
+	command := buildInstallAgentCommand(InstallInstanceAgentSSHCommand{
+		InstanceID: "inst_1",
+	}, "lop_boot_123", "enc_key_123", "http://control.example:8080")
+
+	if !strings.Contains(command, defaultAgentImage) {
+		t.Fatalf("expected default image %q in command, got %q", defaultAgentImage, command)
+	}
+}
+
+func TestBuildInstallAgentCommandRespectsConfiguredDefaultAgentImage(t *testing.T) {
+	t.Setenv("AGENT_DEFAULT_IMAGE", "tawn/lazyops-agent:stable")
+
+	command := buildInstallAgentCommand(InstallInstanceAgentSSHCommand{
+		InstanceID: "inst_1",
+	}, "lop_boot_123", "enc_key_123", "http://control.example:8080")
+
+	if !strings.Contains(command, "tawn/lazyops-agent:stable") {
+		t.Fatalf("expected configured default image in command, got %q", command)
+	}
+}

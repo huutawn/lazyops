@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -353,6 +354,187 @@ func TestWebSocketClientDispatchesInboundCommandEnvelope(t *testing.T) {
 	}
 }
 
+func TestWebSocketClientEnrollCallsControlPlaneAPI(t *testing.T) {
+	enrollRequestCh := make(chan contracts.EnrollAgentRequest, 1)
+	issuedAt := time.Now().UTC().Round(time.Second)
+	expiresAt := issuedAt.Add(30 * 24 * time.Hour)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/agents/enroll" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req contracts.EnrollAgentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode enroll request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		enrollRequestCh <- req
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"message": "agent enrolled",
+			"data": map[string]any{
+				"agent_id":    "agt_backend_1",
+				"agent_token": "atok_backend_1",
+				"issued_at":   issuedAt,
+				"expires_at":  expiresAt,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewWebSocketClient(testLogger(), WebSocketClientConfig{
+		ControlPlaneURL: wsBaseURL(t, server.URL),
+		DialTimeout:     time.Second,
+	})
+
+	req := contracts.EnrollAgentRequest{
+		BootstrapToken: "lop_boot_abc",
+		RuntimeMode:    contracts.RuntimeModeStandalone,
+		AgentKind:      contracts.AgentKindInstance,
+		Machine: contracts.MachineInfo{
+			Hostname: "vps-01",
+			OS:       "linux",
+			Arch:     "amd64",
+			IPs:      []string{"203.0.113.10"},
+			Labels: map[string]string{
+				"target_ref": "inst_123",
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	response, err := client.Enroll(ctx, req)
+	if err != nil {
+		t.Fatalf("enroll via control api: %v", err)
+	}
+	if response.AgentID != "agt_backend_1" {
+		t.Fatalf("unexpected agent id %q", response.AgentID)
+	}
+	if response.AgentToken != "atok_backend_1" {
+		t.Fatalf("unexpected agent token %q", response.AgentToken)
+	}
+	if !response.IssuedAt.Equal(issuedAt) {
+		t.Fatalf("unexpected issued_at %v", response.IssuedAt)
+	}
+	if !response.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected expires_at %v", response.ExpiresAt)
+	}
+
+	received := mustReceiveEnrollRequest(t, enrollRequestCh)
+	if received.BootstrapToken != req.BootstrapToken {
+		t.Fatalf("bootstrap token mismatch: %q", received.BootstrapToken)
+	}
+	if received.RuntimeMode != req.RuntimeMode {
+		t.Fatalf("runtime mode mismatch: %q", received.RuntimeMode)
+	}
+	if received.AgentKind != req.AgentKind {
+		t.Fatalf("agent kind mismatch: %q", received.AgentKind)
+	}
+}
+
+func TestWebSocketClientEnrollMapsBackendErrorCodes(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		wantErr error
+	}{
+		{name: "invalid token", code: "invalid_token", wantErr: ErrBootstrapTokenUnknown},
+		{name: "expired token", code: "expired_token", wantErr: ErrBootstrapTokenExpired},
+		{name: "reused token", code: "reused_bootstrap_token", wantErr: ErrBootstrapTokenReused},
+		{name: "ownership mismatch", code: "ownership_mismatch", wantErr: ErrBootstrapTargetMismatch},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/agents/enroll" {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"success": false,
+					"message": "agent enrollment failed",
+					"error": map[string]any{
+						"code": tt.code,
+					},
+				})
+			}))
+			defer server.Close()
+
+			client := NewWebSocketClient(testLogger(), WebSocketClientConfig{
+				ControlPlaneURL: wsBaseURL(t, server.URL),
+				DialTimeout:     time.Second,
+			})
+
+			_, err := client.Enroll(context.Background(), contracts.EnrollAgentRequest{
+				BootstrapToken: "lop_boot_fail",
+				RuntimeMode:    contracts.RuntimeModeStandalone,
+				AgentKind:      contracts.AgentKindInstance,
+				Machine: contracts.MachineInfo{
+					Hostname: "vps-01",
+				},
+			})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestControlEnrollURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		base    string
+		wantURL string
+	}{
+		{
+			name:    "ws base host",
+			base:    "ws://127.0.0.1:8080",
+			wantURL: "http://127.0.0.1:8080/api/v1/agents/enroll",
+		},
+		{
+			name:    "wss base host",
+			base:    "wss://control.lazyops.example",
+			wantURL: "https://control.lazyops.example/api/v1/agents/enroll",
+		},
+		{
+			name:    "http with api v1 suffix",
+			base:    "http://127.0.0.1:8080/api/v1",
+			wantURL: "http://127.0.0.1:8080/api/v1/agents/enroll",
+		},
+		{
+			name:    "ws control socket path",
+			base:    "ws://127.0.0.1:8080/ws/agents/control",
+			wantURL: "http://127.0.0.1:8080/api/v1/agents/enroll",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := controlEnrollURL(tt.base)
+			if err != nil {
+				t.Fatalf("controlEnrollURL returned error: %v", err)
+			}
+			if got != tt.wantURL {
+				t.Fatalf("expected %q, got %q", tt.wantURL, got)
+			}
+		})
+	}
+}
+
 func wsBaseURL(t *testing.T, raw string) string {
 	t.Helper()
 
@@ -398,6 +580,18 @@ func mustReceiveEnvelope(t *testing.T, ch <-chan contracts.CommandEnvelope) cont
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for replayed handshake")
 		return contracts.CommandEnvelope{}
+	}
+}
+
+func mustReceiveEnrollRequest(t *testing.T, ch <-chan contracts.EnrollAgentRequest) contracts.EnrollAgentRequest {
+	t.Helper()
+
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for enroll request")
+		return contracts.EnrollAgentRequest{}
 	}
 }
 

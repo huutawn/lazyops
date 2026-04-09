@@ -37,6 +37,18 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 		return nil, ErrInvalidInput
 	}
 
+	existing, err := s.buildJobs.GetByDeliveryID(strings.TrimSpace(deliveryID))
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		record, err := ToBuildJobRecord(*existing)
+		if err != nil {
+			return nil, err
+		}
+		return &record, nil
+	}
+
 	link, err := s.repoLinks.GetByProjectID(event.ProjectID)
 	if err != nil {
 		return nil, err

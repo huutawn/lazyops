@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { API_BASE_URL, SESSION_COOKIE_NAME, sessionCookieOptions } from '@/lib/auth/auth-config';
+import { SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
 import type { AuthTokens } from '@/lib/auth/auth-types';
 
 export async function GET(request: NextRequest) {
@@ -19,9 +19,18 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const response = await fetch(
-      `${API_BASE_URL}/api/v1/auth/oauth/google/callback?code=${code}&state=${state}`,
-    );
+    const callbackURL = new URL('/api/v1/auth/oauth/google/callback', request.url);
+    callbackURL.searchParams.set('code', code);
+    callbackURL.searchParams.set('state', state);
+    callbackURL.searchParams.set('mode', 'json');
+
+    const stateNonce = request.cookies.get('lazyops_oauth_google_state')?.value;
+    const headers: HeadersInit = {};
+    if (stateNonce) {
+      headers['X-LazyOps-OAuth-State-Nonce'] = stateNonce;
+    }
+
+    const response = await fetch(callbackURL, { headers });
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => null);
@@ -31,9 +40,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = (await response.json()) as AuthTokens;
-    const isSecure = API_BASE_URL.startsWith('https');
-    const cookieOpts = sessionCookieOptions(isSecure);
+    const payload = await response.json();
+    const data = (payload?.data ?? payload) as AuthTokens;
+    if (!data?.access_token) {
+      return NextResponse.redirect(new URL('/login?error=oauth_invalid_response', request.url));
+    }
+    const cookieOpts = sessionCookieOptions(isSecureRequest(request));
 
     const redirectResponse = NextResponse.redirect(new URL('/dashboard', request.url));
     redirectResponse.cookies.set(SESSION_COOKIE_NAME, data.access_token, cookieOpts);

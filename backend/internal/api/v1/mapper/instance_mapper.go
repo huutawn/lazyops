@@ -16,10 +16,37 @@ func ToCreateInstanceCommand(userID string, req requestdto.CreateInstanceRequest
 	}
 }
 
+func ToInstallInstanceAgentSSHCommand(userID, instanceID string, req requestdto.InstallInstanceAgentSSHRequest) service.InstallInstanceAgentSSHCommand {
+	return service.InstallInstanceAgentSSHCommand{
+		UserID:             userID,
+		InstanceID:         instanceID,
+		Host:               req.Host,
+		Port:               req.Port,
+		Username:           req.Username,
+		Password:           req.Password,
+		PrivateKey:         req.PrivateKey,
+		HostKeyFingerprint: req.HostKeyFingerprint,
+		ControlPlaneURL:    req.ControlPlaneURL,
+		RuntimeMode:        req.RuntimeMode,
+		AgentKind:          req.AgentKind,
+		AgentImage:         req.AgentImage,
+		ContainerName:      req.ContainerName,
+	}
+}
+
 func ToCreateInstanceResponse(result service.CreateInstanceResult) responsedto.CreateInstanceResponse {
 	return responsedto.CreateInstanceResponse{
 		Instance:  ToInstanceSummaryResponse(result.Instance),
 		Bootstrap: ToBootstrapTokenIssueResponse(result.Bootstrap),
+	}
+}
+
+func ToInstallInstanceAgentSSHResponse(result service.InstallInstanceAgentSSHResult) responsedto.InstallInstanceAgentSSHResponse {
+	return responsedto.InstallInstanceAgentSSHResponse{
+		InstanceID:         result.InstanceID,
+		Bootstrap:          ToBootstrapTokenIssueResponse(result.Bootstrap),
+		StartedAt:          result.StartedAt,
+		HostKeyFingerprint: result.HostKeyFingerprint,
 	}
 }
 

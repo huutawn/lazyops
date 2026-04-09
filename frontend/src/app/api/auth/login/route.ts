@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { API_BASE_URL, SESSION_COOKIE_NAME, sessionCookieOptions } from '@/lib/auth/auth-config';
+import { API_BASE_URL, SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
 import { getAuthErrorMessage } from '@/lib/auth/auth-errors';
 import type { LoginCredentials, AuthTokens } from '@/lib/auth/auth-types';
 
@@ -23,8 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     const authData = data as AuthTokens;
-    const isSecure = API_BASE_URL.startsWith('https');
-    const cookieOpts = sessionCookieOptions(isSecure);
+    const cookieOpts = sessionCookieOptions(isSecureRequest(request));
 
     const nextResponse = NextResponse.json({ user: authData.user });
     nextResponse.cookies.set(SESSION_COOKIE_NAME, authData.access_token, cookieOpts);

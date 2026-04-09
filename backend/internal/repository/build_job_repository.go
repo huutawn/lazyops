@@ -21,6 +21,18 @@ func (r *BuildJobRepository) Create(job *models.BuildJob) error {
 	return r.db.Create(job).Error
 }
 
+func (r *BuildJobRepository) GetByDeliveryID(deliveryID string) (*models.BuildJob, error) {
+	var job models.BuildJob
+	if err := r.db.Where("github_delivery_id = ?", deliveryID).Order("created_at ASC").First(&job).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &job, nil
+}
+
 func (r *BuildJobRepository) GetByIDForProject(projectID, buildJobID string) (*models.BuildJob, error) {
 	var job models.BuildJob
 	if err := r.db.Where("project_id = ? AND id = ?", projectID, buildJobID).First(&job).Error; err != nil {

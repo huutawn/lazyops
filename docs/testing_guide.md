@@ -22,6 +22,52 @@ GitHub App yêu cầu URL thật để gửi payload (khi người dùng tạo P
 
 Để test PR của bạn, bạn cần đăng nhập vào LazyOps Dashboard, tạo 1 Project, kết nối GitHub Repo chứa PR đó, và bật tính năng "Auto Deploy from PR".
 
+### ✅ Phase 2 (Lazy Mode): Cài Agent Qua SSH Rồi Quên SSH
+**Mục tiêu:** User không cần tự SSH vào VPS để chạy lệnh bootstrap bằng tay.
+
+**Flow thực tế sau khi deploy Dashboard/Backend:**
+1. User vào trang `Instances` -> tạo instance mới.
+2. Trong modal `Bootstrap`, nhập thông tin SSH:
+   - `host`, `port`, `username`
+   - `password` hoặc `private_key`
+   - `control_plane_url` (URL backend của bạn)
+3. Nhấn **Install via SSH**.
+4. Backend sẽ:
+   - phát hành bootstrap token tạm thời cho instance
+   - SSH vào VPS user
+   - chạy `docker run` để khởi động `lazyops-agent` (auto restart)
+5. Agent tự enroll về control plane.
+6. Instance chuyển sang trạng thái online -> sẵn sàng nhận deploy.
+
+**Điểm quan trọng cho tiêu chí "lazy":**
+- SSH credentials chỉ dùng cho request cài đặt đó (không cần lưu lâu dài).
+- Sau khi agent đã online, các lần deploy sau đi qua control plane -> **không cần SSH lại**.
+- Chỉ cần SSH lại khi agent bị mất, VPS bị recreate, hoặc bạn muốn cài lại sạch.
+
+**Prerequisites trên VPS user:**
+- Có Docker và user SSH có quyền chạy Docker.
+- Mở outbound tới backend/control-plane URL.
+- Nên chạy Linux server (Ubuntu/Debian/CentOS đều ổn nếu Docker chạy ổn).
+
+**Nếu muốn gọi trực tiếp bằng API (không qua UI):**
+```bash
+curl -X POST "<BACKEND_URL>/api/v1/instances/<INSTANCE_ID>/install-agent/ssh" \
+  -H "Authorization: Bearer <JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "host": "203.0.113.10",
+    "port": 22,
+    "username": "root",
+    "password": "<optional>",
+    "private_key": "<optional>",
+    "host_key_fingerprint": "SHA256:...",
+    "control_plane_url": "https://api.your-lazyops.com",
+    "runtime_mode": "standalone",
+    "agent_kind": "instance_agent",
+    "agent_image": "tawn/lazyops-agent:latest"
+  }'
+```
+
 ### 🟢 Giai đoạn 1: Test Standalone (Cùng 1 máy)
 **Mục tiêu:** Đảm bảo Backend và Agent giao tiếp được với nhau, code clone về được build, Gateway (Caddy) hoạt động.
 1. Khởi động Backend (trên máy local hoặc VPS).

@@ -1,8 +1,11 @@
 package mapper
 
 import (
+	"strings"
+
 	requestdto "lazyops-server/internal/api/v1/dto/request"
 	responsedto "lazyops-server/internal/api/v1/dto/response"
+	"lazyops-server/internal/config"
 	"lazyops-server/internal/service"
 )
 
@@ -63,6 +66,20 @@ func ToGitHubRepositoryListResponse(result service.GitHubRepositoryListResult) r
 	}
 
 	return responsedto.GitHubRepositoryListResponse{Items: items}
+}
+
+func ToGitHubAppConfigResponse(cfg config.GitHubAppConfig) responsedto.GitHubAppConfigResponse {
+	installURL := strings.TrimSpace(cfg.InstallURL)
+	callbackURL := strings.TrimSpace(cfg.CallbackURL)
+	webhookURL := strings.TrimSpace(cfg.WebhookURL)
+
+	return responsedto.GitHubAppConfigResponse{
+		Name:        strings.TrimSpace(cfg.Name),
+		InstallURL:  installURL,
+		WebhookURL:  webhookURL,
+		CallbackURL: callbackURL,
+		Enabled:     installURL != "" && callbackURL != "" && webhookURL != "",
+	}
 }
 
 func ToGitHubWebhookResponse(result service.GitHubWebhookResult) responsedto.GitHubWebhookResponse {

@@ -47,6 +47,14 @@ type GitHubRepositoryListResponse struct {
 	Items []GitHubRepositoryResponse `json:"items"`
 }
 
+type GitHubAppConfigResponse struct {
+	Name        string `json:"name"`
+	InstallURL  string `json:"install_url"`
+	WebhookURL  string `json:"webhook_url"`
+	CallbackURL string `json:"callback_url"`
+	Enabled     bool   `json:"enabled"`
+}
+
 type GitHubWebhookNormalizedEventResponse struct {
 	TriggerKind          string `json:"trigger_kind"`
 	Action               string `json:"action,omitempty"`

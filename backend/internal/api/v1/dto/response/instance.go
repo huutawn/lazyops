@@ -28,6 +28,13 @@ type CreateInstanceResponse struct {
 	Bootstrap BootstrapTokenIssueResponse `json:"bootstrap"`
 }
 
+type InstallInstanceAgentSSHResponse struct {
+	InstanceID         string                      `json:"instance_id"`
+	Bootstrap          BootstrapTokenIssueResponse `json:"bootstrap"`
+	StartedAt          time.Time                   `json:"started_at"`
+	HostKeyFingerprint string                      `json:"host_key_fingerprint,omitempty"`
+}
+
 type InstanceListResponse struct {
 	Items []InstanceSummaryResponse `json:"items"`
 }

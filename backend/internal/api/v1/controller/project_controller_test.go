@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"lazyops-server/internal/api/middleware"
+	"lazyops-server/internal/config"
 )
 
 func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
@@ -19,7 +20,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	router.Use(middleware.RequestID())
 
 	projectController := NewProjectController(nil, nil)
-	githubController := NewGitHubController(nil)
+	githubController := NewGitHubController(nil, config.Config{})
 	targetController := NewTargetController(nil, nil)
 	deploymentBindingController := NewDeploymentBindingController(nil)
 	initContractController := NewInitContractController(nil)
@@ -38,6 +39,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	protected.PUT("/projects/:id/blueprint", blueprintController.Compile)
 	protected.POST("/projects/:id/deployments", deploymentController.Create)
 	protected.GET("/ws/logs/stream", observabilityController.StreamLogs)
+	protected.GET("/github/app/config", githubController.AppConfig)
 	protected.GET("/github/repos", githubController.ListRepos)
 	protected.GET("/mesh-networks", targetController.ListMeshNetworks)
 	protected.POST("/mesh-networks", targetController.CreateMeshNetwork)
@@ -59,6 +61,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 		{name: "compile blueprint", method: http.MethodPut, target: "/api/v1/projects/prj_123/blueprint", body: `{"artifact_metadata":{"commit_sha":"abc123"},"lazyops_yaml":{"project_slug":"acme","runtime_mode":"standalone","deployment_binding":{"target_ref":"prod-main"},"services":[{"name":"api","path":"apps/api"}],"compatibility_policy":{"env_injection":true}}}`},
 		{name: "create deployment", method: http.MethodPost, target: "/api/v1/projects/prj_123/deployments", body: `{"blueprint_id":"bp_123"}`},
 		{name: "stream logs", method: http.MethodGet, target: "/api/v1/ws/logs/stream?project=prj_123&service=api"},
+		{name: "github app config", method: http.MethodGet, target: "/api/v1/github/app/config"},
 		{name: "list github repos", method: http.MethodGet, target: "/api/v1/github/repos"},
 		{name: "list mesh networks", method: http.MethodGet, target: "/api/v1/mesh-networks"},
 		{name: "create mesh network", method: http.MethodPost, target: "/api/v1/mesh-networks", body: `{"name":"mesh-prod","provider":"wireguard","cidr":"10.20.0.0/24"}`},

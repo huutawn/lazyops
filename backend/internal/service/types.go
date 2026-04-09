@@ -137,6 +137,31 @@ type BootstrapTokenIssue struct {
 	SingleUse bool
 }
 
+type InstallInstanceAgentSSHCommand struct {
+	UserID                  string
+	InstanceID              string
+	Host                    string
+	Port                    int
+	Username                string
+	Password                string
+	PrivateKey              string
+	HostKeyFingerprint      string
+	ControlPlaneURL         string
+	RuntimeMode             string
+	AgentKind               string
+	AgentImage              string
+	ContainerName           string
+	StateDir                string
+	ContainerRuntimeRootDir string
+}
+
+type InstallInstanceAgentSSHResult struct {
+	InstanceID         string
+	Bootstrap          BootstrapTokenIssue
+	StartedAt          time.Time
+	HostKeyFingerprint string
+}
+
 type AgentMachineInfo struct {
 	Hostname string
 	OS       string

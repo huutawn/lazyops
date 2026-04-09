@@ -49,8 +49,18 @@ func NewGitHubInstallationService(
 }
 
 func (s *GitHubInstallationService) SyncInstallations(ctx context.Context, cmd SyncGitHubInstallationsCommand) (*GitHubInstallationSyncResult, error) {
-	if strings.TrimSpace(cmd.UserID) == "" || strings.TrimSpace(cmd.GitHubAccessToken) == "" {
+	if strings.TrimSpace(cmd.UserID) == "" {
 		return nil, ErrInvalidInput
+	}
+
+	// CLI link flow can request a cached installation snapshot without passing
+	// a fresh GitHub user token on every command execution.
+	if strings.TrimSpace(cmd.GitHubAccessToken) == "" {
+		records, err := s.listInstallationRecords(cmd.UserID)
+		if err != nil {
+			return nil, err
+		}
+		return &GitHubInstallationSyncResult{Items: records}, nil
 	}
 
 	identity, err := s.identities.GetByUserProvider(cmd.UserID, GitHubOAuthProviderName)

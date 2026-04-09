@@ -58,6 +58,20 @@ func (f *fakeBuildJobStore) GetByIDForProject(projectID, buildJobID string) (*mo
 	return nil, nil
 }
 
+func (f *fakeBuildJobStore) GetByDeliveryID(deliveryID string) (*models.BuildJob, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	for _, projectItems := range f.byProjectID {
+		for _, item := range projectItems {
+			if item.GitHubDeliveryID == deliveryID {
+				return item, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeBuildJobStore) UpdateStatus(buildJobID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
 	if f.updateErr != nil {
 		return f.updateErr
@@ -235,5 +249,59 @@ func TestBuildJobServicePersistsWorkerInputAndArtifactStage(t *testing.T) {
 	}
 	if len(record.WorkerInput.CallbackExpectation.RequiredFields) == 0 {
 		t.Fatalf("expected callback requirements to be staged")
+	}
+}
+
+func TestBuildJobServiceReturnsExistingBuildForDuplicateDelivery(t *testing.T) {
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+		PreviewEnabled:       true,
+	})
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_existing",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_duplicate",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/backend",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{}`,
+		ArtifactMetadataJSON: `{}`,
+	})
+	service := NewBuildJobService(repoLinkStore, buildStore)
+
+	record, err := service.EnqueueFromWebhook("delivery_duplicate", GitHubWebhookNormalizedEvent{
+		TriggerKind:          "push",
+		Action:               "push",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		RepoFullName:         "lazyops/backend",
+		TrackedBranch:        "main",
+		CommitSHA:            "abc123def456",
+		PreviewEnabled:       true,
+		ShouldEnqueueBuild:   true,
+	})
+	if err != nil {
+		t.Fatalf("enqueue duplicate delivery: %v", err)
+	}
+	if record.ID != "bld_existing" {
+		t.Fatalf("expected existing build id bld_existing, got %q", record.ID)
+	}
+	if len(buildStore.byProjectID["prj_123"]) != 1 {
+		t.Fatalf("expected no extra build to be created for duplicate delivery, got %d", len(buildStore.byProjectID["prj_123"]))
 	}
 }

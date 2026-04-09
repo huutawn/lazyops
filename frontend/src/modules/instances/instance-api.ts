@@ -1,10 +1,12 @@
 import { apiPost, apiGet } from '@/lib/api/api-client';
 import type { ApiResponse } from '@/lib/types';
 import type {
+  BootstrapToken,
   CreateInstanceFormData,
   CreateInstanceResponse,
+  InstallInstanceAgentSSHRequest,
+  InstallInstanceAgentSSHResponse,
   InstanceListResponse,
-  InstanceSummary,
 } from '@/modules/instances/instance-types';
 
 export async function createInstance(data: CreateInstanceFormData): Promise<ApiResponse<CreateInstanceResponse>> {
@@ -30,4 +32,15 @@ export async function createInstance(data: CreateInstanceFormData): Promise<ApiR
 
 export async function listInstances(): Promise<ApiResponse<InstanceListResponse>> {
   return apiGet<InstanceListResponse>('/instances');
+}
+
+export async function issueInstanceBootstrapToken(instanceID: string): Promise<ApiResponse<BootstrapToken>> {
+  return apiPost<BootstrapToken>(`/instances/${instanceID}/bootstrap-token`, {});
+}
+
+export async function installInstanceAgentViaSSH(
+  instanceID: string,
+  data: InstallInstanceAgentSSHRequest,
+): Promise<ApiResponse<InstallInstanceAgentSSHResponse>> {
+  return apiPost<InstallInstanceAgentSSHResponse>(`/instances/${instanceID}/install-agent/ssh`, data);
 }

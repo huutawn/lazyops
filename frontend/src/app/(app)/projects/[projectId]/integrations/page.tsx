@@ -1,7 +1,7 @@
 'use client';
 
-import { useParams, useRouter } from 'next/navigation';
-import { useGitHubInstallations } from '@/modules/github-sync/github-hooks';
+import { useParams } from 'next/navigation';
+import { useGitHubAppConfig, useGitHubInstallations } from '@/modules/github-sync/github-hooks';
 import { repoLinkQueryKey } from '@/modules/repo-link/repo-link-hooks';
 import { useQuery } from '@tanstack/react-query';
 import type { ProjectRepoLink } from '@/modules/repo-link/repo-link-types';
@@ -41,10 +41,10 @@ const NEXT_STEPS = [
 
 export default function ProjectIntegrationsPage() {
   const params = useParams();
-  const router = useRouter();
   const projectId = params?.projectId as string;
 
   const { data: reposData, isLoading: reposLoading } = useGitHubInstallations();
+  const { data: appConfig } = useGitHubAppConfig();
   const { data: repoLink, isLoading: linkLoading } = useQuery({
     queryKey: repoLinkQueryKey(projectId),
     queryFn: () => Promise.resolve(null as ProjectRepoLink | null),
@@ -56,6 +56,7 @@ export default function ProjectIntegrationsPage() {
   }
 
   const repos = reposData?.items ?? [];
+  const webhookURL = appConfig?.webhook_url?.trim() || 'https://your-domain.com/api/v1/integrations/github/webhook';
   const hasGitHub = repos.length > 0;
   const hasRepoLink = !!repoLink;
 
@@ -174,7 +175,7 @@ export default function ProjectIntegrationsPage() {
           </span>
         </div>
         <p className="mt-2 text-xs text-lazyops-muted/60">
-          Webhook URL: <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-xs">https://your-domain.com/api/integrations/github/webhook</code>
+          Webhook URL: <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-xs">{webhookURL}</code>
         </p>
       </SectionCard>
 

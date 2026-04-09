@@ -4,6 +4,7 @@ import type {
   SyncGitHubInstallationsFormData,
   GitHubInstallationSyncResponse,
   GitHubRepositoryListResponse,
+  GitHubAppConfig,
 } from '@/modules/github-sync/github-types';
 
 export async function syncGitHubInstallations(
@@ -14,4 +15,8 @@ export async function syncGitHubInstallations(
 
 export async function listGitHubRepos(): Promise<ApiResponse<GitHubRepositoryListResponse>> {
   return apiGet<GitHubRepositoryListResponse>('/github/repos');
+}
+
+export async function getGitHubAppConfig(): Promise<ApiResponse<GitHubAppConfig>> {
+  return apiGet<GitHubAppConfig>('/github/app/config');
 }

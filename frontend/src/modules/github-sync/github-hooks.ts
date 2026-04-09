@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { syncGitHubInstallations, listGitHubRepos } from '@/modules/github-sync/github-api';
-import type { SyncGitHubInstallationsFormData, GitHubInstallationSyncResponse, GitHubRepositoryListResponse } from '@/modules/github-sync/github-types';
+import { syncGitHubInstallations, listGitHubRepos, getGitHubAppConfig } from '@/modules/github-sync/github-api';
+import type { SyncGitHubInstallationsFormData, GitHubInstallationSyncResponse, GitHubRepositoryListResponse, GitHubAppConfig } from '@/modules/github-sync/github-types';
 
 const INSTALLATIONS_KEY = ['github', 'installations'];
 const REPOS_KEY = ['github', 'repos'];
+const APP_CONFIG_KEY = ['github', 'app-config'];
 
 export function useGitHubInstallations() {
   return useQuery({
@@ -26,5 +27,17 @@ export function useSyncGitHubInstallations() {
       void queryClient.invalidateQueries({ queryKey: INSTALLATIONS_KEY });
       void queryClient.invalidateQueries({ queryKey: REPOS_KEY });
     },
+  });
+}
+
+export function useGitHubAppConfig() {
+  return useQuery({
+    queryKey: APP_CONFIG_KEY,
+    queryFn: async () => {
+      const result = await getGitHubAppConfig();
+      if (result.error) throw new Error(result.error.message);
+      return result.data as GitHubAppConfig;
+    },
+    staleTime: 5 * 60 * 1000,
   });
 }

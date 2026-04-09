@@ -50,3 +50,11 @@ export type GitHubRepository = {
 export type GitHubRepositoryListResponse = {
   items: GitHubRepository[];
 };
+
+export type GitHubAppConfig = {
+  name: string;
+  install_url: string;
+  webhook_url: string;
+  callback_url: string;
+  enabled: boolean;
+};

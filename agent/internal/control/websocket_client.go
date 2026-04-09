@@ -1,9 +1,11 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -37,7 +39,6 @@ type queuedMessage struct {
 type WebSocketClient struct {
 	logger    *slog.Logger
 	cfg       WebSocketClientConfig
-	bootstrap *bootstrapRegistry
 
 	mu              sync.RWMutex
 	started         bool
@@ -61,25 +62,108 @@ func NewWebSocketClient(logger *slog.Logger, cfg WebSocketClientConfig) *WebSock
 	cfg.SendBufferSize = bufferSize
 
 	return &WebSocketClient{
-		logger:    logger,
-		cfg:       cfg,
-		bootstrap: newDefaultBootstrapRegistry(),
+		logger: logger,
+		cfg:    cfg,
 	}
 }
 
 func (c *WebSocketClient) Enroll(ctx context.Context, req contracts.EnrollAgentRequest) (contracts.EnrollAgentResponse, error) {
-	response, err := c.bootstrap.Enroll(ctx, req)
+	endpoint, err := controlEnrollURL(c.cfg.ControlPlaneURL)
 	if err != nil {
 		return contracts.EnrollAgentResponse{}, err
 	}
 
-	c.logger.Info("control enrollment satisfied by locked bootstrap stub",
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return contracts.EnrollAgentResponse{}, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return contracts.EnrollAgentResponse{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	timeout := c.cfg.DialTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	httpClient := &http.Client{Timeout: timeout}
+	httpResponse, err := httpClient.Do(request)
+	if err != nil {
+		return contracts.EnrollAgentResponse{}, err
+	}
+	defer httpResponse.Body.Close()
+
+	bodyRaw, err := io.ReadAll(io.LimitReader(httpResponse.Body, 1<<20))
+	if err != nil {
+		return contracts.EnrollAgentResponse{}, err
+	}
+
+	var envelope enrollResponseEnvelope
+	if len(bytes.TrimSpace(bodyRaw)) > 0 {
+		if err := json.Unmarshal(bodyRaw, &envelope); err != nil {
+			return contracts.EnrollAgentResponse{}, fmt.Errorf("decode enroll response: %w", err)
+		}
+	}
+
+	if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices || !envelope.Success {
+		code := ""
+		message := strings.TrimSpace(envelope.Message)
+		if envelope.Error != nil {
+			code = strings.TrimSpace(envelope.Error.Code)
+		}
+		if message == "" {
+			message = strings.TrimSpace(http.StatusText(httpResponse.StatusCode))
+			if message == "" {
+				message = "control enroll failed"
+			}
+		}
+
+		switch code {
+		case "invalid_token":
+			return contracts.EnrollAgentResponse{}, ErrBootstrapTokenUnknown
+		case "expired_token":
+			return contracts.EnrollAgentResponse{}, ErrBootstrapTokenExpired
+		case "reused_bootstrap_token":
+			return contracts.EnrollAgentResponse{}, ErrBootstrapTokenReused
+		case "ownership_mismatch":
+			return contracts.EnrollAgentResponse{}, ErrBootstrapTargetMismatch
+		default:
+			return contracts.EnrollAgentResponse{}, fmt.Errorf("control enroll failed: %s", message)
+		}
+	}
+
+	if len(bytes.TrimSpace(envelope.Data)) == 0 {
+		return contracts.EnrollAgentResponse{}, fmt.Errorf("control enroll response missing data")
+	}
+
+	var response contracts.EnrollAgentResponse
+	if err := json.Unmarshal(envelope.Data, &response); err != nil {
+		return contracts.EnrollAgentResponse{}, fmt.Errorf("decode enroll payload: %w", err)
+	}
+	if strings.TrimSpace(response.AgentID) == "" || strings.TrimSpace(response.AgentToken) == "" {
+		return contracts.EnrollAgentResponse{}, fmt.Errorf("control enroll payload missing agent credentials")
+	}
+
+	c.logger.Info("control enrollment accepted",
 		"target_ref", req.Machine.Labels["target_ref"],
 		"runtime_mode", req.RuntimeMode,
 		"agent_kind", req.AgentKind,
+		"agent_id", response.AgentID,
 	)
 
 	return response, nil
+}
+
+type enrollResponseEnvelope struct {
+	Success bool            `json:"success"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+	Error   *struct {
+		Code string `json:"code"`
+	} `json:"error"`
 }
 
 func (c *WebSocketClient) Connect(ctx context.Context, auth contracts.SessionAuthPayload) error {
@@ -566,5 +650,43 @@ func controlWebSocketURL(base string) (string, error) {
 		parsed.Path = strings.TrimRight(parsed.Path, "/") + contracts.ControlWebSocketPath
 	}
 
+	return parsed.String(), nil
+}
+
+func controlEnrollURL(base string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return "", err
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("control plane URL host is required")
+	}
+
+	switch parsed.Scheme {
+	case "ws":
+		parsed.Scheme = "http"
+	case "wss":
+		parsed.Scheme = "https"
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("unsupported control plane URL scheme %q", parsed.Scheme)
+	}
+
+	path := strings.TrimRight(parsed.Path, "/")
+	switch {
+	case path == "":
+		parsed.Path = "/api/v1/agents/enroll"
+	case strings.HasSuffix(path, "/api/v1/agents/enroll"):
+		parsed.Path = path
+	case strings.HasSuffix(path, "/api/v1"):
+		parsed.Path = path + "/agents/enroll"
+	case strings.HasSuffix(path, contracts.ControlWebSocketPath):
+		parsed.Path = strings.TrimSuffix(path, contracts.ControlWebSocketPath) + "/api/v1/agents/enroll"
+	default:
+		parsed.Path = path + "/api/v1/agents/enroll"
+	}
+
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
 	return parsed.String(), nil
 }

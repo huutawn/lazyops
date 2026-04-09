@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+const API_BASE_URL =
+  process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 const SESSION_COOKIE_NAME = 'lazyops_session';
 
 function sessionCookieOptions(secure: boolean): {
@@ -19,4 +20,16 @@ function sessionCookieOptions(secure: boolean): {
   };
 }
 
-export { API_BASE_URL, SESSION_COOKIE_NAME, sessionCookieOptions };
+function isSecureRequest(request: NextRequest): boolean {
+  const forwardedProto = request.headers.get('x-forwarded-proto');
+  if (forwardedProto) {
+    const proto = forwardedProto.split(',')[0]?.trim().toLowerCase();
+    if (proto) {
+      return proto === 'https';
+    }
+  }
+
+  return request.nextUrl.protocol === 'https:';
+}
+
+export { API_BASE_URL, SESSION_COOKIE_NAME, sessionCookieOptions, isSecureRequest };

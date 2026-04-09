@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { API_BASE_URL, SESSION_COOKIE_NAME } from '@/lib/auth/auth-config';
+import { API_BASE_URL, SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
 import type { UserSession } from '@/lib/auth/auth-types';
 
 export async function GET(request: NextRequest) {
@@ -19,7 +19,10 @@ export async function GET(request: NextRequest) {
         { error: { code: 'unauthorized', message: 'Session invalid' } },
         { status: 401 },
       );
-      nextResponse.cookies.set(SESSION_COOKIE_NAME, '', { maxAge: 0, path: '/' });
+      nextResponse.cookies.set(SESSION_COOKIE_NAME, '', {
+        ...sessionCookieOptions(isSecureRequest(request)),
+        maxAge: 0,
+      });
       return nextResponse;
     }
 

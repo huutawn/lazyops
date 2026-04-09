@@ -1,0 +1,9 @@
+.git
+.gitignore
+Dockerfile*
+*.md
+coverage
+dist
+tmp
+server
+server.exe

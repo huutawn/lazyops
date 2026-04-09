@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,20 +11,25 @@ import (
 	"lazyops-server/internal/api/response"
 	requestdto "lazyops-server/internal/api/v1/dto/request"
 	"lazyops-server/internal/api/v1/mapper"
+	"lazyops-server/internal/config"
 	"lazyops-server/internal/service"
 )
 
 type GitHubController struct {
 	installations *service.GitHubInstallationService
+	cfg           config.Config
 }
 
-func NewGitHubController(installations *service.GitHubInstallationService) *GitHubController {
-	return &GitHubController{installations: installations}
+func NewGitHubController(installations *service.GitHubInstallationService, cfg config.Config) *GitHubController {
+	return &GitHubController{
+		installations: installations,
+		cfg:           cfg,
+	}
 }
 
 func (ctl *GitHubController) SyncInstallations(c *gin.Context) {
 	var req requestdto.SyncGitHubInstallationsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
 		return
 	}
@@ -61,4 +67,8 @@ func (ctl *GitHubController) ListRepos(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, "github repos loaded", mapper.ToGitHubRepositoryListResponse(*result))
+}
+
+func (ctl *GitHubController) AppConfig(c *gin.Context) {
+	response.JSON(c, http.StatusOK, "github app config loaded", mapper.ToGitHubAppConfigResponse(ctl.cfg.GitHubApp))
 }

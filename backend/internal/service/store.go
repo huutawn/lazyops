@@ -52,6 +52,7 @@ type ProjectRepoLinkStore interface {
 
 type BuildJobStore interface {
 	Create(job *models.BuildJob) error
+	GetByDeliveryID(deliveryID string) (*models.BuildJob, error)
 	GetByIDForProject(projectID, buildJobID string) (*models.BuildJob, error)
 	UpdateStatus(buildJobID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error
 	UpdateResult(buildJobID, status, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error
@@ -118,6 +119,7 @@ type BootstrapTokenStore interface {
 	Create(token *models.BootstrapToken) error
 	GetByHash(tokenHash string) (*models.BootstrapToken, error)
 	MarkUsed(tokenID string, at time.Time) error
+	RevokeActiveForInstance(userID, instanceID string, at time.Time) error
 }
 
 type AgentTokenStore interface {

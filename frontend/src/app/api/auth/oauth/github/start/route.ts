@@ -1,6 +1,5 @@
-import { NextResponse } from 'next/server';
-import { API_BASE_URL } from '@/lib/auth/auth-config';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function GET() {
-  return NextResponse.redirect(`${API_BASE_URL}/api/v1/auth/oauth/github/start`);
+export async function GET(request: NextRequest) {
+  return NextResponse.redirect(new URL('/api/v1/auth/oauth/github/start', request.url));
 }

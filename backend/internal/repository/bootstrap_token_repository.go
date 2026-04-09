@@ -40,3 +40,11 @@ func (r *BootstrapTokenRepository) MarkUsed(tokenID string, at time.Time) error 
 			"used_at": at,
 		}).Error
 }
+
+func (r *BootstrapTokenRepository) RevokeActiveForInstance(userID, instanceID string, at time.Time) error {
+	return r.db.Model(&models.BootstrapToken{}).
+		Where("user_id = ? AND instance_id = ? AND used_at IS NULL AND expires_at > ?", userID, instanceID, at).
+		Updates(map[string]any{
+			"used_at": at,
+		}).Error
+}

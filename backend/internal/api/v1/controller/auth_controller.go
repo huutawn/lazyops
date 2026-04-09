@@ -136,7 +136,11 @@ func (ctl *AuthController) GoogleOAuthStart(c *gin.Context) {
 }
 
 func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
-	stateNonce, _ := c.Cookie(service.GoogleOAuthStateCookie)
+	stateNonce := strings.TrimSpace(c.GetHeader("X-LazyOps-OAuth-State-Nonce"))
+	if cookieStateNonce, err := c.Cookie(service.GoogleOAuthStateCookie); err == nil && strings.TrimSpace(cookieStateNonce) != "" {
+		stateNonce = cookieStateNonce
+	}
+	forceJSON := strings.EqualFold(c.Query("mode"), "json")
 	result, err := ctl.googleOAuth.HandleCallback(c.Request.Context(), service.GoogleOAuthCallbackInput{
 		State:         c.Query("state"),
 		StateNonce:    stateNonce,
@@ -147,9 +151,11 @@ func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
 
 	if err != nil {
 		status, code := mapGoogleOAuthError(err)
-		if failureURL := ctl.googleOAuth.FailureRedirectURL(); failureURL != "" {
-			c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
-			return
+		if !forceJSON {
+			if failureURL := ctl.googleOAuth.FailureRedirectURL(); failureURL != "" {
+				c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
+				return
+			}
 		}
 
 		message := "google oauth failed"
@@ -164,9 +170,11 @@ func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
 	}
 
 	ctl.setWebSessionCookie(c, result.AuthResult.AccessToken, int(result.AuthResult.ExpiresIn.Seconds()))
-	if successURL := ctl.googleOAuth.SuccessRedirectURL(); successURL != "" {
-		c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
-		return
+	if !forceJSON {
+		if successURL := ctl.googleOAuth.SuccessRedirectURL(); successURL != "" {
+			c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
+			return
+		}
 	}
 
 	response.JSON(c, http.StatusOK, "google oauth successful", mapper.ToAuthResponse(*result.AuthResult))
@@ -196,7 +204,11 @@ func (ctl *AuthController) GitHubOAuthStart(c *gin.Context) {
 }
 
 func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
-	stateNonce, _ := c.Cookie(service.GitHubOAuthStateCookie)
+	stateNonce := strings.TrimSpace(c.GetHeader("X-LazyOps-OAuth-State-Nonce"))
+	if cookieStateNonce, err := c.Cookie(service.GitHubOAuthStateCookie); err == nil && strings.TrimSpace(cookieStateNonce) != "" {
+		stateNonce = cookieStateNonce
+	}
+	forceJSON := strings.EqualFold(c.Query("mode"), "json")
 	result, err := ctl.githubOAuth.HandleCallback(c.Request.Context(), service.GitHubOAuthCallbackInput{
 		State:         c.Query("state"),
 		StateNonce:    stateNonce,
@@ -207,9 +219,11 @@ func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
 
 	if err != nil {
 		status, code := mapGitHubOAuthError(err)
-		if failureURL := ctl.githubOAuth.FailureRedirectURL(); failureURL != "" {
-			c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
-			return
+		if !forceJSON {
+			if failureURL := ctl.githubOAuth.FailureRedirectURL(); failureURL != "" {
+				c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
+				return
+			}
 		}
 
 		message := "github oauth failed"
@@ -224,9 +238,11 @@ func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
 	}
 
 	ctl.setWebSessionCookie(c, result.AuthResult.AccessToken, int(result.AuthResult.ExpiresIn.Seconds()))
-	if successURL := ctl.githubOAuth.SuccessRedirectURL(); successURL != "" {
-		c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
-		return
+	if !forceJSON {
+		if successURL := ctl.githubOAuth.SuccessRedirectURL(); successURL != "" {
+			c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
+			return
+		}
 	}
 
 	response.JSON(c, http.StatusOK, "github oauth successful", mapper.ToAuthResponse(*result.AuthResult))

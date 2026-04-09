@@ -56,6 +56,7 @@ type Application struct {
 	BlueprintSvc          *service.BlueprintService
 	DeploymentSvc         *service.DeploymentService
 	InstanceService       *service.InstanceService
+	InstanceSSHInstallSvc *service.InstanceSSHInstallService
 	MeshNetworkService    *service.MeshNetworkService
 	ClusterService        *service.ClusterService
 	MeshPlanningSvc       *service.MeshPlanningService
@@ -148,6 +149,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
+	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor())
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
@@ -240,6 +242,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		BlueprintSvc:          blueprintSvc,
 		DeploymentSvc:         deploymentSvc,
 		InstanceService:       instanceService,
+		InstanceSSHInstallSvc: instanceSSHInstallSvc,
 		MeshNetworkService:    meshNetworkService,
 		ClusterService:        clusterService,
 		MeshPlanningSvc:       meshPlanningSvc,

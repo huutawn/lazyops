@@ -25,6 +25,7 @@ type fakeBootstrapTokenStore struct {
 	byHash    map[string]*models.BootstrapToken
 	createErr error
 	lastUsed  map[string]time.Time
+	revokeErr error
 }
 
 func newFakeInstanceStore(instances ...*models.Instance) *fakeInstanceStore {
@@ -190,6 +191,29 @@ func (f *fakeBootstrapTokenStore) MarkUsed(tokenID string, at time.Time) error {
 	if token, ok := f.byID[tokenID]; ok {
 		token.UsedAt = &at
 	}
+	return nil
+}
+
+func (f *fakeBootstrapTokenStore) RevokeActiveForInstance(userID, instanceID string, at time.Time) error {
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
+
+	for tokenID, token := range f.byID {
+		if token.UserID != userID || token.InstanceID != instanceID {
+			continue
+		}
+		if token.UsedAt != nil {
+			continue
+		}
+		if !token.ExpiresAt.After(at) {
+			continue
+		}
+
+		token.UsedAt = &at
+		f.lastUsed[tokenID] = at
+	}
+
 	return nil
 }
 
@@ -369,6 +393,105 @@ func TestInstanceServiceListScopesToOwner(t *testing.T) {
 	}
 	if result.Items[0].RuntimeCapabilities["docker"] != true {
 		t.Fatalf("expected runtime capabilities to be decoded, got %#v", result.Items[0].RuntimeCapabilities)
+	}
+}
+
+func TestInstanceServiceIssueBootstrapTokenRejectsUnknownInstance(t *testing.T) {
+	instanceStore := newFakeInstanceStore()
+	tokenStore := newFakeBootstrapTokenStore()
+	service := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+
+	_, err := service.IssueBootstrapToken("usr_123", "inst_missing")
+	if !errors.Is(err, ErrInstanceNotFound) {
+		t.Fatalf("expected ErrInstanceNotFound, got %v", err)
+	}
+}
+
+func TestInstanceServiceIssueBootstrapTokenRejectsEnrolledInstance(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm-1",
+		Status:                  "online",
+		AgentID:                 ptrString("agt_123"),
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore()
+	service := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+
+	_, err := service.IssueBootstrapToken("usr_123", "inst_123")
+	if !errors.Is(err, ErrInstanceBootstrapNotAllowed) {
+		t.Fatalf("expected ErrInstanceBootstrapNotAllowed, got %v", err)
+	}
+}
+
+func TestInstanceServiceIssueBootstrapTokenAllowsOfflineInstance(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm-1",
+		Status:                  "offline",
+		AgentID:                 ptrString("agt_123"),
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore()
+	service := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+
+	issue, err := service.IssueBootstrapToken("usr_123", "inst_123")
+	if err != nil {
+		t.Fatalf("expected offline instance to allow bootstrap token issue, got %v", err)
+	}
+	if issue == nil || !strings.HasPrefix(issue.Token, "lop_boot_") {
+		t.Fatalf("expected issued bootstrap token, got %#v", issue)
+	}
+}
+
+func TestInstanceServiceIssueBootstrapTokenRevokesOldAndIssuesNew(t *testing.T) {
+	now := time.Now().UTC()
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm-1",
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	tokenStore := newFakeBootstrapTokenStore(&models.BootstrapToken{
+		ID:         "boot_old",
+		UserID:     "usr_123",
+		InstanceID: "inst_123",
+		TokenHash:  "old_hash",
+		ExpiresAt:  now.Add(10 * time.Minute),
+	})
+	service := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+
+	issue, err := service.IssueBootstrapToken("usr_123", "inst_123")
+	if err != nil {
+		t.Fatalf("issue bootstrap token: %v", err)
+	}
+	if issue == nil || issue.Token == "" {
+		t.Fatalf("expected bootstrap token issue, got %#v", issue)
+	}
+	if !strings.HasPrefix(issue.Token, "lop_boot_") {
+		t.Fatalf("expected lop_boot_ prefix, got %q", issue.Token)
+	}
+
+	oldRecord := tokenStore.byID["boot_old"]
+	if oldRecord == nil || oldRecord.UsedAt == nil {
+		t.Fatalf("expected old bootstrap token to be revoked, got %#v", oldRecord)
+	}
+
+	newRecord, err := tokenStore.GetByHash(hashOpaqueToken(issue.Token))
+	if err != nil {
+		t.Fatalf("lookup new bootstrap token: %v", err)
+	}
+	if newRecord == nil {
+		t.Fatal("expected new bootstrap token to be stored")
+	}
+	if newRecord.ID == "boot_old" {
+		t.Fatalf("expected a new token id, got %q", newRecord.ID)
 	}
 }
 

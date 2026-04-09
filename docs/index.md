@@ -8,6 +8,7 @@ Mô hình tài liệu được thiết kế theo dạng lai:
 - `docs/contracts-matrix.md` là ma trận hợp đồng trạng thái hiện tại và là nơi chính thức để kiểm tra xem một bề mặt có `implemented`, `adapter/composed`, `mock-only`, hay `missing`.
 - `docs/feature-catalog.md` giải thích sản phẩm theo tính năng, luồng công việc và công nghệ.
 - `/docs.md` là sổ tay kiểm thử thủ công, được tổ chức cả theo slice giao hàng và theo tính năng.
+- `docs/production_cicd.md` mô tả workflow CI/CD production, deploy VPS, và kế hoạch vận hành CLI/agent.
 
 ## Từ vựng Trạng thái
 

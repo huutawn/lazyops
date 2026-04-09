@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useGitHubInstallations, useSyncGitHubInstallations } from '@/modules/github-sync/github-hooks';
+import { useGitHubAppConfig, useGitHubInstallations, useSyncGitHubInstallations } from '@/modules/github-sync/github-hooks';
 import { syncGitHubInstallationsSchema, type SyncGitHubInstallationsFormData } from '@/modules/github-sync/github-types';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
@@ -27,7 +27,10 @@ const GITHUB_EXPLAINER = {
 
 export default function GitHubIntegrationsPage() {
   const { data: reposData, isLoading: reposLoading, isError: reposError } = useGitHubInstallations();
+  const { data: appConfig } = useGitHubAppConfig();
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const appInstallURL = appConfig?.install_url ?? '';
+  const appName = appConfig?.name?.trim() || 'LazyOps';
 
   if (reposLoading) {
     return <SkeletonPage title cards={2} />;
@@ -102,15 +105,27 @@ export default function GitHubIntegrationsPage() {
         <SectionCard title="No installations" description="Sync your GitHub App to see available installations and repositories.">
           <EmptyState
             title="No GitHub installations found"
-            description="Make sure you have the LazyOps GitHub App installed, then sync to fetch your installations."
+            description={`Make sure you have the ${appName} GitHub App installed, then sync to fetch your installations.`}
             action={
-              <button
-                type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-                onClick={() => setShowSyncModal(true)}
-              >
-                Sync installations
-              </button>
+              <div className="flex items-center gap-2">
+                {appInstallURL && (
+                  <a
+                    href={appInstallURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+                  >
+                    Install GitHub App
+                  </a>
+                )}
+                <button
+                  type="button"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                  onClick={() => setShowSyncModal(true)}
+                >
+                  Sync installations
+                </button>
+              </div>
             }
           />
         </SectionCard>

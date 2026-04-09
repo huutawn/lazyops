@@ -1,0 +1,67 @@
+name: deploy-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (latest, sha-<commit>, vX.Y.Z)"
+        required: true
+        default: "latest"
+        type: string
+      git_ref:
+        description: "Git ref to pull on VPS"
+        required: true
+        default: "main"
+        type: string
+      run_local_agent:
+        description: "Also run local agent service on control-plane VPS"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy Over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          GIT_REF: ${{ inputs.git_ref }}
+          RUN_LOCAL_AGENT: ${{ inputs.run_local_agent }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          envs: IMAGE_TAG,GIT_REF,RUN_LOCAL_AGENT,DOCKER_USERNAME,DOCKER_TOKEN
+          script: |
+            set -euo pipefail
+
+            cd ~/lazyops
+
+            if [ -d .git ]; then
+              git pull --ff-only origin "$GIT_REF"
+            fi
+
+            echo "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin
+            export IMAGE_TAG
+
+            if [ "$RUN_LOCAL_AGENT" = "true" ]; then
+              docker compose -f docker-compose.prod.yml --profile local-agent pull
+              docker compose -f docker-compose.prod.yml --profile local-agent up -d --remove-orphans
+            else
+              docker compose -f docker-compose.prod.yml pull
+              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            fi
+
+            docker compose -f docker-compose.prod.yml ps

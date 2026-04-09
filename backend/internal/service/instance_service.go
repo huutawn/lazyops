@@ -16,8 +16,10 @@ import (
 )
 
 var (
-	ErrInstanceNameExists = errors.New("instance name already exists")
-	ErrInvalidIP          = errors.New("invalid ip")
+	ErrInstanceNameExists          = errors.New("instance name already exists")
+	ErrInstanceNotFound            = errors.New("instance not found")
+	ErrInstanceBootstrapNotAllowed = errors.New("instance bootstrap not allowed")
+	ErrInvalidIP                   = errors.New("invalid ip")
 )
 
 type InstanceService struct {
@@ -100,6 +102,32 @@ func (s *InstanceService) Create(cmd CreateInstanceCommand) (*CreateInstanceResu
 		Instance:  summary,
 		Bootstrap: *bootstrapToken,
 	}, nil
+}
+
+func (s *InstanceService) IssueBootstrapToken(userID, instanceID string) (*BootstrapTokenIssue, error) {
+	userID = strings.TrimSpace(userID)
+	instanceID = strings.TrimSpace(instanceID)
+	if userID == "" || instanceID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	instance, err := s.instances.GetByIDForUser(userID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if instance == nil {
+		return nil, ErrInstanceNotFound
+	}
+	if !instanceBootstrapAllowed(*instance) {
+		return nil, ErrInstanceBootstrapNotAllowed
+	}
+
+	now := time.Now().UTC()
+	if err := s.bootstrap.RevokeActiveForInstance(userID, instanceID, now); err != nil {
+		return nil, err
+	}
+
+	return s.issueBootstrapToken(userID, instanceID)
 }
 
 func (s *InstanceService) List(userID string) (*InstanceListResult, error) {
@@ -289,6 +317,16 @@ func normalizeInstanceStatus(status string) string {
 		return "revoked"
 	default:
 		return "pending_enrollment"
+	}
+}
+
+func instanceBootstrapAllowed(instance models.Instance) bool {
+	status := normalizeInstanceStatus(instance.Status)
+	switch status {
+	case "pending_enrollment", "offline", "degraded", "revoked":
+		return true
+	default:
+		return false
 	}
 }
 

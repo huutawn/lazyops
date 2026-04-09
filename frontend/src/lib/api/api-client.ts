@@ -7,13 +7,17 @@ type RequestOptions = Omit<RequestInit, 'headers'> & {
 };
 
 async function buildUrl(path: string, params?: Record<string, string>): Promise<string> {
-  const url = new URL(path, API_BASE_URL);
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.set(key, value);
-    });
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const base = `${API_BASE_URL}${normalizedPath}`;
+  if (!params || Object.keys(params).length === 0) {
+    return base;
   }
-  return url.toString();
+
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    searchParams.set(key, value);
+  });
+  return `${base}?${searchParams.toString()}`;
 }
 
 function isApiResponse<T>(body: unknown): body is ApiResponse<T> {
@@ -37,7 +41,7 @@ export async function apiFetch<T>(
   };
 
   try {
-    const response = await fetch(url, { ...rest, headers });
+    const response = await fetch(url, { ...rest, headers, credentials: 'include' });
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => null);

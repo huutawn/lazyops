@@ -1,0 +1,97 @@
+name: lazyops
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-lazyops}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-lazyops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - lazyops_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      GIN_MODE: ${GIN_MODE:-release}
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_SSLMODE: disable
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lazyops_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://backend:8080}
+      NEXT_PUBLIC_MOCK_MODE: ${NEXT_PUBLIC_MOCK_MODE:-false}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - lazyops_net
+
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      AGENT_APP_ENV: ${AGENT_APP_ENV:-development}
+      AGENT_LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
+      AGENT_RUNTIME_MODE: ${AGENT_RUNTIME_MODE:-standalone}
+      AGENT_KIND: ${AGENT_KIND:-instance_agent}
+      AGENT_TARGET_REF: ${AGENT_TARGET_REF:-local-dev}
+      AGENT_CONTROL_PLANE_URL: ${AGENT_CONTROL_PLANE_URL:-ws://backend:8080}
+      AGENT_USE_MOCK_CONTROL: ${AGENT_USE_MOCK_CONTROL:-false}
+      AGENT_STATE_DIR: /var/lib/lazyops-agent/state
+      AGENT_RUNTIME_ROOT_DIR: /var/lib/lazyops-agent/runtime
+      AGENT_STATE_ENCRYPTION_KEY: ${AGENT_STATE_ENCRYPTION_KEY:-}
+      AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - agent_state:/var/lib/lazyops-agent
+    networks:
+      - lazyops_net
+
+volumes:
+  postgres_data:
+  agent_state:
+
+networks:
+  lazyops_net:
+    driver: bridge

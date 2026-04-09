@@ -56,3 +56,24 @@ export type CreateInstanceResponse = {
 export type InstanceListResponse = {
   items: InstanceSummary[];
 };
+
+export type InstallInstanceAgentSSHRequest = {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  private_key?: string;
+  host_key_fingerprint?: string;
+  control_plane_url: string;
+  runtime_mode?: string;
+  agent_kind?: string;
+  agent_image?: string;
+  container_name?: string;
+};
+
+export type InstallInstanceAgentSSHResponse = {
+  instance_id: string;
+  bootstrap: BootstrapToken;
+  started_at: string;
+  host_key_fingerprint?: string;
+};

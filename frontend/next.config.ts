@@ -1,16 +1,19 @@
 import type { NextConfig } from 'next';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+const INTERNAL_API_URL =
+  process.env.INTERNAL_API_URL ?? (process.env.NODE_ENV === 'production' ? 'http://backend:8080' : PUBLIC_API_URL);
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
+  output: 'standalone',
 
   async rewrites() {
     return [
       {
         source: '/api/:path*',
-        destination: `${API_URL}/api/:path*`,
+        destination: `${INTERNAL_API_URL}/api/:path*`,
       },
     ];
   },
