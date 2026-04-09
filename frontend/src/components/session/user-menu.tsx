@@ -9,16 +9,18 @@ export function UserMenu() {
   const logout = useLogout();
 
   if (!session) return null;
+  const displayName = session.display_name || session.email || 'User';
+  const avatarInitial = displayName.charAt(0).toUpperCase() || 'U';
 
   return (
     <div className="flex items-center gap-4">
       <div className="hidden lg:flex items-center gap-3 border-r border-border/50 pr-4">
         <div className="flex flex-col items-end">
-          <span className="text-sm font-semibold tracking-tight text-foreground">{session.display_name}</span>
+          <span className="text-sm font-semibold tracking-tight text-foreground">{displayName}</span>
           <span className="text-xs text-muted-foreground">{session.email}</span>
         </div>
         <div className="flex size-9 items-center justify-center rounded-full bg-primary/20 text-primary font-bold shadow-inner">
-          {session.display_name.charAt(0).toUpperCase()}
+          {avatarInitial}
         </div>
       </div>
       

@@ -26,7 +26,14 @@ export async function GET(request: NextRequest) {
       return nextResponse;
     }
 
-    const user = (await response.json()) as UserSession;
+    const payload = await response.json().catch(() => null);
+    const user = (payload?.data ?? payload) as UserSession | null;
+    if (!user?.id) {
+      return NextResponse.json(
+        { error: { code: 'invalid_session_payload', message: 'Unable to verify session' } },
+        { status: 500 },
+      );
+    }
     return NextResponse.json({ user });
   } catch {
     return NextResponse.json(

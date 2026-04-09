@@ -13,16 +13,27 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(body),
     });
 
-    const data = await response.json();
+    const payload = await response.json().catch(() => null);
 
     if (!response.ok) {
       return NextResponse.json(
-        { error: { code: data?.code ?? 'register_failed', message: data?.message ?? 'Registration failed' } },
+        {
+          error: {
+            code: payload?.error?.code ?? 'register_failed',
+            message: payload?.message ?? 'Registration failed',
+          },
+        },
         { status: response.status },
       );
     }
 
-    const authData = data as AuthTokens;
+    const authData = (payload?.data ?? payload) as AuthTokens | null;
+    if (!authData?.access_token || !authData?.user) {
+      return NextResponse.json(
+        { error: { code: 'invalid_auth_payload', message: 'Registration failed' } },
+        { status: 502 },
+      );
+    }
     const cookieOpts = sessionCookieOptions(isSecureRequest(request));
 
     const nextResponse = NextResponse.json({ user: authData.user });
