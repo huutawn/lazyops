@@ -197,9 +197,15 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 }
 
 func fetchGitHubInstallations(ctx context.Context, runtime *Runtime, credential credentials.Record) (contracts.GitHubInstallationsResponse, error) {
+	body, err := json.Marshal(map[string]any{})
+	if err != nil {
+		return contracts.GitHubInstallationsResponse{}, err
+	}
+
 	response, err := runtime.Transport.Do(ctx, authorizeRequest(transport.Request{
 		Method: "POST",
 		Path:   "/api/v1/github/app/installations/sync",
+		Body:   body,
 	}, credential))
 	if err != nil {
 		return contracts.GitHubInstallationsResponse{}, err
@@ -417,6 +423,9 @@ func repositoriesFromInstallationScope(scope map[string]any) ([]githubRepoAccess
 
 		name, _ := entry["name"].(string)
 		owner, _ := entry["owner"].(string)
+		if strings.TrimSpace(owner) == "" {
+			owner, _ = entry["owner_login"].(string)
+		}
 		defaultBranch, _ := entry["default_branch"].(string)
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(owner) == "" {
 			return nil, errors.New("scope_json.repositories entries must include owner and name. next: verify the GitHub App installation scope includes full repository objects")
