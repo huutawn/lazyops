@@ -5,4 +5,5 @@
 *.md
 **/*.md
 !README.md
-!**/README.mdlazyops-report.zip
+!**/README.md
+lazyops-report.zip
