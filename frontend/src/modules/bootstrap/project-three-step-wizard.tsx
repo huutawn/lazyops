@@ -306,14 +306,16 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
   const runtimeEvents = deploymentDetail.data?.timeline ?? [];
 
   return (
-    <div className="flex flex-col gap-4">
-      <SectionCard
-        title="Thiết lập 3 bước"
-        description="Kết nối GitHub, kết nối máy chủ, rồi triển khai. LazyOps tự xử lý phần kỹ thuật."
-        actions={(
+    <div className="flex flex-col gap-6">
+      <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h2 className="text-[17px] font-bold text-white">Thiết lập 3 bước</h2>
+            <p className="text-[14px] text-[#94a3b8] mt-1">Kết nối GitHub, kết nối máy chủ, rồi triển khai. LazyOps tự xử lý phần kỹ thuật.</p>
+          </div>
           <button
             type="button"
-            className="rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10 disabled:opacity-60"
+            className="rounded-lg border border-[#334155] bg-[#0F172A] px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#1e293b] disabled:opacity-60"
             onClick={() => {
               void autoBootstrap.mutateAsync({});
             }}
@@ -321,106 +323,131 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
           >
             {autoBootstrap.isPending ? 'Đang tự sửa...' : 'Tự sửa thiết lập'}
           </button>
-        )}
-      >
-        <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'sm:grid-cols-3')}>
+        </div>
+
+        <div className={cn('grid gap-4', compact ? 'grid-cols-1' : 'sm:grid-cols-3')}>
           {statusCards.map((item) => (
-            <div key={item.title} className="rounded-lg border border-lazyops-border/60 bg-lazyops-bg-accent/30 p-3">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs text-lazyops-muted">{item.title}</span>
-                <StatusBadge
-                  label={formatStateLabelVN(item.value)}
-                  variant={STEP_BADGE[item.value] ?? 'neutral'}
-                  size="sm"
-                />
+            <div key={item.title} className="rounded-xl border border-[#1e293b] bg-[#0B1120] p-4 flex flex-col justify-between min-h-[100px]">
+              <div className="flex items-start justify-between">
+                <span className="text-[14px] font-semibold text-[#94a3b8]">{item.title}</span>
+                <span className={cn(
+                  "text-[12px] font-medium",
+                  item.value === 'healthy' || item.value === 'ready' || item.value === 'promoted' ? "text-[#10B981]" :
+                  item.value === 'error' || item.value === 'failed' ? "text-[#EF4444]" :
+                  "text-[#0EA5E9]"
+                )}>
+                  {formatStateLabelVN(item.value)}
+                </span>
               </div>
-              <p className="text-xs text-lazyops-muted/90">{item.summary}</p>
+              <p className="text-[13px] text-white mt-2 leading-snug line-clamp-2">{item.summary}</p>
             </div>
           ))}
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <StatusBadge
-            label={`Tổng quan: ${formatStateLabelVN(data.overall_state)}`}
-            variant={OVERALL_BADGE[data.overall_state] ?? 'neutral'}
-            size="sm"
-          />
-          <StatusBadge
-            label={`Chế độ: ${data.auto_mode.selected_mode}`}
-            variant="info"
-            size="sm"
-            dot={false}
-          />
-          <span className="text-xs text-lazyops-muted">{data.auto_mode.mode_reason_human}</span>
-          <a
+
+        <div className="mt-6 pt-6 border-t border-[#1e293b] flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] text-[#64748b]">Tổng quan:</span>
+            <span className={cn(
+              "text-[13px] font-medium",
+              data.overall_state === 'running' ? "text-[#10B981]" : "text-[#EF4444]"
+            )}>
+              {formatStateLabelVN(data.overall_state)}
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] text-[#64748b]">Chế độ:</span>
+            <span className="text-[13px] text-white font-medium">{data.auto_mode.selected_mode}</span>
+          </div>
+
+          <div className="text-[13px] text-[#64748b]">
+            {data.auto_mode.mode_reason_human}
+          </div>
+
+          <Link
             href={`/projects/${projectId}/internal-services`}
-            className="rounded-md border border-lazyops-border px-2 py-1 text-xs font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+            className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
           >
             Dịch vụ nội bộ
-          </a>
+          </Link>
         </div>
-      </SectionCard>
+      </div>
 
-      <div className="grid gap-4">
+      <div className="grid gap-6 px-2">
         {orderedSteps.map((step) => (
-          <SectionCard
-            key={step.id}
-            title={`${STEP_NUMBER[step.id] ?? '-'} · ${STEP_TITLE[step.id] ?? step.id}`}
-            description={step.summary}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              {step.id === 'connect_infra' && !isAdmin ? (
-                <button
-                  type="button"
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
-                  onClick={() => setShowConnectInfraModal(true)}
-                  disabled={connectInfra.isPending}
-                >
-                  {connectInfra.isPending ? 'Đang kết nối...' : 'Kết nối máy chủ qua SSH'}
-                </button>
-              ) : null}
-              <StatusBadge
-                label={formatStateLabelVN(step.state)}
-                variant={STEP_BADGE[step.state] ?? 'neutral'}
-                size="sm"
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                {step.actions.map((action) => {
-                  if (step.id === 'connect_infra' && !isAdmin && action.id === 'add_server') {
+          <div key={step.id} className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="flex items-center gap-3 mb-4">
+              <h3 className="text-xl font-bold text-white">
+                {STEP_NUMBER[step.id] ?? '-'} · {STEP_TITLE[step.id] ?? step.id}
+              </h3>
+            </div>
+            
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <p className="text-[15px] font-medium text-white mb-2">{step.summary}</p>
+                  <div className="flex items-center gap-3">
+                    <span className={cn(
+                      "text-[13px] font-bold",
+                      step.state === 'healthy' || step.state === 'ready' || step.state === 'promoted' ? "text-[#10B981]" :
+                      step.state === 'error' || step.state === 'failed' ? "text-[#EF4444]" :
+                      "text-[#0EA5E9]"
+                    )}>
+                      {formatStateLabelVN(step.state)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {step.id === 'connect_infra' && !isAdmin ? (
+                    <button
+                      type="button"
+                      className="rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[14px] font-bold text-white transition-all hover:bg-[#0284c7] shadow-lg shadow-[#0ea5e9]/10 disabled:opacity-60"
+                      onClick={() => setShowConnectInfraModal(true)}
+                      disabled={connectInfra.isPending}
+                    >
+                      {connectInfra.isPending ? 'Đang kết nối...' : 'Kết nối máy chủ'}
+                    </button>
+                  ) : null}
+
+                  {step.actions.map((action) => {
+                    if (step.id === 'connect_infra' && !isAdmin && action.id === 'add_server') {
+                      return null;
+                    }
+                    if ((action.kind === 'link' || action.kind === 'screen') && action.href) {
+                      return (
+                        <Link
+                          key={action.id}
+                          href={action.href}
+                          className="rounded-lg border border-[#334155] bg-[#1e293b] px-6 py-2.5 text-[14px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
+                        >
+                          {translatedActionLabel(action)}
+                        </Link>
+                      );
+                    }
+
+                    if (action.kind === 'api' && action.endpoint) {
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          className="rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[14px] font-bold text-white transition-all hover:bg-[#0284c7] shadow-lg shadow-[#0ea5e9]/10 disabled:opacity-60"
+                          onClick={() => {
+                            void runAction(action);
+                          }}
+                          disabled={runningActionId !== null}
+                        >
+                          {runningActionId === action.id ? 'Đang chạy...' : translatedActionLabel(action)}
+                        </button>
+                      );
+                    }
+
                     return null;
-                  }
-                  if ((action.kind === 'link' || action.kind === 'screen') && action.href) {
-                    return (
-                      <a
-                        key={action.id}
-                        href={action.href}
-                        className="rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
-                      >
-                        {translatedActionLabel(action)}
-                      </a>
-                    );
-                  }
-
-                  if (action.kind === 'api' && action.endpoint) {
-                    return (
-                      <button
-                        key={action.id}
-                        type="button"
-                        className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
-                        onClick={() => {
-                          void runAction(action);
-                        }}
-                        disabled={runningActionId !== null}
-                      >
-                        {runningActionId === action.id ? 'Đang chạy...' : translatedActionLabel(action)}
-                      </button>
-                    );
-                  }
-
-                  return null;
-                })}
+                  })}
+                </div>
               </div>
             </div>
-          </SectionCard>
+          </div>
         ))}
       </div>
 

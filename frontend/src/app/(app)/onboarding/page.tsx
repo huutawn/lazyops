@@ -30,12 +30,12 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
-      <div className="text-center md:text-left mb-4">
-        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-foreground mb-3">
+    <div className="flex flex-col gap-10 max-w-[1400px] mx-auto py-10 lg:px-8">
+      <div className="text-center md:text-left mb-6">
+        <h1 className="text-4xl font-extrabold tracking-tight text-white mb-4">
           Bắt đầu triển khai với LazyOps
         </h1>
-        <p className="text-lg text-muted-foreground max-w-2xl">
+        <p className="text-[#94a3b8] text-[17px] max-w-2xl leading-relaxed">
           Chỉ cần 3 bước đơn giản: Tạo dự án, Kết nối GitHub, và Triển khai thẳng lên máy chủ của bạn mà không cần rành DevOps!
         </p>
       </div>
@@ -43,45 +43,46 @@ export default function OnboardingPage() {
       {projectItems.length === 0 ? (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           {!showCreateForm ? (
-            <SectionCard className="shadow-xl rounded-2xl border-primary/20 bg-card/60 backdrop-blur-sm p-4">
-              <EmptyState
-                icon={<span className="text-5xl">🚀</span>}
-                title="Bước 1: Tạo dự án đầu tiên"
-                description="Hãy bắt đầu bằng cách tạo một không gian ảo chứa mã nguồn và môi trường của bạn."
-                action={
-                  <button
-                    type="button"
-                    className="mt-4 rounded-xl bg-primary px-8 py-4 text-lg font-bold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:scale-105 active:scale-95"
-                    onClick={() => setShowCreateForm(true)}
-                  >
-                    + Tạo dự án mới ngay
-                  </button>
-                }
-              />
-            </SectionCard>
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-12 text-center shadow-xl">
+              <div className="mb-6 flex justify-center">
+                <span className="text-6xl">🚀</span>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-3">Bước 1: Tạo dự án đầu tiên</h2>
+              <p className="text-[#94a3b8] mb-8 max-w-md mx-auto">
+                Hãy bắt đầu bằng cách tạo một không gian ảo chứa mã nguồn và môi trường của bạn.
+              </p>
+              <button
+                type="button"
+                className="rounded-xl bg-[#0EA5E9] px-8 py-4 text-lg font-bold text-white shadow-lg shadow-[#0ea5e9]/20 transition-all hover:bg-[#0284c7] hover:scale-105 active:scale-95"
+                onClick={() => setShowCreateForm(true)}
+              >
+                + Tạo dự án mới ngay
+              </button>
+            </div>
           ) : (
-            <div className="shadow-2xl rounded-2xl border-primary/20 bg-card p-6">
+            <div className="shadow-2xl rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6">
               <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
             </div>
           )}
         </div>
       ) : (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <SectionCard
-            title="Lựa chọn dự án"
-            description="Vui lòng chọn dự án bạn muốn tiếp tục cấu hình triển khai."
-            className="shadow-md rounded-xl"
-            actions={
-              selectedProject ? (
+          <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                <h2 className="text-[17px] font-bold text-white">Lựa chọn dự án</h2>
+                <p className="text-[14px] text-[#94a3b8] mt-1">Vui lòng chọn dự án bạn muốn tiếp tục cấu hình triển khai.</p>
+              </div>
+              {selectedProject ? (
                 <Link
                   href={`/projects/${selectedProject.id}`}
-                  className="rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 px-4 py-2 text-sm font-semibold transition-colors shadow-sm"
+                  className="rounded-lg bg-[#1e293b] text-white hover:bg-[#2d3a4f] px-4 py-2 text-[13px] font-semibold transition-colors border border-[#334155]"
                 >
                   Truy cập trang dự án &rarr;
                 </Link>
-              ) : null
-            }
-          >
+              ) : null}
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {projectItems.map((project) => {
                 const selected = project.id === effectiveProjectID;
@@ -89,25 +90,26 @@ export default function OnboardingPage() {
                   <button
                     key={project.id}
                     type="button"
-                    className={`rounded-xl border-2 p-4 text-left transition-all duration-200 group ${
+                    className={cn(
+                      "rounded-xl border-2 p-4 text-left transition-all duration-200",
                       selected
-                        ? 'border-primary bg-primary/5 shadow-md scale-[1.02]'
-                        : 'border-border hover:border-primary/40 hover:bg-accent hover:shadow-sm'
-                    }`}
+                        ? 'border-[#0EA5E9] bg-[#0c1a2c] shadow-[0_0_15px_rgba(14,165,233,0.1)]'
+                        : 'border-[#1e293b] bg-[#0F172A] hover:border-[#334155] hover:bg-[#131c31]'
+                    )}
                     onClick={() => setSelectedProjectID(project.id)}
                   >
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="text-base font-bold text-foreground group-hover:text-primary transition-colors">{project.name}</span>
-                      <StatusBadge label={project.default_branch} variant="neutral" size="sm" dot={false} />
+                      <span className="text-base font-bold text-white">{project.name}</span>
+                      <span className="text-[11px] text-[#64748b] font-mono">{project.default_branch}</span>
                     </div>
-                    <p className="text-sm text-muted-foreground truncate">/{project.slug}</p>
+                    <p className="text-[13px] text-[#64748b]">/{project.slug}</p>
                   </button>
                 );
               })}
             </div>
-          </SectionCard>
+          </div>
 
-          <div className="rounded-2xl border bg-card/50 shadow-sm overflow-hidden p-2">
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
             {selectedProject ? (
               <ProjectThreeStepWizard projectId={selectedProject.id} />
             ) : (

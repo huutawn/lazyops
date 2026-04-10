@@ -28,55 +28,57 @@ export default function ProjectsPage() {
   const projects = data?.items ?? [];
 
   return (
-    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="flex flex-col gap-10 max-w-[1400px] mx-auto py-10 lg:px-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-2 text-white">Danh sách Dự án</h1>
-          <p className="text-[#94a3b8] text-lg">Quản lý mã nguồn, cấu hình hạ tầng và xem lịch sử triển khai của bạn.</p>
+          <h1 className="text-4xl font-bold tracking-tight mb-2 text-white">Danh sách Dự án</h1>
+          <p className="text-[#94a3b8] text-lg font-medium">Quản lý mã nguồn, cấu hình hạ tầng và xem lịch sử triển khai của bạn.</p>
         </div>
         <Link
           href="/projects/new"
-          className="rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[15px] font-semibold text-white shadow-sm transition-all hover:bg-[#0284c7]"
+          className="rounded-xl bg-[#0EA5E9] px-6 py-3.5 text-base font-bold text-white shadow-xl shadow-[#0ea5e9]/20 transition-all hover:bg-[#0284c7] hover:scale-105 active:scale-95"
         >
           + Dự án mới
         </Link>
       </div>
 
       {projects.length === 0 ? (
-        <SectionCard className="shadow-lg p-6 rounded-2xl border-dashed border-2">
-          <EmptyState
-            icon={<span className="text-4xl text-muted-foreground">📂</span>}
-            title="Bạn chưa có dự án nào"
-            description="Tạo dự án mới để kết nối mã nguồn và tự động triển khai."
-            action={
-              <Link
-                href="/projects/new"
-                className="mt-4 inline-block rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[15px] font-semibold text-white transition-all hover:bg-[#0284c7] shadow-md"
-              >
-                Tạo dự án đầu tiên
-              </Link>
-            }
-          />
-        </SectionCard>
+        <div className="rounded-2xl border border-dashed border-[#1e293b] bg-[#0F172A] p-16 text-center shadow-lg">
+          <div className="mb-6 flex justify-center">
+            <span className="text-6xl text-muted-foreground">📂</span>
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-3">Bạn chưa có dự án nào</h2>
+          <p className="text-[#94a3b8] mb-8 max-w-md mx-auto">
+            Tạo dự án mới để kết nối mã nguồn và tự động triển khai hệ thống của bạn.
+          </p>
+          <Link
+            href="/projects/new"
+            className="inline-block rounded-xl bg-[#0EA5E9] px-10 py-4 text-lg font-bold text-white transition-all hover:bg-[#0284c7] shadow-lg shadow-[#0ea5e9]/20"
+          >
+            Tạo dự án đầu tiên
+          </Link>
+        </div>
       ) : (
-        <div className="grid gap-4 mt-2">
+        <div className="grid gap-6 mt-2">
           {projects.map((project) => (
             <Link
               key={project.id}
               href={`/projects/${project.id}`}
-              className="group flex flex-col md:flex-row items-start md:items-center justify-between rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/50 hover:bg-accent/50 hover:shadow-md"
+              className="group flex flex-col md:flex-row items-start md:items-center justify-between rounded-2xl border border-[#1e293b] bg-[#0F172A] p-8 transition-all hover:border-[#38BDF8]/40 hover:bg-[#131c31] hover:shadow-xl hover:scale-[1.01]"
             >
-              <div className="flex flex-col mb-2 md:mb-0">
-                <span className="text-xl font-bold text-foreground group-hover:text-primary transition-colors">{project.name}</span>
-                <span className="text-sm text-muted-foreground mt-1 font-mono">/{project.slug}</span>
+              <div className="flex flex-col gap-1 mb-4 md:mb-0">
+                <span className="text-2xl font-bold text-white group-hover:text-[#38BDF8] transition-colors">{project.name}</span>
+                <span className="text-[15px] text-[#64748b] font-mono tracking-tight">/{project.slug}</span>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
-                  <span>Nhánh:</span>
-                  <StatusBadge label={project.default_branch} variant="neutral" size="sm" dot={false} />
+              <div className="flex flex-wrap items-center gap-8">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold text-[#64748b] uppercase tracking-wider">Nhánh:</span>
+                  <div className="rounded-lg bg-[#1e293b] px-3 py-1.5 text-[13px] font-mono text-white border border-[#334155]">
+                    {project.default_branch}
+                  </div>
                 </div>
-                <div className="flex size-8 items-center justify-center rounded-full bg-secondary/50 text-secondary-foreground group-hover:bg-primary/10 group-hover:text-primary transition-colors">
-                  &rarr;
+                <div className="flex size-12 items-center justify-center rounded-xl bg-[#1e293b] text-white group-hover:bg-[#0EA5E9] group-hover:text-white transition-all shadow-sm">
+                  <span className="text-xl">&rarr;</span>
                 </div>
               </div>
             </Link>
