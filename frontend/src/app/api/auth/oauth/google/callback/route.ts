@@ -1,23 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { API_BASE_URL, SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
+import { redirectRelative } from '@/lib/auth/redirect';
 import type { AuthTokens } from '@/lib/auth/auth-types';
 
 const OAUTH_NEXT_COOKIE = 'lazyops_oauth_next';
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
+  const { searchParams } = request.nextUrl;
   const code = searchParams.get('code');
   const state = searchParams.get('state');
   const error = searchParams.get('error');
 
   if (error) {
-    return NextResponse.redirect(
-      new URL(`/login?error=oauth_denied&error_description=${encodeURIComponent(error)}`, request.url),
-    );
+    return redirectRelative(`/login?error=oauth_denied&error_description=${encodeURIComponent(error)}`);
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL('/login?error=oauth_missing_params', request.url));
+    return redirectRelative('/login?error=oauth_missing_params');
   }
 
   try {
@@ -37,21 +36,19 @@ export async function GET(request: NextRequest) {
     if (!response.ok) {
       const errorBody = await response.json().catch(() => null);
       const errorMsg = errorBody?.message ?? 'oauth_failed';
-      return NextResponse.redirect(
-        new URL(`/login?error=${encodeURIComponent(errorMsg)}`, request.url),
-      );
+      return redirectRelative(`/login?error=${encodeURIComponent(errorMsg)}`);
     }
 
     const payload = await response.json();
     const data = (payload?.data ?? payload) as AuthTokens;
     if (!data?.access_token) {
-      return NextResponse.redirect(new URL('/login?error=oauth_invalid_response', request.url));
+      return redirectRelative('/login?error=oauth_invalid_response');
     }
     const cookieOpts = sessionCookieOptions(isSecureRequest(request));
     const nextPathRaw = request.cookies.get(OAUTH_NEXT_COOKIE)?.value ?? '';
     const nextPath = nextPathRaw.startsWith('/') ? nextPathRaw : '/dashboard';
 
-    const redirectResponse = NextResponse.redirect(new URL(nextPath, request.url));
+    const redirectResponse = redirectRelative(nextPath);
     redirectResponse.cookies.set(SESSION_COOKIE_NAME, data.access_token, cookieOpts);
     redirectResponse.cookies.set(OAUTH_NEXT_COOKIE, '', {
       path: '/',
@@ -63,6 +60,6 @@ export async function GET(request: NextRequest) {
 
     return redirectResponse;
   } catch {
-    return NextResponse.redirect(new URL('/login?error=oauth_network', request.url));
+    return redirectRelative('/login?error=oauth_network');
   }
 }
