@@ -279,7 +279,7 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 			"%s "+
 			"docker_exec rm -f %s >/dev/null 2>&1 || true; "+
 			"docker_exec pull %s >/dev/null 2>&1 || true; "+
-			"mkdir -p %s %s; "+
+			"if [ -n \"$SUDO\" ]; then $SUDO mkdir -p %s %s; else mkdir -p %s %s; fi; "+
 			"docker_exec run -d --name %s --restart unless-stopped --network host --privileged "+
 			"-v /var/run/docker.sock:/var/run/docker.sock "+
 			"-v %s:%s -v %s:%s "+
@@ -295,6 +295,8 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 		dockerBootstrap,
 		shellQuote(containerName),
 		shellQuote(agentImage),
+		shellQuote(stateDir),
+		shellQuote(runtimeRoot),
 		shellQuote(stateDir),
 		shellQuote(runtimeRoot),
 		shellQuote(containerName),
