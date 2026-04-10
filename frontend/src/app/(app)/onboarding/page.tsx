@@ -68,23 +68,45 @@ export default function OnboardingPage() {
         </div>
       ) : (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                <h2 className="text-[17px] font-bold text-white">Lựa chọn dự án</h2>
-                <p className="text-[14px] text-[#94a3b8] mt-1">Vui lòng chọn dự án bạn muốn tiếp tục cấu hình triển khai.</p>
-              </div>
-              {selectedProject ? (
-                <Link
-                  href={`/projects/${selectedProject.id}`}
-                  className="rounded-lg bg-[#1e293b] text-white hover:bg-[#2d3a4f] px-4 py-2 text-[13px] font-semibold transition-colors border border-[#334155]"
+          {showCreateForm ? (
+            <div className="animate-in fade-in slide-in-from-top-4 duration-500 shadow-2xl rounded-2xl border border-[#1e293b] bg-[#0F172A] p-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white">Tạo dự án mới</h2>
+                <button 
+                  onClick={() => setShowCreateForm(false)}
+                  className="text-[#64748b] hover:text-white transition-colors"
                 >
-                  Truy cập trang dự án &rarr;
-                </Link>
-              ) : null}
+                  Hủy bỏ
+                </button>
+              </div>
+              <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
             </div>
+          ) : (
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
+              <div className="flex items-start justify-between mb-6">
+                <div>
+                  <h2 className="text-[17px] font-bold text-white">Lựa chọn dự án</h2>
+                  <p className="text-[14px] text-[#94a3b8] mt-1">Vui lòng chọn dự án bạn muốn tiếp tục cấu hình triển khai.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowCreateForm(true)}
+                    className="rounded-lg bg-[#0EA5E9] text-white hover:bg-[#0284c7] px-4 py-2 text-[13px] font-bold transition-all hover:scale-105"
+                  >
+                    + Tạo dự án mới
+                  </button>
+                  {selectedProject ? (
+                    <Link
+                      href={`/projects/${selectedProject.id}`}
+                      className="rounded-lg bg-[#1e293b] text-white hover:bg-[#2d3a4f] px-4 py-2 text-[13px] font-semibold transition-colors border border-[#334155]"
+                    >
+                      Truy cập trang dự án &rarr;
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {projectItems.map((project) => {
                 const selected = project.id === effectiveProjectID;
                 return (
