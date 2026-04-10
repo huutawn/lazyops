@@ -298,7 +298,7 @@ func TestGitHubOAuthServiceRejectsOwnershipMismatch(t *testing.T) {
 	}
 }
 
-func TestGitHubOAuthServiceReturnsErrorWhenAutoSyncFails(t *testing.T) {
+func TestGitHubOAuthServiceStillLogsInWhenAutoSyncFails(t *testing.T) {
 	userStore := newFakeUserStore()
 	identityStore := newFakeOAuthIdentityStore()
 	patStore := newFakePATStore()
@@ -320,12 +320,15 @@ func TestGitHubOAuthServiceReturnsErrorWhenAutoSyncFails(t *testing.T) {
 		t.Fatalf("start github oauth: %v", err)
 	}
 
-	_, err = service.HandleCallback(context.Background(), GitHubOAuthCallbackInput{
+	result, err := service.HandleCallback(context.Background(), GitHubOAuthCallbackInput{
 		State:      provider.lastState,
 		StateNonce: start.StateNonce,
 		Code:       "callback-code",
 	})
-	if !errors.Is(err, ErrGitHubInstallationsSyncFailed) {
-		t.Fatalf("expected ErrGitHubInstallationsSyncFailed, got %v", err)
+	if err != nil {
+		t.Fatalf("expected login success even if sync fails, got %v", err)
+	}
+	if result == nil || result.AuthResult == nil {
+		t.Fatal("expected auth result")
 	}
 }

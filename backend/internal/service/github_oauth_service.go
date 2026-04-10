@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -70,8 +69,6 @@ type GitHubOAuthService struct {
 	cfg         config.GitHubOAuthConfig
 	stateSecret string
 }
-
-var ErrGitHubInstallationsSyncFailed = errors.New("github installations sync failed")
 
 func NewGitHubOAuthService(
 	users UserStore,
@@ -152,7 +149,8 @@ func (s *GitHubOAuthService) HandleCallback(ctx context.Context, input GitHubOAu
 			UserID:            user.ID,
 			GitHubAccessToken: accessToken,
 		}); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrGitHubInstallationsSyncFailed, err)
+			// Do not block OAuth login on installation sync failures.
+			// Users can retry sync from integrations screen.
 		}
 	}
 
