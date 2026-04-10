@@ -41,7 +41,7 @@ func (p *GitHubProvider) AuthorizationURL(state string) string {
 	query := url.Values{}
 	query.Set("client_id", p.cfg.ClientID)
 	query.Set("redirect_uri", p.cfg.CallbackURL)
-	query.Set("scope", "read:user user:email")
+	query.Set("scope", strings.Join(p.oauthScopes(), " "))
 	query.Set("state", state)
 
 	return githubAuthorizationURL + "?" + query.Encode()
@@ -181,4 +181,22 @@ func (p *GitHubProvider) fetchPrimaryEmail(ctx context.Context, accessToken stri
 	}
 
 	return "", fmt.Errorf("github verified email missing")
+}
+
+func (p *GitHubProvider) oauthScopes() []string {
+	if len(p.cfg.Scopes) == 0 {
+		return []string{"read:user", "user:email", "read:org", "repo"}
+	}
+
+	normalized := make([]string, 0, len(p.cfg.Scopes))
+	for _, scope := range p.cfg.Scopes {
+		trimmed := strings.TrimSpace(scope)
+		if trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	if len(normalized) == 0 {
+		return []string{"read:user", "user:email", "read:org", "repo"}
+	}
+	return normalized
 }

@@ -35,8 +35,8 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => null);
-      const errorMsg = errorBody?.message ?? 'oauth_failed';
-      return redirectRelative(`/login?error=${encodeURIComponent(errorMsg)}`);
+      const errorCode = errorBody?.code ?? errorBody?.message ?? 'oauth_failed';
+      return redirectRelative(`/login?error=${encodeURIComponent(errorCode)}`);
     }
 
     const payload = await response.json();

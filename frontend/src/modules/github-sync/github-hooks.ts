@@ -25,6 +25,12 @@ export function useSyncGitHubInstallations() {
     mutationFn: async (data: SyncGitHubInstallationsFormData): Promise<GitHubInstallationSyncResponse> => {
       const result = await syncGitHubInstallations(data);
       if (result.error) {
+        if (result.error.code === 'github_identity_required') {
+          throw new Error('Bạn cần liên kết tài khoản GitHub trước khi đồng bộ.');
+        }
+        if (result.error.code === 'provider_error') {
+          throw new Error('GitHub từ chối yêu cầu đồng bộ. Hãy kiểm tra quyền GitHub App/OAuth rồi thử lại.');
+        }
         throw new Error(result.error.message);
       }
       if (!result.data) {

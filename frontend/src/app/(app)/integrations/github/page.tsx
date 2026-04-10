@@ -50,10 +50,12 @@ export default function GitHubIntegrationsPage() {
               <button
                 type="button"
                 className="rounded-xl bg-primary px-6 py-3 text-base font-bold text-primary-foreground shadow-lg transition-all hover:bg-primary/90 disabled:opacity-60"
-                onClick={() => quickSync.mutate({ github_access_token: '' })}
+                onClick={() => {
+                  window.location.href = '/api/auth/oauth/github/start?next=/integrations/github';
+                }}
                 disabled={quickSync.isPending}
               >
-                {quickSync.isPending ? 'Đang làm mới...' : 'Thử tải lại ngay'}
+                {quickSync.isPending ? 'Đang làm mới...' : 'Liên kết lại GitHub'}
               </button>
             </div>
           }
@@ -63,6 +65,13 @@ export default function GitHubIntegrationsPage() {
   }
 
   const repos = reposData?.items ?? [];
+  const handleQuickSync = () => {
+    if (repos.length === 0) {
+      window.location.href = '/api/auth/oauth/github/start?next=/integrations/github';
+      return;
+    }
+    quickSync.mutate({ github_access_token: '' });
+  };
 
   const installations = repos.reduce<Record<string, typeof repos>>((acc, repo) => {
     const key = `${repo.installation_account_login}/${repo.installation_account_type}`;
@@ -104,10 +113,10 @@ export default function GitHubIntegrationsPage() {
             <button
               type="button"
               className="rounded-xl bg-foreground px-6 py-3 text-base font-bold text-background transition-all hover:bg-foreground/90 disabled:opacity-50 min-w-[120px] shadow-md"
-              onClick={() => quickSync.mutate({ github_access_token: '' })}
+              onClick={handleQuickSync}
               disabled={quickSync.isPending}
             >
-              {quickSync.isPending ? 'Đang tải...' : '🔄 ĐỒNG BỘ'}
+              {quickSync.isPending ? 'Đang tải...' : repos.length === 0 ? 'Liên kết lại' : '🔄 ĐỒNG BỘ'}
             </button>
             <button
               type="button"

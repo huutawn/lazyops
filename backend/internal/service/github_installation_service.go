@@ -60,6 +60,15 @@ func (s *GitHubInstallationService) SyncInstallations(ctx context.Context, cmd S
 		if err != nil {
 			return nil, err
 		}
+		if len(records) == 0 {
+			identity, identityErr := s.identities.GetByUserProvider(cmd.UserID, GitHubOAuthProviderName)
+			if identityErr != nil {
+				return nil, identityErr
+			}
+			if identity == nil || identity.RevokedAt != nil {
+				return nil, ErrGitHubIdentityRequired
+			}
+		}
 		return &GitHubInstallationSyncResult{Items: records}, nil
 	}
 

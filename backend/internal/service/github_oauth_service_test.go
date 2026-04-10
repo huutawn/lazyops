@@ -23,10 +23,14 @@ type fakeGitHubProvider struct {
 
 type fakeGitHubInstallationSyncer struct {
 	calls []SyncGitHubInstallationsCommand
+	err   error
 }
 
 func (f *fakeGitHubInstallationSyncer) SyncInstallations(ctx context.Context, cmd SyncGitHubInstallationsCommand) (*GitHubInstallationSyncResult, error) {
 	f.calls = append(f.calls, cmd)
+	if f.err != nil {
+		return nil, f.err
+	}
 	return &GitHubInstallationSyncResult{}, nil
 }
 
@@ -291,5 +295,37 @@ func TestGitHubOAuthServiceRejectsOwnershipMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, ErrOAuthIdentityOwnershipMismatch) {
 		t.Fatalf("expected ErrOAuthIdentityOwnershipMismatch, got %v", err)
+	}
+}
+
+func TestGitHubOAuthServiceReturnsErrorWhenAutoSyncFails(t *testing.T) {
+	userStore := newFakeUserStore()
+	identityStore := newFakeOAuthIdentityStore()
+	patStore := newFakePATStore()
+	provider := &fakeGitHubProvider{
+		accessToken: "github-access-token",
+		identity: &GitHubIdentity{
+			Subject: "github-subject-1",
+			Login:   "janedoe",
+			Email:   "jane@example.com",
+			Name:    "Jane Doe",
+		},
+	}
+	service := newGitHubOAuthServiceForTest(userStore, identityStore, patStore, provider)
+	syncer := &fakeGitHubInstallationSyncer{err: ErrGitHubProviderError}
+	service.WithInstallationSync(syncer)
+
+	start, err := service.Start()
+	if err != nil {
+		t.Fatalf("start github oauth: %v", err)
+	}
+
+	_, err = service.HandleCallback(context.Background(), GitHubOAuthCallbackInput{
+		State:      provider.lastState,
+		StateNonce: start.StateNonce,
+		Code:       "callback-code",
+	})
+	if !errors.Is(err, ErrGitHubInstallationsSyncFailed) {
+		t.Fatalf("expected ErrGitHubInstallationsSyncFailed, got %v", err)
 	}
 }

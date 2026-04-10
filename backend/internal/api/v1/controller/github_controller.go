@@ -41,7 +41,7 @@ func (ctl *GitHubController) SyncInstallations(c *gin.Context) {
 		case errors.Is(err, service.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, "github installation sync failed", "invalid_input", err.Error())
 		case errors.Is(err, service.ErrGitHubIdentityRequired):
-			response.Error(c, http.StatusForbidden, "github installation sync failed", "github_identity_required", nil)
+			response.Error(c, http.StatusForbidden, "github account not linked", "github_identity_required", nil)
 		case errors.Is(err, service.ErrGitHubProviderError):
 			response.Error(c, http.StatusBadGateway, "github installation sync failed", "provider_error", nil)
 		default:

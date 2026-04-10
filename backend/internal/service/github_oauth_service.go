@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -69,6 +70,8 @@ type GitHubOAuthService struct {
 	cfg         config.GitHubOAuthConfig
 	stateSecret string
 }
+
+var ErrGitHubInstallationsSyncFailed = errors.New("github installations sync failed")
 
 func NewGitHubOAuthService(
 	users UserStore,
@@ -145,10 +148,12 @@ func (s *GitHubOAuthService) HandleCallback(ctx context.Context, input GitHubOAu
 	}
 
 	if s.installSync != nil && strings.TrimSpace(accessToken) != "" {
-		_, _ = s.installSync.SyncInstallations(ctx, SyncGitHubInstallationsCommand{
+		if _, err := s.installSync.SyncInstallations(ctx, SyncGitHubInstallationsCommand{
 			UserID:            user.ID,
 			GitHubAccessToken: accessToken,
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrGitHubInstallationsSyncFailed, err)
+		}
 	}
 
 	now := time.Now().UTC()

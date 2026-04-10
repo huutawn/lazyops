@@ -261,6 +261,20 @@ func TestGitHubInstallationServiceProviderError(t *testing.T) {
 	}
 }
 
+func TestGitHubInstallationServiceSyncWithoutTokenRequiresLinkedIdentityWhenCacheEmpty(t *testing.T) {
+	identityStore := newFakeOAuthIdentityStore()
+	installStore := newFakeGitHubInstallationStore()
+	service := NewGitHubInstallationService(identityStore, installStore, nil)
+
+	_, err := service.SyncInstallations(context.Background(), SyncGitHubInstallationsCommand{
+		UserID:            "usr_test",
+		GitHubAccessToken: "",
+	})
+	if !errors.Is(err, ErrGitHubIdentityRequired) {
+		t.Fatalf("expected ErrGitHubIdentityRequired, got %v", err)
+	}
+}
+
 func TestGitHubInstallationServiceListReposUsesActiveInstallationScope(t *testing.T) {
 	revokedAt := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 	installStore := newFakeGitHubInstallationStore(

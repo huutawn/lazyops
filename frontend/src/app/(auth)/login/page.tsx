@@ -16,6 +16,9 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   oauth_missing_params: 'Thiếu tham số bắt buộc trong callback OAuth.',
   oauth_network: 'Lỗi mạng trong quá trình đăng nhập OAuth. Vui lòng thử lại.',
   oauth_failed: 'Đăng nhập OAuth thất bại. Vui lòng thử lại.',
+  github_installations_sync_failed: 'Đăng nhập GitHub thành công nhưng đồng bộ repository thất bại. Vui lòng kiểm tra quyền GitHub App/OAuth rồi thử lại.',
+  oauth_provider_error: 'Nhà cung cấp OAuth trả về lỗi. Vui lòng thử lại sau.',
+  oauth_not_configured: 'Tính năng OAuth chưa được cấu hình đầy đủ trên máy chủ.',
 };
 
 function LoginForm() {

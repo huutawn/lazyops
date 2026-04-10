@@ -72,6 +72,7 @@ type GitHubOAuthConfig struct {
 	Enabled            bool
 	ClientID           string
 	ClientSecret       string
+	Scopes             []string
 	CallbackURL        string
 	SuccessRedirectURL string
 	FailureRedirectURL string
@@ -162,6 +163,7 @@ func Load() Config {
 			Enabled:            getEnvAsBool("GITHUB_OAUTH_ENABLED", true),
 			ClientID:           getEnv("GITHUB_CLIENT_ID", ""),
 			ClientSecret:       getEnv("GITHUB_CLIENT_SECRET", ""),
+			Scopes:             getEnvAsSlice("GITHUB_OAUTH_SCOPES", []string{"read:user", "user:email", "read:org", "repo"}),
 			CallbackURL:        getEnv("GITHUB_CALLBACK_URL", ""),
 			SuccessRedirectURL: getEnv("GITHUB_OAUTH_SUCCESS_REDIRECT_URL", ""),
 			FailureRedirectURL: getEnv("GITHUB_OAUTH_FAILURE_REDIRECT_URL", ""),

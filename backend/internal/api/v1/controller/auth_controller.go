@@ -365,6 +365,8 @@ func mapGitHubOAuthError(err error) (int, string) {
 		return http.StatusBadRequest, "invalid_oauth_state"
 	case errors.Is(err, service.ErrOAuthNotConfigured):
 		return http.StatusServiceUnavailable, "oauth_not_configured"
+	case errors.Is(err, service.ErrGitHubInstallationsSyncFailed):
+		return http.StatusBadGateway, "github_installations_sync_failed"
 	case errors.Is(err, service.ErrAccountDisabled), errors.Is(err, service.ErrRevokedOAuthIdentity):
 		return http.StatusUnauthorized, "account_disabled"
 	default:
