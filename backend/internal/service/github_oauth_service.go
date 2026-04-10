@@ -10,6 +10,7 @@ import (
 
 	"lazyops-server/internal/config"
 	"lazyops-server/internal/models"
+	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
 )
 
@@ -151,6 +152,11 @@ func (s *GitHubOAuthService) HandleCallback(ctx context.Context, input GitHubOAu
 		}); err != nil {
 			// Do not block OAuth login on installation sync failures.
 			// Users can retry sync from integrations screen.
+			logger.Warn("github_oauth_installation_sync_failed",
+				"user_id", user.ID,
+				"provider", GitHubOAuthProviderName,
+				"error", err.Error(),
+			)
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -61,8 +62,7 @@ func (p *AppInstallationsProvider) ListInstallations(ctx context.Context, github
 		}
 
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			resp.Body.Close()
-			return nil, errors.New("github installations fetch failed")
+			return nil, githubAPIError("github installations fetch failed", resp)
 		}
 
 		var payload githubInstallationPayload
@@ -133,8 +133,7 @@ func (p *AppInstallationsProvider) listRepositories(ctx context.Context, githubA
 		}
 
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			resp.Body.Close()
-			return nil, errors.New("github installation repositories fetch failed")
+			return nil, githubAPIError("github installation repositories fetch failed", resp)
 		}
 
 		var payload githubRepositoriesPayload
@@ -185,4 +184,17 @@ func hasGitHubNextPage(linkHeader string) bool {
 type githubAccount struct {
 	Login string `json:"login"`
 	Type  string `json:"type"`
+}
+
+func githubAPIError(prefix string, resp *http.Response) error {
+	if resp == nil {
+		return errors.New(prefix)
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	_ = resp.Body.Close()
+	message := strings.TrimSpace(string(body))
+	if message == "" {
+		return fmt.Errorf("%s (status=%d)", prefix, resp.StatusCode)
+	}
+	return fmt.Errorf("%s (status=%d): %s", prefix, resp.StatusCode, message)
 }

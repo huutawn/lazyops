@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -82,7 +83,7 @@ func (s *GitHubInstallationService) SyncInstallations(ctx context.Context, cmd S
 
 	snapshots, err := s.provider.ListInstallations(ctx, cmd.GitHubAccessToken)
 	if err != nil {
-		return nil, ErrGitHubProviderError
+		return nil, fmt.Errorf("%w: %v", ErrGitHubProviderError, err)
 	}
 
 	activeInstallationIDs := make([]int64, 0, len(snapshots))

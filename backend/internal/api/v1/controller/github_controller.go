@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,6 +14,7 @@ import (
 	"lazyops-server/internal/api/v1/mapper"
 	"lazyops-server/internal/config"
 	"lazyops-server/internal/service"
+	"lazyops-server/pkg/logger"
 )
 
 type GitHubController struct {
@@ -35,8 +37,16 @@ func (ctl *GitHubController) SyncInstallations(c *gin.Context) {
 	}
 
 	claims := middleware.MustClaims(c)
+	hasAccessToken := strings.TrimSpace(req.GitHubAccessToken) != ""
 	result, err := ctl.installations.SyncInstallations(c.Request.Context(), mapper.ToSyncGitHubInstallationsCommand(claims.UserID, req))
 	if err != nil {
+		logger.Warn("github_installations_sync_failed",
+			"request_id", middleware.GetRequestID(c),
+			"correlation_id", middleware.GetCorrelationID(c),
+			"user_id", claims.UserID,
+			"has_access_token", hasAccessToken,
+			"error", err.Error(),
+		)
 		switch {
 		case errors.Is(err, service.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, "github installation sync failed", "invalid_input", err.Error())
@@ -49,6 +59,18 @@ func (ctl *GitHubController) SyncInstallations(c *gin.Context) {
 		}
 		return
 	}
+	repoCount := 0
+	for _, item := range result.Items {
+		repoCount += len(item.Scope.Repositories)
+	}
+	logger.Info("github_installations_synced",
+		"request_id", middleware.GetRequestID(c),
+		"correlation_id", middleware.GetCorrelationID(c),
+		"user_id", claims.UserID,
+		"has_access_token", hasAccessToken,
+		"installations", len(result.Items),
+		"repositories", repoCount,
+	)
 
 	response.JSON(c, http.StatusOK, "github installations synced", mapper.ToGitHubInstallationSyncResponse(*result))
 }
