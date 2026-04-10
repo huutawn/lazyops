@@ -10,6 +10,21 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const state = searchParams.get('state');
   const error = searchParams.get('error');
+  const installationID = searchParams.get('installation_id');
+  const setupAction = searchParams.get('setup_action');
+
+  // GitHub App installation callback can return here without OAuth code/state.
+  // In that case, route users back to integrations instead of treating it as a login failure.
+  if (installationID || setupAction) {
+    const target = new URL('/integrations/github', request.nextUrl.origin);
+    if (installationID) {
+      target.searchParams.set('installation_id', installationID);
+    }
+    if (setupAction) {
+      target.searchParams.set('setup_action', setupAction);
+    }
+    return redirectRelative(`${target.pathname}${target.search}`);
+  }
 
   if (error) {
     return redirectRelative(`/login?error=oauth_denied&error_description=${encodeURIComponent(error)}`);
