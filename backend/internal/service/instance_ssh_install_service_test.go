@@ -97,8 +97,8 @@ func TestInstanceSSHInstallServiceIssuesTokenAndExecutesCommand(t *testing.T) {
 	if strings.TrimSpace(result.HostKeyFingerprint) == "" {
 		t.Fatal("expected host key fingerprint in result")
 	}
-	if !strings.Contains(sshExec.lastInput.Command, "docker run -d") {
-		t.Fatalf("expected docker run command, got %q", sshExec.lastInput.Command)
+	if !strings.Contains(sshExec.lastInput.Command, "run -d --name") {
+		t.Fatalf("expected container run command, got %q", sshExec.lastInput.Command)
 	}
 	if !strings.Contains(sshExec.lastInput.Command, "AGENT_BOOTSTRAP_TOKEN") {
 		t.Fatalf("expected bootstrap token env in command, got %q", sshExec.lastInput.Command)

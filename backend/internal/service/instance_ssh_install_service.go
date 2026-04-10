@@ -256,13 +256,31 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 		targetRef = "remote-instance"
 	}
 
+	dockerBootstrap := strings.Join([]string{
+		`if [ "$(id -u)" -eq 0 ]; then SUDO=""; elif command -v sudo >/dev/null 2>&1; then SUDO="sudo -n"; else SUDO=""; fi;`,
+		`if ! command -v docker >/dev/null 2>&1; then`,
+		`  if command -v apt-get >/dev/null 2>&1; then`,
+		`    if [ -n "$SUDO" ]; then $SUDO apt-get update -y >/dev/null 2>&1 || $SUDO apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y docker.io >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1; else apt-get update -y >/dev/null 2>&1 || apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1; fi;`,
+		`  elif command -v dnf >/dev/null 2>&1; then`,
+		`    if [ -n "$SUDO" ]; then $SUDO dnf install -y docker >/dev/null 2>&1; else dnf install -y docker >/dev/null 2>&1; fi;`,
+		`  elif command -v yum >/dev/null 2>&1; then`,
+		`    if [ -n "$SUDO" ]; then $SUDO yum install -y docker >/dev/null 2>&1; else yum install -y docker >/dev/null 2>&1; fi;`,
+		`  else`,
+		`    echo 'docker_not_found_and_pkg_manager_unsupported' >&2; exit 1;`,
+		`  fi;`,
+		`fi;`,
+		`if command -v systemctl >/dev/null 2>&1; then if [ -n "$SUDO" ]; then $SUDO systemctl enable --now docker >/dev/null 2>&1 || true; else systemctl enable --now docker >/dev/null 2>&1 || true; fi; fi;`,
+		`if command -v service >/dev/null 2>&1; then if [ -n "$SUDO" ]; then $SUDO service docker start >/dev/null 2>&1 || true; else service docker start >/dev/null 2>&1 || true; fi; fi;`,
+		`docker_exec() { if docker info >/dev/null 2>&1; then docker "$@"; elif [ -n "$SUDO" ] && $SUDO docker info >/dev/null 2>&1; then $SUDO docker "$@"; else echo 'docker_daemon_unavailable_or_permission_denied' >&2; exit 1; fi; };`,
+	}, " ")
+
 	return fmt.Sprintf(
 		"set -e; "+
-			"command -v docker >/dev/null 2>&1 || { echo 'docker_not_found' >&2; exit 1; }; "+
-			"docker rm -f %s >/dev/null 2>&1 || true; "+
-			"docker pull %s >/dev/null 2>&1 || true; "+
+			"%s "+
+			"docker_exec rm -f %s >/dev/null 2>&1 || true; "+
+			"docker_exec pull %s >/dev/null 2>&1 || true; "+
 			"mkdir -p %s %s; "+
-			"docker run -d --name %s --restart unless-stopped --network host --privileged "+
+			"docker_exec run -d --name %s --restart unless-stopped --network host --privileged "+
 			"-v /var/run/docker.sock:/var/run/docker.sock "+
 			"-v %s:%s -v %s:%s "+
 			"-e AGENT_BOOTSTRAP_TOKEN=%s "+
@@ -274,6 +292,7 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 			"-e AGENT_STATE_DIR=%s "+
 			"-e AGENT_RUNTIME_ROOT_DIR=%s "+
 			"%s >/dev/null",
+		dockerBootstrap,
 		shellQuote(containerName),
 		shellQuote(agentImage),
 		shellQuote(stateDir),
