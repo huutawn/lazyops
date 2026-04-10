@@ -153,13 +153,12 @@ func (p *GitHubProvider) FetchIdentity(ctx context.Context, accessToken string) 
 	}
 	if email == "" {
 		resolvedEmail, err := p.fetchPrimaryEmail(ctx, accessToken)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			email = resolvedEmail
 		}
-		email = resolvedEmail
 	}
 	if email == "" {
-		return nil, errors.New("github email missing")
+		email = fallbackGitHubEmail(profile.ID)
 	}
 
 	return &service.GitHubIdentity{
@@ -211,6 +210,13 @@ func (p *GitHubProvider) fetchPrimaryEmail(ctx context.Context, accessToken stri
 	}
 
 	return "", fmt.Errorf("github verified email missing")
+}
+
+func fallbackGitHubEmail(subjectID int64) string {
+	if subjectID <= 0 {
+		return "github-unknown@users.noreply.github.com"
+	}
+	return fmt.Sprintf("github-%d@users.noreply.github.com", subjectID)
 }
 
 func (p *GitHubProvider) oauthScopes() []string {
