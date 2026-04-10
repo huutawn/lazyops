@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const INTERNAL_SERVICE_KINDS = ['postgres', 'mysql', 'redis', 'rabbitmq'] as const;
+
 export const createProjectSchema = z.object({
   name: z
     .string()
@@ -14,11 +16,10 @@ export const createProjectSchema = z.object({
     .string()
     .min(1, 'Branch name is required')
     .max(100, 'Branch name must be less than 100 characters'),
+  internal_services: z.array(z.enum(INTERNAL_SERVICE_KINDS)).default([]),
 });
 
-export type CreateProjectFormData = z.infer<typeof createProjectSchema> & {
-  default_branch: string;
-};
+export type CreateProjectFormData = z.input<typeof createProjectSchema>;
 
 export type ProjectSummary = {
   id: string;

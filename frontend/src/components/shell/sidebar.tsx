@@ -40,7 +40,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
         <nav className="flex-1 overflow-y-auto px-4 py-6 scrollbar-hide" aria-label="Main navigation">
           
           <div className="mb-4 px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
-            Platform
+            Điều hướng
           </div>
 
           <ul className="flex flex-col gap-1.5">

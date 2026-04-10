@@ -16,7 +16,8 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
 	buildController := controller.NewBuildController(app.BuildCallbackSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
-	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator)
+	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc)
+	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator, app.InstanceService, app.InstanceSSHInstallSvc)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
 	initContractController := controller.NewInitContractController(app.InitContractSvc)
 	blueprintController := controller.NewBlueprintController(app.BlueprintSvc)
@@ -91,10 +92,15 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.POST("/projects", projectController.Create)
 			userProtected.GET("/projects", projectController.List)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+			userProtected.GET("/projects/:id/internal-services", projectInternalServiceController.List)
+			userProtected.PUT("/projects/:id/internal-services",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectInternalServiceController.Configure,
+			)
 			userProtected.GET("/projects/:id/bootstrap/status", bootstrapController.Status)
 			userProtected.POST("/projects/bootstrap/auto", bootstrapController.Auto)
+			userProtected.POST("/projects/:id/infra/connect-ssh", bootstrapController.ConnectInfraSSH)
 			userProtected.POST("/projects/:id/deploy/one-click",
-				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				bootstrapController.OneClickDeploy,
 			)
 			userProtected.GET("/projects/:id/deployment-bindings", deploymentBindingController.List)

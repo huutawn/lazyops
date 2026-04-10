@@ -23,6 +23,7 @@ import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
 import { isFeatureEnabled } from '@/lib/flags/feature-flags';
+import { useSession } from '@/lib/auth/auth-hooks';
 
 const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
   standalone: 'Standalone',
@@ -36,22 +37,52 @@ const TARGET_KIND_LABELS: Record<TargetKind, string> = {
   cluster: 'K3s Cluster',
 };
 
+const TARGET_KIND_PREFIX_RULES: Array<{ kind: TargetKind; prefixes: string[] }> = [
+  { kind: 'instance', prefixes: ['inst_', 'instance_'] },
+  { kind: 'mesh', prefixes: ['mesh_'] },
+  { kind: 'cluster', prefixes: ['cls_', 'cluster_'] },
+];
+
+function inferTargetKindFromID(targetID: string): TargetKind | null {
+  const normalized = targetID.trim().toLowerCase();
+  if (!normalized) return null;
+  const matched = TARGET_KIND_PREFIX_RULES.find((rule) =>
+    rule.prefixes.some((prefix) => normalized.startsWith(prefix)),
+  );
+  return matched?.kind ?? null;
+}
+
+function defaultRuntimeModeForKind(kind: TargetKind): RuntimeMode {
+  const allowedModes = COMPATIBILITY_MATRIX[kind];
+  return allowedModes?.[0] ?? 'standalone';
+}
+
+function buildAutoBindingName(targetID: string, fallbackKind: TargetKind): string {
+  const normalized = targetID.trim().toLowerCase();
+  const inferredKind = inferTargetKindFromID(normalized) ?? fallbackKind;
+  const stripped = normalized.replace(/^(inst_|instance_|mesh_|cls_|cluster_)/, '');
+  const safeSuffix = stripped.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return safeSuffix ? `prod-${safeSuffix}` : `${inferredKind}-binding`;
+}
+
 export default function DeploymentBindingsPage() {
   const params = useParams();
   const router = useRouter();
   const projectId = params?.projectId as string;
   const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
+  const { data: session, isLoading: sessionLoading } = useSession();
+  const isAdmin = session?.role === 'admin';
 
   useEffect(() => {
-    if (threeStepFlowEnabled && projectId) {
+    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
       router.replace(`/projects/${projectId}`);
     }
-  }, [threeStepFlowEnabled, projectId, router]);
+  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
 
   const { data, isLoading, isError } = useDeploymentBindings(projectId);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  if (threeStepFlowEnabled) {
+  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
     return <SkeletonPage title cards={1} />;
   }
 
@@ -161,6 +192,8 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
     handleSubmit,
     control,
     setValue,
+    getValues,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<CreateDeploymentBindingFormData>({
     resolver: zodResolver(createDeploymentBindingSchema),
@@ -179,9 +212,11 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
 
   const createBinding = useCreateDeploymentBinding(projectId);
   const serverError = createBinding.error?.message ?? null;
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const selectedKind = useWatch({ control, name: 'target_kind' }) as TargetKind;
   const selectedMode = useWatch({ control, name: 'runtime_mode' }) as RuntimeMode;
+  const selectedTargetID = useWatch({ control, name: 'target_id' }) as string;
   const allowedModes = COMPATIBILITY_MATRIX[selectedKind] ?? [];
 
   const handleKindChange = (kind: TargetKind) => {
@@ -192,8 +227,44 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
     }
   };
 
+  useEffect(() => {
+    const inferredKind = inferTargetKindFromID(selectedTargetID ?? '');
+    if (!inferredKind) return;
+
+    if (selectedKind !== inferredKind) {
+      setValue('target_kind', inferredKind, { shouldValidate: true });
+    }
+
+    const inferredMode = defaultRuntimeModeForKind(inferredKind);
+    if (selectedMode !== inferredMode) {
+      setValue('runtime_mode', inferredMode, { shouldValidate: true });
+    }
+
+    const currentName = (getValues('name') ?? '').trim();
+    if (!currentName || currentName.endsWith('-binding') || currentName.startsWith('prod-')) {
+      setValue('name', buildAutoBindingName(selectedTargetID ?? '', inferredKind));
+    }
+  }, [selectedTargetID, selectedKind, selectedMode, setValue, getValues]);
+
   const onSubmit = (data: CreateDeploymentBindingFormData) => {
-    return createBinding.mutateAsync(data).then(() => {
+    const normalizedTargetID = data.target_id.trim();
+    const resolvedKind = inferTargetKindFromID(normalizedTargetID) ?? data.target_kind;
+    const payload: CreateDeploymentBindingFormData = {
+      ...data,
+      name: data.name.trim() || buildAutoBindingName(normalizedTargetID, resolvedKind),
+      target_id: normalizedTargetID,
+      target_kind: resolvedKind,
+      runtime_mode: defaultRuntimeModeForKind(resolvedKind),
+      target_ref: data.target_ref?.trim(),
+      placement_policy: showAdvanced ? data.placement_policy : '',
+      domain_policy: showAdvanced ? data.domain_policy : '',
+      compatibility_policy: showAdvanced ? data.compatibility_policy : '',
+      scale_to_zero: showAdvanced ? data.scale_to_zero : false,
+    };
+
+    return createBinding.mutateAsync(payload).then(() => {
+      reset();
+      setShowAdvanced(false);
       onClose();
     });
   };
@@ -210,48 +281,6 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
           />
         </FormField>
 
-        <div>
-          <label className="mb-2 block text-sm font-medium text-lazyops-text">Target type</label>
-          <div className="grid grid-cols-3 gap-3">
-            {TARGET_KINDS.map((kind) => {
-              const isSelected = selectedKind === kind;
-              return (
-                <button
-                  key={kind}
-                  type="button"
-                  className={`rounded-lg border px-3 py-3 text-sm transition-colors ${
-                    isSelected
-                      ? 'border-primary/40 bg-primary/10 text-primary'
-                      : 'border-lazyops-border text-lazyops-muted hover:text-lazyops-text'
-                  }`}
-                  onClick={() => handleKindChange(kind)}
-                >
-                  <div className="font-medium">{TARGET_KIND_LABELS[kind]}</div>
-                  <div className="mt-0.5 text-[10px] opacity-70">
-                    {COMPATIBILITY_MATRIX[kind].map((m) => RUNTIME_MODE_LABELS[m]).join(', ')}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <FormField label="Runtime mode" error={errors.runtime_mode?.message}>
-          <select
-            className="h-10 w-full rounded-lg border bg-lazyops-bg-accent/60 px-3 text-sm text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
-            {...register('runtime_mode')}
-          >
-            {allowedModes.map((mode) => (
-              <option key={mode} value={mode}>
-                {RUNTIME_MODE_LABELS[mode]}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-[10px] text-lazyops-muted/60">
-            Only modes compatible with the selected target type are shown.
-          </p>
-        </FormField>
-
         <FormField label="Target ID" error={errors.target_id?.message}>
           <FormInput
             type="text"
@@ -259,48 +288,106 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
             error={!!errors.target_id}
             {...register('target_id')}
           />
+          <p className="mt-1 text-xs text-lazyops-muted">
+            Auto-detected target type: <span className="text-lazyops-text">{TARGET_KIND_LABELS[selectedKind]}</span> · runtime mode:{' '}
+            <span className="text-lazyops-text">{RUNTIME_MODE_LABELS[selectedMode]}</span>
+          </p>
         </FormField>
 
-        <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-4">
-          <h4 className="mb-3 text-sm font-medium text-lazyops-text">Policy configuration</h4>
-          <div className="flex flex-col gap-3">
-            <FormField label="Placement policy (JSON)" error={errors.placement_policy?.message}>
-              <FormInput
-                type="text"
-                placeholder='{"strategy": "spread"}'
-                error={!!errors.placement_policy}
-                {...register('placement_policy')}
-              />
-            </FormField>
-
-            <FormField label="Domain policy (JSON)" error={errors.domain_policy?.message}>
-              <FormInput
-                type="text"
-                placeholder='{"mode": "auto"}'
-                error={!!errors.domain_policy}
-                {...register('domain_policy')}
-              />
-            </FormField>
-
-            <FormField label="Compatibility policy (JSON)" error={errors.compatibility_policy?.message}>
-              <FormInput
-                type="text"
-                placeholder='{"min_version": "1.0"}'
-                error={!!errors.compatibility_policy}
-                {...register('compatibility_policy')}
-              />
-            </FormField>
-
-            <label className="flex items-center gap-2 text-sm text-lazyops-text">
-              <input
-                type="checkbox"
-                className="accent-primary"
-                {...register('scale_to_zero')}
-              />
-              Enable scale-to-zero
-            </label>
-          </div>
+        <div className="rounded-lg border border-lazyops-border/40 bg-lazyops-bg-accent/20 px-3 py-2">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left text-sm text-lazyops-text"
+            onClick={() => setShowAdvanced((prev) => !prev)}
+          >
+            <span>Advanced options</span>
+            <span className="text-xs text-lazyops-muted">{showAdvanced ? 'Hide' : 'Show'}</span>
+          </button>
         </div>
+
+        {showAdvanced && (
+          <>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-lazyops-text">Target type</label>
+              <div className="grid grid-cols-3 gap-3">
+                {TARGET_KINDS.map((kind) => {
+                  const isSelected = selectedKind === kind;
+                  return (
+                    <button
+                      key={kind}
+                      type="button"
+                      className={`rounded-lg border px-3 py-3 text-sm transition-colors ${
+                        isSelected
+                          ? 'border-primary/40 bg-primary/10 text-primary'
+                          : 'border-lazyops-border text-lazyops-muted hover:text-lazyops-text'
+                      }`}
+                      onClick={() => handleKindChange(kind)}
+                    >
+                      <div className="font-medium">{TARGET_KIND_LABELS[kind]}</div>
+                      <div className="mt-0.5 text-[10px] opacity-70">
+                        {COMPATIBILITY_MATRIX[kind].map((mode) => RUNTIME_MODE_LABELS[mode]).join(', ')}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <FormField label="Runtime mode" error={errors.runtime_mode?.message}>
+              <select
+                className="h-10 w-full rounded-lg border bg-lazyops-bg-accent/60 px-3 text-sm text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+                {...register('runtime_mode')}
+              >
+                {allowedModes.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {RUNTIME_MODE_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-4">
+              <h4 className="mb-3 text-sm font-medium text-lazyops-text">Policy configuration</h4>
+              <div className="flex flex-col gap-3">
+                <FormField label="Placement policy (JSON)" error={errors.placement_policy?.message}>
+                  <FormInput
+                    type="text"
+                    placeholder='{"strategy": "spread"}'
+                    error={!!errors.placement_policy}
+                    {...register('placement_policy')}
+                  />
+                </FormField>
+
+                <FormField label="Domain policy (JSON)" error={errors.domain_policy?.message}>
+                  <FormInput
+                    type="text"
+                    placeholder='{"mode": "auto"}'
+                    error={!!errors.domain_policy}
+                    {...register('domain_policy')}
+                  />
+                </FormField>
+
+                <FormField label="Compatibility policy (JSON)" error={errors.compatibility_policy?.message}>
+                  <FormInput
+                    type="text"
+                    placeholder='{"min_version": "1.0"}'
+                    error={!!errors.compatibility_policy}
+                    {...register('compatibility_policy')}
+                  />
+                </FormField>
+
+                <label className="flex items-center gap-2 text-sm text-lazyops-text">
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    {...register('scale_to_zero')}
+                  />
+                  Enable scale-to-zero
+                </label>
+              </div>
+            </div>
+          </>
+        )}
 
         {serverError && (
           <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">

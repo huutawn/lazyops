@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { autoBootstrapProject, deployProjectOneClick, getProjectBootstrapStatus } from '@/modules/bootstrap/bootstrap-api';
+import { autoBootstrapProject, connectProjectInfraSSH, deployProjectOneClick, getProjectBootstrapStatus } from '@/modules/bootstrap/bootstrap-api';
 import type {
   BootstrapAutoAccepted,
   BootstrapAutoRequest,
+  BootstrapConnectInfraSSHRequest,
+  BootstrapConnectInfraSSHResult,
   BootstrapOneClickDeployRequest,
   BootstrapOneClickDeployResult,
   ProjectBootstrapStatus,
@@ -72,6 +74,28 @@ export function useOneClickDeploy(projectId: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: bootstrapStatusQueryKey(projectId) });
       void queryClient.invalidateQueries({ queryKey: ['deployments', projectId] });
+    },
+  });
+}
+
+export function useConnectProjectInfraSSH(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: BootstrapConnectInfraSSHRequest): Promise<BootstrapConnectInfraSSHResult> => {
+      const result = await connectProjectInfraSSH(projectId, data);
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      if (!result.data) {
+        throw new Error('Infra connection failed: missing response payload');
+      }
+      return result.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: bootstrapStatusQueryKey(projectId) });
+      void queryClient.invalidateQueries({ queryKey: ['instances', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['deployment-bindings', projectId] });
     },
   });
 }

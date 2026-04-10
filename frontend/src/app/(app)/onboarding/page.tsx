@@ -16,10 +16,10 @@ import { RUNTIME_MODES } from '@/modules/onboarding/runtime-modes';
 import { useProjects } from '@/modules/projects/project-hooks';
 
 const ONBOARDING_STEPS = [
-  { step: 1, title: 'Create a project', description: 'Give your application a home in LazyOps.' },
-  { step: 2, title: 'Connect GitHub', description: 'Link your repository for automated deployments.' },
-  { step: 3, title: 'Add targets', description: 'Register machines or clusters to deploy onto.' },
-  { step: 4, title: 'Deploy', description: 'LazyOps handles the rest — no YAML required.' },
+  { step: 1, title: 'Tạo dự án', description: 'Tạo không gian triển khai cho ứng dụng của bạn.' },
+  { step: 2, title: 'Kết nối GitHub', description: 'Liên kết repository để tự động triển khai.' },
+  { step: 3, title: 'Kết nối máy chủ', description: 'Đăng ký máy chủ hoặc cụm để triển khai.' },
+  { step: 4, title: 'Triển khai', description: 'LazyOps tự xử lý phần còn lại, không cần YAML.' },
 ];
 
 export default function OnboardingPage() {
@@ -49,8 +49,8 @@ function ThreeStepOnboardingPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="LazyOps 3-step onboarding"
-        subtitle="Connect code, connect infrastructure, then deploy. No binding JSON needed."
+        title="Bắt đầu với LazyOps"
+        subtitle="Kết nối mã nguồn, kết nối máy chủ, rồi triển khai. Không cần cấu hình JSON phức tạp."
       />
 
       {projectItems.length === 0 ? (
@@ -58,27 +58,27 @@ function ThreeStepOnboardingPage() {
           {!showCreateForm ? (
             <SectionCard
               title="Step 0: Create your first project"
-              description="Once the project exists, the 3-step wizard becomes available immediately."
+              description="Tạo dự án đầu tiên để mở luồng triển khai 3 bước."
               actions={
                 <button
                   type="button"
                   className="rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                   onClick={() => setShowCreateForm(true)}
                 >
-                  New project
+                  Tạo dự án
                 </button>
               }
             >
               <EmptyState
                 title="No projects yet"
-                description="Create one project to unlock the simplified flow."
+                description="Tạo một dự án để mở luồng thiết lập đơn giản."
                 action={
                   <button
                     type="button"
                     className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                     onClick={() => setShowCreateForm(true)}
                   >
-                    Create project
+                    Tạo dự án
                   </button>
                 }
               />
@@ -91,14 +91,14 @@ function ThreeStepOnboardingPage() {
         <>
           <SectionCard
             title="Choose project"
-            description="The wizard below will run setup for the selected project."
+            description="Wizard bên dưới sẽ cấu hình dự án bạn chọn."
             actions={
               selectedProject ? (
                 <Link
                   href={`/projects/${selectedProject.id}`}
                   className="rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
                 >
-                  Open project page
+                  Mở trang dự án
                 </Link>
               ) : null
             }
@@ -148,12 +148,12 @@ function LegacyOnboardingPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Welcome to LazyOps"
-        subtitle="Infrastructure without the complexity. Let's get you set up."
+        title="Chào mừng đến LazyOps"
+        subtitle="Triển khai hạ tầng theo cách đơn giản nhất."
       />
 
       {hasProjects && (
-        <SectionCard title="Your projects" description="You already have projects set up.">
+        <SectionCard title="Dự án của bạn" description="Bạn đã có sẵn các dự án.">
           <div className="flex flex-col gap-2">
             {projects.items.map((project) => (
               <Link
@@ -175,28 +175,28 @@ function LegacyOnboardingPage() {
       {!showCreateForm ? (
         <SectionCard
           title="Get started"
-          description="Create your first project to begin deploying services."
+          description="Tạo dự án đầu tiên để bắt đầu triển khai."
           actions={
             <button
               type="button"
               className="rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
               onClick={() => setShowCreateForm(true)}
             >
-              New project
+              Tạo dự án
             </button>
           }
         >
           {hasProjects ? null : (
             <EmptyState
               title="No projects yet"
-              description="Create your first project to start managing targets, integrations, and deployments."
+              description="Tạo dự án đầu tiên để bắt đầu quản lý máy chủ và triển khai."
               action={
                 <button
                   type="button"
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                   onClick={() => setShowCreateForm(true)}
                 >
-                  Create project
+                  Tạo dự án
                 </button>
               }
             />
@@ -208,7 +208,7 @@ function LegacyOnboardingPage() {
 
       <SectionCard
         title="How it works"
-        description="LazyOps supports three runtime modes to match your infrastructure needs."
+        description="LazyOps hỗ trợ 3 chế độ chạy phù hợp theo hạ tầng."
       >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {RUNTIME_MODES.map((mode) => (
@@ -217,7 +217,7 @@ function LegacyOnboardingPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Setup checklist" description="Follow these steps to get your first service running.">
+      <SectionCard title="Checklist thiết lập" description="Làm theo các bước sau để chạy service đầu tiên.">
         <div className="flex flex-col gap-3">
           {ONBOARDING_STEPS.map((item) => (
             <div key={item.step} className="flex items-start gap-4">

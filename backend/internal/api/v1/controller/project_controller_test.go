@@ -20,7 +20,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	router.Use(middleware.RequestID())
 
 	projectController := NewProjectController(nil, nil)
-	bootstrapController := NewBootstrapController(nil)
+	bootstrapController := NewBootstrapController(nil, nil, nil)
 	githubController := NewGitHubController(nil, config.Config{})
 	targetController := NewTargetController(nil, nil)
 	deploymentBindingController := NewDeploymentBindingController(nil)
@@ -28,14 +28,18 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	blueprintController := NewBlueprintController(nil)
 	deploymentController := NewDeploymentController(nil, nil)
 	observabilityController := NewObservabilityController(nil, nil)
+	internalServiceController := NewProjectInternalServiceController(nil)
 
 	protected := router.Group("/api/v1")
 	protected.Use(middleware.Authenticate(nil))
 	protected.GET("/projects", projectController.List)
 	protected.POST("/projects", projectController.Create)
 	protected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+	protected.GET("/projects/:id/internal-services", internalServiceController.List)
+	protected.PUT("/projects/:id/internal-services", internalServiceController.Configure)
 	protected.GET("/projects/:id/bootstrap/status", bootstrapController.Status)
 	protected.POST("/projects/bootstrap/auto", bootstrapController.Auto)
+	protected.POST("/projects/:id/infra/connect-ssh", bootstrapController.ConnectInfraSSH)
 	protected.POST("/projects/:id/deploy/one-click", bootstrapController.OneClickDeploy)
 	protected.GET("/projects/:id/deployment-bindings", deploymentBindingController.List)
 	protected.POST("/projects/:id/deployment-bindings", deploymentBindingController.Create)
@@ -59,8 +63,11 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 		{name: "list projects", method: http.MethodGet, target: "/api/v1/projects"},
 		{name: "create project", method: http.MethodPost, target: "/api/v1/projects", body: `{"name":"Acme"}`},
 		{name: "link repo", method: http.MethodPost, target: "/api/v1/projects/prj_123/repo-link", body: `{"github_installation_id":1,"github_repo_id":2}`},
+		{name: "list internal services", method: http.MethodGet, target: "/api/v1/projects/prj_123/internal-services"},
+		{name: "configure internal services", method: http.MethodPut, target: "/api/v1/projects/prj_123/internal-services", body: `{"kinds":["postgres","redis"]}`},
 		{name: "bootstrap status", method: http.MethodGet, target: "/api/v1/projects/prj_123/bootstrap/status"},
 		{name: "bootstrap auto", method: http.MethodPost, target: "/api/v1/projects/bootstrap/auto", body: `{"project_id":"prj_123"}`},
+		{name: "bootstrap connect infra ssh", method: http.MethodPost, target: "/api/v1/projects/prj_123/infra/connect-ssh", body: `{"instance_name":"srv-1","public_ip":"203.0.113.10","ssh_host":"203.0.113.10","ssh_username":"root","ssh_password":"secret"}`},
 		{name: "bootstrap one-click deploy", method: http.MethodPost, target: "/api/v1/projects/prj_123/deploy/one-click", body: `{}`},
 		{name: "list deployment bindings", method: http.MethodGet, target: "/api/v1/projects/prj_123/deployment-bindings"},
 		{name: "create deployment binding", method: http.MethodPost, target: "/api/v1/projects/prj_123/deployment-bindings", body: `{"name":"prod binding","target_ref":"prod-main","runtime_mode":"standalone","target_kind":"instance","target_id":"inst_123"}`},

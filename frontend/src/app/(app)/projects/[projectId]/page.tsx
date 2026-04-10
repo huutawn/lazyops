@@ -16,8 +16,8 @@ export default async function ProjectRootPage({ params }: ProjectRootPageProps) 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Project Setup"
-        subtitle="3-step flow: Connect Code, Connect Infra, Deploy."
+        title="Thiết lập dự án"
+        subtitle="3 bước: Kết nối mã nguồn, kết nối máy chủ, triển khai."
       />
       <ProjectThreeStepWizard projectId={projectId} />
     </div>

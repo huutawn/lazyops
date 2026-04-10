@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
+import { API_BASE_URL, SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
 import type { AuthTokens } from '@/lib/auth/auth-types';
+
+const OAUTH_NEXT_COOKIE = 'lazyops_oauth_next';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const callbackURL = new URL('/api/v1/auth/oauth/google/callback', request.url);
+    const callbackURL = new URL(`${API_BASE_URL}/api/v1/auth/oauth/google/callback`);
     callbackURL.searchParams.set('code', code);
     callbackURL.searchParams.set('state', state);
     callbackURL.searchParams.set('mode', 'json');
@@ -46,9 +48,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/login?error=oauth_invalid_response', request.url));
     }
     const cookieOpts = sessionCookieOptions(isSecureRequest(request));
+    const nextPathRaw = request.cookies.get(OAUTH_NEXT_COOKIE)?.value ?? '';
+    const nextPath = nextPathRaw.startsWith('/') ? nextPathRaw : '/dashboard';
 
-    const redirectResponse = NextResponse.redirect(new URL('/dashboard', request.url));
+    const redirectResponse = NextResponse.redirect(new URL(nextPath, request.url));
     redirectResponse.cookies.set(SESSION_COOKIE_NAME, data.access_token, cookieOpts);
+    redirectResponse.cookies.set(OAUTH_NEXT_COOKIE, '', {
+      path: '/',
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: isSecureRequest(request),
+    });
 
     return redirectResponse;
   } catch {

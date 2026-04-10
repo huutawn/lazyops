@@ -8,10 +8,20 @@ import (
 
 func ToCreateProjectCommand(userID string, req requestdto.CreateProjectRequest) service.CreateProjectCommand {
 	return service.CreateProjectCommand{
-		UserID:        userID,
-		Name:          req.Name,
-		Slug:          req.Slug,
-		DefaultBranch: req.DefaultBranch,
+		UserID:           userID,
+		Name:             req.Name,
+		Slug:             req.Slug,
+		DefaultBranch:    req.DefaultBranch,
+		InternalServices: req.InternalServices,
+	}
+}
+
+func ToConfigureProjectInternalServicesCommand(userID, role, projectID string, req requestdto.ConfigureProjectInternalServicesRequest) service.ConfigureProjectInternalServicesCommand {
+	return service.ConfigureProjectInternalServicesCommand{
+		RequesterUserID: userID,
+		RequesterRole:   role,
+		ProjectID:       projectID,
+		Kinds:           req.Kinds,
 	}
 }
 
@@ -61,4 +71,27 @@ func ToProjectRepoLinkResponse(record service.ProjectRepoLinkRecord) responsedto
 		CreatedAt:            record.CreatedAt,
 		UpdatedAt:            record.UpdatedAt,
 	}
+}
+
+func ToProjectInternalServiceResponse(record service.ProjectInternalServiceRecord) responsedto.ProjectInternalServiceResponse {
+	return responsedto.ProjectInternalServiceResponse{
+		ID:            record.ID,
+		ProjectID:     record.ProjectID,
+		Kind:          record.Kind,
+		Alias:         record.Alias,
+		Protocol:      record.Protocol,
+		Port:          record.Port,
+		LocalEndpoint: record.LocalEndpoint,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
+	}
+}
+
+func ToProjectInternalServiceListResponse(result service.ProjectInternalServiceListResult) responsedto.ProjectInternalServiceListResponse {
+	items := make([]responsedto.ProjectInternalServiceResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, ToProjectInternalServiceResponse(item))
+	}
+
+	return responsedto.ProjectInternalServiceListResponse{Items: items}
 }

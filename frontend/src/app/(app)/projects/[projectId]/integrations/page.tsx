@@ -17,20 +17,20 @@ function getNextSteps(threeStepFlowEnabled: boolean) {
   if (threeStepFlowEnabled) {
     return [
       {
-        title: 'Connect code',
-        description: 'Link a GitHub repo to this project.',
+        title: 'Kết nối mã nguồn',
+        description: 'Liên kết GitHub cho dự án.',
         href: '',
         done: false,
       },
       {
-        title: 'Connect infra',
-        description: 'Add at least one target instance/mesh/cluster.',
+        title: 'Kết nối máy chủ',
+        description: 'Thêm ít nhất 1 máy chủ để triển khai.',
         href: '/instances',
         done: false,
       },
       {
-        title: 'Deploy',
-        description: 'Open the 3-step project setup and run deploy.',
+        title: 'Triển khai',
+        description: 'Mở luồng 3 bước và bấm triển khai.',
         href: '',
         done: false,
       },
@@ -98,11 +98,11 @@ export default function ProjectIntegrationsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Integrations"
+        title="Tích hợp"
         subtitle={
           threeStepFlowEnabled
-            ? 'Manage external connections. Infrastructure + binding are handled in the 3-step project setup.'
-            : 'Manage all external connections for this project.'
+            ? 'Quản lý kết nối ngoài. Các bước hạ tầng nằm trong luồng 3 bước.'
+            : 'Quản lý các kết nối ngoài cho dự án.'
         }
       />
 

@@ -69,7 +69,7 @@ export default function DeploymentsPage() {
         <SectionCard title="No deployments" description="No deployments have been created yet.">
           <EmptyState
             title="No deployments yet"
-            description="Create a deployment binding and compile a blueprint to trigger your first deployment."
+            description="Hãy vào dự án và chạy luồng 3 bước để triển khai lần đầu."
           />
         </SectionCard>
       ) : (

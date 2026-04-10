@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
+import { API_BASE_URL, SESSION_COOKIE_NAME, isSecureRequest, sessionCookieOptions } from '@/lib/auth/auth-config';
 import type { AuthTokens } from '@/lib/auth/auth-types';
 
 const OAUTH_NEXT_COOKIE = 'lazyops_oauth_next';
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const callbackURL = new URL('/api/v1/auth/oauth/github/callback', request.url);
+    const callbackURL = new URL(`${API_BASE_URL}/api/v1/auth/oauth/github/callback`);
     callbackURL.searchParams.set('code', code);
     callbackURL.searchParams.set('state', state);
     callbackURL.searchParams.set('mode', 'json');

@@ -71,6 +71,11 @@ type ProjectServiceStore interface {
 	ListByProject(projectID string) ([]models.Service, error)
 }
 
+type ProjectInternalServiceStore interface {
+	ReplaceForProject(projectID string, items []models.ProjectInternalService) error
+	ListByProject(projectID string) ([]models.ProjectInternalService, error)
+}
+
 type BlueprintStore interface {
 	Create(blueprint *models.Blueprint) error
 	GetByIDForProject(projectID, blueprintID string) (*models.Blueprint, error)

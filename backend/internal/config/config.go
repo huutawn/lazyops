@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -217,6 +218,44 @@ func (c Config) PostgresDSN() string {
 		c.Database.SSLMode,
 		c.Database.TimeZone,
 	)
+}
+
+func (c Config) Validate() error {
+	if err := validateOAuthCallbackPath("GOOGLE_CALLBACK_URL", c.GoogleOAuth.Enabled, c.GoogleOAuth.CallbackURL, "/api/auth/oauth/google/callback"); err != nil {
+		return err
+	}
+	if err := validateOAuthCallbackPath("GITHUB_CALLBACK_URL", c.GitHubOAuth.Enabled, c.GitHubOAuth.CallbackURL, "/api/auth/oauth/github/callback"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOAuthCallbackPath(envKey string, enabled bool, rawURL, expectedPath string) error {
+	if !enabled {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("%s must be an absolute URL", envKey)
+	}
+
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("%s must use http or https scheme", envKey)
+	}
+
+	path := strings.TrimSpace(parsed.Path)
+	if path != expectedPath {
+		return fmt.Errorf("%s must use callback path %q (received %q)", envKey, expectedPath, path)
+	}
+
+	return nil
 }
 
 func getEnv(key, fallback string) string {

@@ -3,6 +3,8 @@ import type { ApiResponse } from '@/lib/types';
 import type {
   BootstrapAutoAccepted,
   BootstrapAutoRequest,
+  BootstrapConnectInfraSSHRequest,
+  BootstrapConnectInfraSSHResult,
   BootstrapOneClickDeployRequest,
   BootstrapOneClickDeployResult,
   ProjectBootstrapStatus,
@@ -21,4 +23,11 @@ export async function deployProjectOneClick(
   data: BootstrapOneClickDeployRequest = {},
 ): Promise<ApiResponse<BootstrapOneClickDeployResult>> {
   return apiPost<BootstrapOneClickDeployResult>(`/projects/${projectId}/deploy/one-click`, data);
+}
+
+export async function connectProjectInfraSSH(
+  projectId: string,
+  data: BootstrapConnectInfraSSHRequest,
+): Promise<ApiResponse<BootstrapConnectInfraSSHResult>> {
+  return apiPost<BootstrapConnectInfraSSHResult>(`/projects/${projectId}/infra/connect-ssh`, data);
 }

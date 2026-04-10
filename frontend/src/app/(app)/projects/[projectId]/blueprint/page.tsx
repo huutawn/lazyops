@@ -12,6 +12,7 @@ import { LoadingPage } from '@/components/primitives/loading';
 import { ErrorState } from '@/components/primitives/error-state';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
 import { isFeatureEnabled } from '@/lib/flags/feature-flags';
+import { useSession } from '@/lib/auth/auth-hooks';
 
 const EXPLANATION = {
   title: 'What is a blueprint?',
@@ -24,12 +25,14 @@ export default function BlueprintReviewPage() {
   const router = useRouter();
   const projectId = params?.projectId as string;
   const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
+  const { data: session, isLoading: sessionLoading } = useSession();
+  const isAdmin = session?.role === 'admin';
 
   useEffect(() => {
-    if (threeStepFlowEnabled && projectId) {
+    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
       router.replace(`/projects/${projectId}`);
     }
-  }, [threeStepFlowEnabled, projectId, router]);
+  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
 
   const [result, setResult] = useState<CompileBlueprintResponse | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
@@ -44,7 +47,7 @@ export default function BlueprintReviewPage() {
     trigger_kind: 'api_blueprint_compile',
   });
 
-  if (threeStepFlowEnabled) {
+  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
     return <LoadingPage label="Redirecting to 3-step setup…" />;
   }
 

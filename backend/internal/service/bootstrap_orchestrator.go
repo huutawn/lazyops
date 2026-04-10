@@ -19,22 +19,23 @@ const (
 )
 
 type BootstrapOrchestrator struct {
-	projects        ProjectStore
-	projectSvc      *ProjectService
-	repoLinks       *ProjectRepoLinkService
-	repoLinkStore   ProjectRepoLinkStore
-	bindings        *DeploymentBindingService
-	bindingStore    DeploymentBindingStore
-	deployments     DeploymentStore
-	instances       InstanceStore
-	meshes          MeshNetworkStore
-	clusters        ClusterStore
-	installations   GitHubInstallationStore
-	projectServices ProjectServiceStore
-	initContracts   *InitContractService
-	blueprints      *BlueprintService
-	deploymentSvc   *DeploymentService
-	rolloutSvc      *RolloutExecutionService
+	projects         ProjectStore
+	projectSvc       *ProjectService
+	repoLinks        *ProjectRepoLinkService
+	repoLinkStore    ProjectRepoLinkStore
+	bindings         *DeploymentBindingService
+	bindingStore     DeploymentBindingStore
+	deployments      DeploymentStore
+	instances        InstanceStore
+	meshes           MeshNetworkStore
+	clusters         ClusterStore
+	installations    GitHubInstallationStore
+	projectServices  ProjectServiceStore
+	internalServices ProjectInternalServiceStore
+	initContracts    *InitContractService
+	blueprints       *BlueprintService
+	deploymentSvc    *DeploymentService
+	rolloutSvc       *RolloutExecutionService
 }
 
 type BootstrapAutoCommand struct {
@@ -192,6 +193,14 @@ func (s *BootstrapOrchestrator) WithOneClickPipeline(
 	s.blueprints = blueprints
 	s.deploymentSvc = deploymentSvc
 	s.rolloutSvc = rolloutSvc
+	return s
+}
+
+func (s *BootstrapOrchestrator) WithInternalServiceStore(store ProjectInternalServiceStore) *BootstrapOrchestrator {
+	if s == nil {
+		return s
+	}
+	s.internalServices = store
 	return s
 }
 
@@ -437,7 +446,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 		return nil, err
 	}
 
-	codeState, codeSummary := "missing", "GitHub repository not linked"
+	codeState, codeSummary := "missing", "Chưa kết nối kho mã nguồn GitHub"
 	if s.repoLinkStore != nil {
 		link, getErr := s.repoLinkStore.GetByProjectID(project.ID)
 		if getErr != nil {
@@ -445,7 +454,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 		}
 		if link != nil {
 			codeState = "healthy"
-			codeSummary = fmt.Sprintf("GitHub linked: %s/%s@%s", link.RepoOwner, link.RepoName, link.TrackedBranch)
+			codeSummary = fmt.Sprintf("Đã kết nối: %s/%s@%s", link.RepoOwner, link.RepoName, link.TrackedBranch)
 		}
 	}
 
@@ -470,9 +479,9 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			Summary: codeSummary,
 			Actions: []BootstrapStepActionRecord{{
 				ID:    "reconnect_github",
-				Label: "Reconnect GitHub",
+				Label: "Kết nối GitHub",
 				Kind:  "link",
-				Href:  fmt.Sprintf("/api/v1/auth/oauth/github/start?next=/projects/%s", project.ID),
+				Href:  fmt.Sprintf("/api/auth/oauth/github/start?next=/projects/%s", project.ID),
 			}},
 		},
 		{
@@ -481,7 +490,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			Summary: infraSummary,
 			Actions: []BootstrapStepActionRecord{{
 				ID:    "add_server",
-				Label: "Add server",
+				Label: "Kết nối máy chủ",
 				Kind:  "screen",
 				Href:  "/instances",
 			}},
@@ -850,15 +859,15 @@ func (s *BootstrapOrchestrator) collectInventory(userID string) (bootstrapInvent
 
 func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraState string) (string, string, error) {
 	if strings.TrimSpace(projectID) == "" {
-		return "blocked", "Project is not ready", nil
+		return "blocked", "Dự án chưa sẵn sàng", nil
 	}
 
 	if codeState != "healthy" || (infraState != "ready" && infraState != "degraded") {
-		return "blocked", "Connect code and infrastructure first", nil
+		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước", nil
 	}
 
 	if s.deployments == nil {
-		return "ready", "Ready for one-click deploy", nil
+		return "ready", "Đã sẵn sàng triển khai", nil
 	}
 
 	deployments, err := s.deployments.ListByProject(projectID)
@@ -866,22 +875,22 @@ func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraSta
 		return "error", "Failed to inspect deployments", err
 	}
 	if len(deployments) == 0 {
-		return "ready", "Ready for one-click deploy", nil
+		return "ready", "Đã sẵn sàng triển khai", nil
 	}
 
 	latest := deployments[0]
 	status := strings.ToLower(strings.TrimSpace(latest.Status))
 	switch status {
 	case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
-		return "deploying", "Deployment is in progress", nil
+		return "deploying", "Đang triển khai", nil
 	case DeploymentStatusPromoted:
-		return "healthy", "Latest deployment is healthy", nil
+		return "healthy", "Bản triển khai mới nhất đang hoạt động tốt", nil
 	case DeploymentStatusRolledBack:
-		return "rolled_back", "Latest deployment was rolled back", nil
+		return "rolled_back", "Bản triển khai mới nhất đã bị hoàn tác", nil
 	case DeploymentStatusFailed, DeploymentStatusCanceled:
-		return "error", "Latest deployment failed", nil
+		return "error", "Bản triển khai mới nhất thất bại", nil
 	default:
-		return "ready", "Ready for one-click deploy", nil
+		return "ready", "Đã sẵn sàng triển khai", nil
 	}
 }
 
@@ -939,6 +948,17 @@ func (s *BootstrapOrchestrator) buildOneClickLazyopsDocument(project models.Proj
 		})
 	}
 
+	internalServices := make([]models.ProjectInternalService, 0)
+	if s.internalServices != nil {
+		persisted, err := s.internalServices.ListByProject(project.ID)
+		if err != nil {
+			return LazyopsYAMLDocument{}, err
+		}
+		internalServices = append(internalServices, persisted...)
+	}
+
+	services, dependencyBindings := buildInternalServicesDependencyBindings(services, internalServices)
+
 	compatibilityPolicy, err := decodeAnyMapJSON(binding.CompatibilityPolicyJSON)
 	if err != nil {
 		return LazyopsYAMLDocument{}, err
@@ -948,13 +968,23 @@ func (s *BootstrapOrchestrator) buildOneClickLazyopsDocument(project models.Proj
 		return LazyopsYAMLDocument{}, err
 	}
 
+	defaultEnvInjection := true
+	defaultLocalhostRescue := false
+	if len(dependencyBindings) > 0 {
+		defaultEnvInjection = false
+		defaultLocalhostRescue = true
+	}
 	compatibility := LazyopsYAMLCompatibilityPolicy{
-		EnvInjection:       boolFromPolicy(compatibilityPolicy, "env_injection", true),
+		EnvInjection:       boolFromPolicy(compatibilityPolicy, "env_injection", defaultEnvInjection),
 		ManagedCredentials: boolFromPolicy(compatibilityPolicy, "managed_credentials", false),
-		LocalhostRescue:    boolFromPolicy(compatibilityPolicy, "localhost_rescue", false),
+		LocalhostRescue:    boolFromPolicy(compatibilityPolicy, "localhost_rescue", defaultLocalhostRescue),
 	}
 	if !compatibility.EnvInjection && !compatibility.ManagedCredentials && !compatibility.LocalhostRescue {
-		compatibility.EnvInjection = true
+		if len(dependencyBindings) > 0 {
+			compatibility.LocalhostRescue = true
+		} else {
+			compatibility.EnvInjection = true
+		}
 	}
 
 	return LazyopsYAMLDocument{
@@ -964,7 +994,7 @@ func (s *BootstrapOrchestrator) buildOneClickLazyopsDocument(project models.Proj
 			TargetRef: binding.TargetRef,
 		},
 		Services:            services,
-		DependencyBindings:  []LazyopsYAMLDependencyBinding{},
+		DependencyBindings:  dependencyBindings,
 		CompatibilityPolicy: compatibility,
 		MagicDomainPolicy: LazyopsYAMLMagicDomainPolicy{
 			Enabled: false,
@@ -1092,12 +1122,12 @@ func deriveInfraStateSummary(inventory bootstrapInventorySnapshot) (string, stri
 	total := totalTargetCount(inventory)
 	healthy := healthyTargetCount(inventory)
 	if total == 0 {
-		return "missing", "No infrastructure connected"
+		return "missing", "Chưa có máy chủ nào được kết nối"
 	}
 	if healthy > 0 {
-		return "ready", fmt.Sprintf("%d healthy target(s) available", healthy)
+		return "ready", fmt.Sprintf("Có %d máy chủ/hạ tầng khả dụng", healthy)
 	}
-	return "degraded", "Targets are connected but not healthy yet"
+	return "degraded", "Đã kết nối hạ tầng nhưng chưa sẵn sàng"
 }
 
 func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, lockedMode string) bootstrapModeDecision {
@@ -1110,7 +1140,7 @@ func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, 
 			mode:             mode,
 			source:           "manual_lock",
 			reasonCode:       "manual_mode_locked",
-			reasonHuman:      "Runtime mode is manually locked",
+			reasonHuman:      "Chế độ chạy đã bị khóa thủ công",
 			upshiftAllowed:   false,
 			downshiftAllowed: false,
 			downshiftBlock:   "manual_lock",
@@ -1121,7 +1151,7 @@ func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, 
 		mode:             bootstrapModeStandalone,
 		source:           "auto",
 		reasonCode:       "single_instance_only",
-		reasonHuman:      "Only one healthy instance is available",
+		reasonHuman:      "Chỉ có một máy chủ khả dụng",
 		upshiftAllowed:   true,
 		downshiftAllowed: false,
 		downshiftBlock:   "already_lowest_mode",
@@ -1130,7 +1160,7 @@ func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, 
 	if healthyClusterCount(inventory) >= 1 {
 		decision.mode = bootstrapModeDistributedK3s
 		decision.reasonCode = "k3s_detected"
-		decision.reasonHuman = "Healthy K3s cluster detected"
+		decision.reasonHuman = "Phát hiện cụm K3s khả dụng"
 		decision.downshiftBlock = "hysteresis_24h"
 		return decision
 	}
@@ -1138,7 +1168,7 @@ func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, 
 	if healthyInstanceCount(inventory) >= 2 {
 		decision.mode = bootstrapModeDistributedMesh
 		decision.reasonCode = "multi_instance_detected"
-		decision.reasonHuman = "2+ healthy instances detected"
+		decision.reasonHuman = "Phát hiện từ 2 máy chủ khả dụng"
 		decision.downshiftBlock = "hysteresis_24h"
 		return decision
 	}
@@ -1146,7 +1176,7 @@ func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, 
 	if healthyMeshCount(inventory) >= 1 {
 		decision.mode = bootstrapModeDistributedMesh
 		decision.reasonCode = "mesh_network_detected"
-		decision.reasonHuman = "Healthy mesh network detected"
+		decision.reasonHuman = "Phát hiện mạng mesh khả dụng"
 		decision.downshiftBlock = "hysteresis_24h"
 		return decision
 	}
@@ -1225,7 +1255,7 @@ func buildDeployActions(projectID, deployState string) []BootstrapStepActionReco
 	if deployState == "ready" {
 		actions = append(actions, BootstrapStepActionRecord{
 			ID:       "deploy_now",
-			Label:    "Deploy now",
+			Label:    "Triển khai ngay",
 			Kind:     "api",
 			Method:   "POST",
 			Endpoint: fmt.Sprintf("/api/v1/projects/%s/deploy/one-click", projectID),
@@ -1235,7 +1265,7 @@ func buildDeployActions(projectID, deployState string) []BootstrapStepActionReco
 
 	actions = append(actions, BootstrapStepActionRecord{
 		ID:    "view_deployments",
-		Label: "View deployments",
+		Label: "Xem lịch sử triển khai",
 		Kind:  "screen",
 		Href:  fmt.Sprintf("/projects/%s/deployments", projectID),
 	})

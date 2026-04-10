@@ -12,11 +12,16 @@ import (
 var ErrProjectSlugExists = errors.New("project slug already exists")
 
 type ProjectService struct {
-	projects ProjectStore
+	projects         ProjectStore
+	internalServices ProjectInternalServiceStore
 }
 
-func NewProjectService(projects ProjectStore) *ProjectService {
-	return &ProjectService{projects: projects}
+func NewProjectService(projects ProjectStore, internalServices ...ProjectInternalServiceStore) *ProjectService {
+	svc := &ProjectService{projects: projects}
+	if len(internalServices) > 0 {
+		svc.internalServices = internalServices[0]
+	}
+	return svc
 }
 
 func (s *ProjectService) Create(cmd CreateProjectCommand) (*ProjectSummary, error) {
@@ -39,6 +44,13 @@ func (s *ProjectService) Create(cmd CreateProjectCommand) (*ProjectSummary, erro
 	if err != nil {
 		return nil, err
 	}
+	internalServiceKinds := []string{}
+	if s.internalServices != nil {
+		internalServiceKinds, err = normalizeInternalServiceKinds(cmd.InternalServices)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	existing, err := s.projects.GetBySlugForUser(userID, slug)
 	if err != nil {
@@ -57,6 +69,15 @@ func (s *ProjectService) Create(cmd CreateProjectCommand) (*ProjectSummary, erro
 	}
 	if err := s.projects.Create(project); err != nil {
 		return nil, err
+	}
+	if s.internalServices != nil {
+		items, err := buildProjectInternalServiceModels(project.ID, internalServiceKinds)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.internalServices.ReplaceForProject(project.ID, items); err != nil {
+			return nil, err
+		}
 	}
 
 	summary := ToProjectSummary(*project)

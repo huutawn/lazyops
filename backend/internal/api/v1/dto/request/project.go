@@ -1,9 +1,10 @@
 package request
 
 type CreateProjectRequest struct {
-	Name          string `json:"name"`
-	Slug          string `json:"slug"`
-	DefaultBranch string `json:"default_branch"`
+	Name             string   `json:"name"`
+	Slug             string   `json:"slug"`
+	DefaultBranch    string   `json:"default_branch"`
+	InternalServices []string `json:"internal_services,omitempty"`
 }
 
 type LinkProjectRepoRequest struct {

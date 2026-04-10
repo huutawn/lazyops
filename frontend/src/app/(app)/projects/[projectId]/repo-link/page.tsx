@@ -16,24 +16,27 @@ import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
 import { isFeatureEnabled } from '@/lib/flags/feature-flags';
+import { useSession } from '@/lib/auth/auth-hooks';
 
 export default function RepoLinkPage() {
   const params = useParams();
   const router = useRouter();
   const projectId = params?.projectId as string;
   const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
+  const { data: session, isLoading: sessionLoading } = useSession();
+  const isAdmin = session?.role === 'admin';
 
   useEffect(() => {
-    if (threeStepFlowEnabled && projectId) {
+    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
       router.replace(`/projects/${projectId}`);
     }
-  }, [threeStepFlowEnabled, projectId, router]);
+  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
 
   const { data: reposData, isLoading: reposLoading, isError: reposError } = useGitHubInstallations();
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkedRepo, setLinkedRepo] = useState<ProjectRepoLink | null>(null);
 
-  if (threeStepFlowEnabled) {
+  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
     return <SkeletonPage title cards={2} />;
   }
 

@@ -38,6 +38,7 @@ func Migrate(db *gorm.DB) error {
 		&models.GitHubInstallation{},
 		&models.Project{},
 		&models.ProjectRepoLink{},
+		&models.ProjectInternalService{},
 		&models.BuildJob{},
 		&models.DeploymentBinding{},
 		&models.Service{},

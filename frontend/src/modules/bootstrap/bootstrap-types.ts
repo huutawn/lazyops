@@ -88,3 +88,41 @@ export type BootstrapOneClickDeployRequest = {
   image_ref?: string;
   trigger_kind?: string;
 };
+
+export type BootstrapConnectInfraSSHRequest = {
+  instance_name?: string;
+  public_ip?: string;
+  private_ip?: string;
+  labels?: Record<string, string>;
+  ssh_host: string;
+  ssh_port?: number;
+  ssh_username: string;
+  ssh_password?: string;
+  ssh_private_key?: string;
+  ssh_host_key_fingerprint?: string;
+  control_plane_url?: string;
+  agent_image?: string;
+  container_name?: string;
+};
+
+export type BootstrapConnectInfraSSHResult = {
+  project_id: string;
+  instance: {
+    id: string;
+    name: string;
+    status: string;
+    public_ip?: string | null;
+    private_ip?: string | null;
+  };
+  install: {
+    instance_id: string;
+    started_at: string;
+    host_key_fingerprint?: string;
+    attached_project_id?: string;
+  };
+  auto_bootstrap: {
+    job_id: string;
+    status: string;
+    project_id: string;
+  };
+};

@@ -69,3 +69,10 @@ type BootstrapOneClickDeployResponse struct {
 	AgentID       string                           `json:"agent_id,omitempty"`
 	Timeline      []BootstrapPipelineEventResponse `json:"timeline"`
 }
+
+type BootstrapConnectInfraSSHResponse struct {
+	ProjectID     string                          `json:"project_id"`
+	Instance      InstanceSummaryResponse         `json:"instance"`
+	Install       InstallInstanceAgentSSHResponse `json:"install"`
+	AutoBootstrap BootstrapAutoAcceptedResponse   `json:"auto_bootstrap"`
+}

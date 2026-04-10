@@ -71,6 +71,24 @@ func ToBootstrapOneClickDeployResponse(record service.BootstrapOneClickDeployRec
 	}
 }
 
+func ToBootstrapConnectInfraSSHResponse(
+	projectID string,
+	instance service.InstanceSummary,
+	install service.InstallInstanceAgentSSHResult,
+	auto service.BootstrapAutoAcceptedRecord,
+) responsedto.BootstrapConnectInfraSSHResponse {
+	return responsedto.BootstrapConnectInfraSSHResponse{
+		ProjectID: projectID,
+		Instance:  ToInstanceSummaryResponse(instance),
+		Install:   ToInstallInstanceAgentSSHResponse(install),
+		AutoBootstrap: responsedto.BootstrapAutoAcceptedResponse{
+			JobID:     auto.JobID,
+			Status:    auto.Status,
+			ProjectID: auto.ProjectID,
+		},
+	}
+}
+
 func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) responsedto.BootstrapStatusResponse {
 	steps := make([]responsedto.BootstrapStepResponse, 0, len(record.Steps))
 	for _, step := range record.Steps {

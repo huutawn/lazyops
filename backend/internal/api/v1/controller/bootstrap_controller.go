@@ -2,7 +2,9 @@ package controller
 
 import (
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,10 +17,20 @@ import (
 
 type BootstrapController struct {
 	orchestrator *service.BootstrapOrchestrator
+	instances    *service.InstanceService
+	sshInstall   *service.InstanceSSHInstallService
 }
 
-func NewBootstrapController(orchestrator *service.BootstrapOrchestrator) *BootstrapController {
-	return &BootstrapController{orchestrator: orchestrator}
+func NewBootstrapController(
+	orchestrator *service.BootstrapOrchestrator,
+	instances *service.InstanceService,
+	sshInstall *service.InstanceSSHInstallService,
+) *BootstrapController {
+	return &BootstrapController{
+		orchestrator: orchestrator,
+		instances:    instances,
+		sshInstall:   sshInstall,
+	}
 }
 
 func (ctl *BootstrapController) Status(c *gin.Context) {
@@ -130,4 +142,192 @@ func (ctl *BootstrapController) OneClickDeploy(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusCreated, "one-click deployment created", mapper.ToBootstrapOneClickDeployResponse(*result))
+}
+
+func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
+	if ctl.orchestrator == nil || ctl.instances == nil || ctl.sshInstall == nil {
+		response.Error(c, http.StatusNotImplemented, "infra ssh orchestration is not enabled", "not_enabled", nil)
+		return
+	}
+
+	var req requestdto.BootstrapConnectInfraSSHRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
+		return
+	}
+
+	claims := middleware.MustClaims(c)
+	projectID := strings.TrimSpace(c.Param("id"))
+	if _, err := ctl.orchestrator.GetStatus(claims.UserID, claims.Role, projectID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "infra connect failed", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "infra connect failed", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "infra connect failed", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "infra connect failed", "internal_error", err.Error())
+		}
+		return
+	}
+
+	sshHost := strings.TrimSpace(req.SSHHost)
+	publicIP := strings.TrimSpace(req.PublicIP)
+	privateIP := strings.TrimSpace(req.PrivateIP)
+	if publicIP == "" && privateIP == "" {
+		if parsed := net.ParseIP(sshHost); parsed != nil {
+			publicIP = sshHost
+		}
+	}
+
+	instanceName := strings.TrimSpace(req.InstanceName)
+	if instanceName == "" {
+		instanceName = "srv-" + sanitizeInstanceNameSuffix(sshHost)
+	}
+
+	createResult, err := ctl.instances.Create(service.CreateInstanceCommand{
+		UserID:    claims.UserID,
+		Name:      instanceName,
+		PublicIP:  publicIP,
+		PrivateIP: privateIP,
+		Labels:    req.Labels,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidIP):
+			response.Error(c, http.StatusBadRequest, "infra connect failed", "invalid_ip", err.Error())
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "infra connect failed", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrInstanceNameExists):
+			response.Error(c, http.StatusConflict, "infra connect failed", "instance_name_exists", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "infra connect failed", "internal_error", err.Error())
+		}
+		return
+	}
+
+	controlPlaneURL := strings.TrimSpace(req.ControlPlaneURL)
+	if controlPlaneURL == "" {
+		controlPlaneURL = defaultControlPlaneURL(c)
+	}
+
+	installResult, err := ctl.sshInstall.Install(c.Request.Context(), service.InstallInstanceAgentSSHCommand{
+		UserID:             claims.UserID,
+		ProjectID:          projectID,
+		InstanceID:         createResult.Instance.ID,
+		Host:               sshHost,
+		Port:               req.SSHPort,
+		Username:           strings.TrimSpace(req.SSHUsername),
+		Password:           req.SSHPassword,
+		PrivateKey:         req.SSHPrivateKey,
+		HostKeyFingerprint: req.SSHHostKeyFingerprint,
+		ControlPlaneURL:    controlPlaneURL,
+		AgentImage:         strings.TrimSpace(req.AgentImage),
+		ContainerName:      strings.TrimSpace(req.ContainerName),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "infra connect failed", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrInstanceNotFound):
+			response.Error(c, http.StatusNotFound, "infra connect failed", "instance_not_found", err.Error())
+		case errors.Is(err, service.ErrInstanceBootstrapNotAllowed):
+			response.Error(c, http.StatusConflict, "infra connect failed", "bootstrap_not_allowed", err.Error())
+		case errors.Is(err, service.ErrSSHAuthenticationRequired):
+			response.Error(c, http.StatusBadRequest, "infra connect failed", "ssh_auth_required", err.Error())
+		case errors.Is(err, service.ErrSSHConnectionFailed):
+			response.Error(c, http.StatusBadGateway, "infra connect failed", "ssh_connection_failed", err.Error())
+		case errors.Is(err, service.ErrSSHExecutionFailed):
+			response.Error(c, http.StatusBadGateway, "infra connect failed", "ssh_execution_failed", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "infra connect failed", "internal_error", err.Error())
+		}
+		return
+	}
+
+	autoResult, err := ctl.orchestrator.AutoBootstrap(service.BootstrapAutoCommand{
+		RequesterUserID: claims.UserID,
+		RequesterRole:   claims.Role,
+		ProjectID:       projectID,
+		InstanceID:      createResult.Instance.ID,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "infra connect failed", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "infra connect failed", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "infra connect failed", "project_access_denied", err.Error())
+		case errors.Is(err, service.ErrTargetNotFound):
+			response.Error(c, http.StatusNotFound, "infra connect failed", "target_not_found", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "infra connect failed", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(
+		c,
+		http.StatusCreated,
+		"infra connected via ssh",
+		mapper.ToBootstrapConnectInfraSSHResponse(projectID, createResult.Instance, *installResult, *autoResult),
+	)
+}
+
+func sanitizeInstanceNameSuffix(input string) string {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if normalized == "" {
+		return "auto"
+	}
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range normalized {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastHyphen = false
+		case r == '-' || r == '_' || r == '.' || r == ':':
+			if b.Len() > 0 && !lastHyphen {
+				b.WriteByte('-')
+				lastHyphen = true
+			}
+		}
+	}
+	value := strings.Trim(b.String(), "-")
+	if value == "" {
+		return "auto"
+	}
+	if len(value) > 40 {
+		return value[:40]
+	}
+	return value
+}
+
+func defaultControlPlaneURL(c *gin.Context) string {
+	proto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+	if proto != "" {
+		proto = strings.TrimSpace(strings.Split(proto, ",")[0])
+	}
+	if proto == "" {
+		if c.Request.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	if host != "" {
+		host = strings.TrimSpace(strings.Split(host, ",")[0])
+	}
+	if host == "" {
+		host = strings.TrimSpace(c.Request.Host)
+	}
+	if host == "" {
+		host = "localhost:8080"
+	}
+
+	return strings.ToLower(proto) + "://" + host
 }

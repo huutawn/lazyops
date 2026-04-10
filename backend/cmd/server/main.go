@@ -10,6 +10,9 @@ import (
 func main() {
 	cfg := config.Load()
 	logger.Setup(cfg.App.Environment)
+	if err := cfg.Validate(); err != nil {
+		logger.Fatal("invalid configuration", "error", err)
+	}
 
 	app, err := bootstrap.NewApplication(cfg)
 	if err != nil {

@@ -152,10 +152,12 @@ func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
 	if err != nil {
 		status, code := mapGoogleOAuthError(err)
 		if !forceJSON {
-			if failureURL := ctl.googleOAuth.FailureRedirectURL(); failureURL != "" {
-				c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
-				return
+			failureURL := strings.TrimSpace(ctl.googleOAuth.FailureRedirectURL())
+			if failureURL == "" {
+				failureURL = ctl.defaultOAuthFailureRedirect(c)
 			}
+			c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
+			return
 		}
 
 		message := "google oauth failed"
@@ -171,10 +173,12 @@ func (ctl *AuthController) GoogleOAuthCallback(c *gin.Context) {
 
 	ctl.setWebSessionCookie(c, result.AuthResult.AccessToken, int(result.AuthResult.ExpiresIn.Seconds()))
 	if !forceJSON {
-		if successURL := ctl.googleOAuth.SuccessRedirectURL(); successURL != "" {
-			c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
-			return
+		successURL := strings.TrimSpace(ctl.googleOAuth.SuccessRedirectURL())
+		if successURL == "" {
+			successURL = ctl.defaultOAuthSuccessRedirect(c)
 		}
+		c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
+		return
 	}
 
 	response.JSON(c, http.StatusOK, "google oauth successful", mapper.ToAuthResponse(*result.AuthResult))
@@ -220,10 +224,12 @@ func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
 	if err != nil {
 		status, code := mapGitHubOAuthError(err)
 		if !forceJSON {
-			if failureURL := ctl.githubOAuth.FailureRedirectURL(); failureURL != "" {
-				c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
-				return
+			failureURL := strings.TrimSpace(ctl.githubOAuth.FailureRedirectURL())
+			if failureURL == "" {
+				failureURL = ctl.defaultOAuthFailureRedirect(c)
 			}
+			c.Redirect(http.StatusFound, appendQuery(failureURL, map[string]string{"error_code": code}))
+			return
 		}
 
 		message := "github oauth failed"
@@ -239,10 +245,12 @@ func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
 
 	ctl.setWebSessionCookie(c, result.AuthResult.AccessToken, int(result.AuthResult.ExpiresIn.Seconds()))
 	if !forceJSON {
-		if successURL := ctl.githubOAuth.SuccessRedirectURL(); successURL != "" {
-			c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
-			return
+		successURL := strings.TrimSpace(ctl.githubOAuth.SuccessRedirectURL())
+		if successURL == "" {
+			successURL = ctl.defaultOAuthSuccessRedirect(c)
 		}
+		c.Redirect(http.StatusFound, appendQuery(successURL, map[string]string{"status": "success"}))
+		return
 	}
 
 	response.JSON(c, http.StatusOK, "github oauth successful", mapper.ToAuthResponse(*result.AuthResult))
@@ -301,6 +309,41 @@ func (ctl *AuthController) shouldUseSecureCookies() bool {
 	return strings.EqualFold(ctl.cfg.App.Environment, "production") ||
 		strings.HasPrefix(strings.ToLower(ctl.cfg.GoogleOAuth.CallbackURL), "https://") ||
 		strings.HasPrefix(strings.ToLower(ctl.cfg.GitHubOAuth.CallbackURL), "https://")
+}
+
+func (ctl *AuthController) defaultOAuthSuccessRedirect(c *gin.Context) string {
+	return ctl.requestOrigin(c) + "/dashboard"
+}
+
+func (ctl *AuthController) defaultOAuthFailureRedirect(c *gin.Context) string {
+	return ctl.requestOrigin(c) + "/login"
+}
+
+func (ctl *AuthController) requestOrigin(c *gin.Context) string {
+	proto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+	if proto != "" {
+		proto = strings.TrimSpace(strings.Split(proto, ",")[0])
+	}
+	if proto == "" {
+		if c.Request.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	if host != "" {
+		host = strings.TrimSpace(strings.Split(host, ",")[0])
+	}
+	if host == "" {
+		host = strings.TrimSpace(c.Request.Host)
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	return strings.ToLower(proto) + "://" + host
 }
 
 func mapGoogleOAuthError(err error) (int, string) {

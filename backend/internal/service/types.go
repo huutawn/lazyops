@@ -501,10 +501,11 @@ type CompileBlueprintResult struct {
 }
 
 type CreateProjectCommand struct {
-	UserID        string
-	Name          string
-	Slug          string
-	DefaultBranch string
+	UserID           string
+	Name             string
+	Slug             string
+	DefaultBranch    string
+	InternalServices []string
 }
 
 type ProjectSummary struct {
@@ -514,6 +515,29 @@ type ProjectSummary struct {
 	DefaultBranch string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type ConfigureProjectInternalServicesCommand struct {
+	RequesterUserID string
+	RequesterRole   string
+	ProjectID       string
+	Kinds           []string
+}
+
+type ProjectInternalServiceRecord struct {
+	ID            string
+	ProjectID     string
+	Kind          string
+	Alias         string
+	Protocol      string
+	Port          int
+	LocalEndpoint string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type ProjectInternalServiceListResult struct {
+	Items []ProjectInternalServiceRecord
 }
 
 type CreateProjectRepoLinkCommand struct {

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useCreateProject } from '@/modules/projects/project-hooks';
-import { createProjectSchema, type CreateProjectFormData } from '@/modules/projects/project-types';
+import { INTERNAL_SERVICE_KINDS, createProjectSchema, type CreateProjectFormData } from '@/modules/projects/project-types';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
 import { SectionCard } from '@/components/primitives/section-card';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,7 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<CreateProjectFormData>({
     resolver: zodResolver(createProjectSchema),
-    defaultValues: { name: '', slug: '', default_branch: 'main' },
+    defaultValues: { name: '', slug: '', default_branch: 'main', internal_services: [] },
   });
 
   const createProject = useCreateProject();
@@ -58,9 +58,9 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
   const serverError = createProject.error?.message ?? null;
 
   return (
-    <SectionCard title="Create your first project" description="Projects are the foundation of your LazyOps setup.">
+    <SectionCard title="Tạo dự án đầu tiên" description="Dự án là nền tảng cho toàn bộ luồng triển khai LazyOps.">
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-        <FormField label="Project name" error={errors.name?.message}>
+        <FormField label="Tên dự án" error={errors.name?.message}>
           <FormInput
             type="text"
             placeholder="my-awesome-app"
@@ -88,18 +88,40 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
               )}
               onClick={handleToggleAutoSlug}
             >
-              {autoSlug ? 'Auto' : 'Manual'}
+              {autoSlug ? 'Tự động' : 'Thủ công'}
             </button>
           </div>
         </FormField>
 
-        <FormField label="Default branch" error={errors.default_branch?.message}>
+        <FormField label="Nhánh mặc định" error={errors.default_branch?.message}>
           <FormInput
             type="text"
             placeholder="main"
             error={!!errors.default_branch}
             {...register('default_branch')}
           />
+        </FormField>
+
+        <FormField label="Dịch vụ nội bộ" error={errors.internal_services?.message}>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {INTERNAL_SERVICE_KINDS.map((kind) => (
+              <label
+                key={kind}
+                className="flex items-center gap-2 rounded-lg border border-lazyops-border bg-lazyops-surface px-3 py-2 text-sm text-lazyops-text"
+              >
+                <input
+                  type="checkbox"
+                  value={kind}
+                  className="size-4 rounded border-lazyops-border bg-transparent"
+                  {...register('internal_services')}
+                />
+                <span className="capitalize">{kind}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-lazyops-muted">
+            Chọn dịch vụ nội bộ để LazyOps tự nối sidecar/localhost cho ứng dụng.
+          </p>
         </FormField>
 
         {serverError && (
@@ -109,7 +131,7 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
         )}
 
         <FormButton type="submit" loading={isSubmitting || createProject.isPending}>
-          Create project
+          Tạo dự án
         </FormButton>
       </form>
     </SectionCard>

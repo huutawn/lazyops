@@ -12,10 +12,10 @@ import { getAuthErrorMessage } from '@/lib/auth/auth-errors';
 import { AUTH_ERROR_CODES } from '@/lib/auth/auth-types';
 
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
-  oauth_denied: 'Authentication was cancelled or denied.',
-  oauth_missing_params: 'OAuth callback missing required parameters.',
-  oauth_network: 'Network error during OAuth flow. Please try again.',
-  oauth_failed: 'OAuth authentication failed. Please try again.',
+  oauth_denied: 'Bạn đã huỷ hoặc từ chối đăng nhập.',
+  oauth_missing_params: 'Thiếu tham số bắt buộc trong callback OAuth.',
+  oauth_network: 'Lỗi mạng trong quá trình đăng nhập OAuth. Vui lòng thử lại.',
+  oauth_failed: 'Đăng nhập OAuth thất bại. Vui lòng thử lại.',
 };
 
 function LoginForm() {
@@ -50,8 +50,8 @@ function LoginForm() {
   return (
     <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
       <div className="space-y-2 text-center lg:text-left">
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Sign In</h1>
-        <p className="text-sm text-muted-foreground">Access your LazyOps console</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Đăng nhập</h1>
+        <p className="text-sm text-muted-foreground">Truy cập bảng điều khiển LazyOps</p>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
@@ -65,7 +65,7 @@ function LoginForm() {
           />
         </FormField>
 
-        <FormField label="Password" error={errors.password?.message}>
+        <FormField label="Mật khẩu" error={errors.password?.message}>
           <FormInput
             type="password"
             autoComplete="current-password"
@@ -82,7 +82,7 @@ function LoginForm() {
         )}
 
         <FormButton type="submit" loading={isSubmitting || login.isPending} className="mt-2 h-11">
-          Continue to console
+          Vào bảng điều khiển
         </FormButton>
       </form>
 
@@ -92,19 +92,19 @@ function LoginForm() {
             <div className="w-full border-t border-border" />
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
+            <span className="bg-background px-2 text-muted-foreground">Hoặc đăng nhập bằng</span>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <a
-            href="/api/v1/auth/oauth/google/start"
+            href="/api/auth/oauth/google/start"
             className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card/50 text-sm font-medium text-foreground transition-all hover:bg-card hover:border-primary/50 hover:shadow-sm"
           >
             Google
           </a>
           <a
-            href="/api/v1/auth/oauth/github/start"
+            href="/api/auth/oauth/github/start"
             className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-card/50 text-sm font-medium text-foreground transition-all hover:bg-card hover:border-primary/50 hover:shadow-sm"
           >
             GitHub
@@ -113,9 +113,9 @@ function LoginForm() {
       </div>
 
       <p className="text-center text-sm text-muted-foreground">
-        Don&apos;t have an account?{' '}
+        Chưa có tài khoản?{' '}
         <Link href="/register" className="font-semibold text-primary transition-colors hover:text-primary/80 hover:underline">
-          Create one
+          Tạo tài khoản
         </Link>
       </p>
     </div>
