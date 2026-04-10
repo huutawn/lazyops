@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
+import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { LayoutGrid } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -13,6 +15,7 @@ type SidebarProps = {
 
 export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const [logoError, setLogoError] = useState(false);
 
   return (
     <>
@@ -32,13 +35,21 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
       >
         <div className="flex h-20 shrink-0 items-center justify-center gap-3 border-b border-border/50 px-6 mt-2">
           {/* USER INSTRUCTION: Ensure /logo.png exists in /frontend/public/ */}
-          <img src="/logo.png" alt="LazyOps Logo" className="h-10 object-contain drop-shadow-md" onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-          }} />
-          <div className="hidden flex-col items-start leading-none tracking-tight">
-            <span className="text-xl font-black bg-gradient-to-r from-primary to-blue-500 bg-clip-text text-transparent">LazyOps</span>
-          </div>
+          {!logoError ? (
+            <Image
+              src="/logo.png"
+              alt="LazyOps Logo"
+              width={160}
+              height={40}
+              className="h-10 w-auto object-contain drop-shadow-md"
+              onError={() => setLogoError(true)}
+              priority
+            />
+          ) : (
+            <div className="flex flex-col items-start leading-none tracking-tight">
+              <span className="text-xl font-black bg-gradient-to-r from-primary to-blue-500 bg-clip-text text-transparent">LazyOps</span>
+            </div>
+          )}
         </div>
 
         <nav className="flex-1 overflow-y-auto px-4 py-6 scrollbar-hide" aria-label="Main navigation">
