@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,20 +23,36 @@ func NewIntegrationController(githubWebhooks *service.GitHubWebhookService) *Int
 }
 
 func (ctl *IntegrationController) GitHubWebhook(c *gin.Context) {
+	deliveryID := strings.TrimSpace(c.GetHeader("X-GitHub-Delivery"))
+	eventType := strings.TrimSpace(c.GetHeader("X-GitHub-Event"))
+	signature := strings.TrimSpace(c.GetHeader("X-Hub-Signature-256"))
+
 	payload, err := c.GetRawData()
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "invalid webhook payload", "invalid_payload", nil)
 		return
 	}
 
+	logger.Info("github_webhook_received",
+		"request_id", middleware.GetRequestID(c),
+		"correlation_id", middleware.GetCorrelationID(c),
+		"delivery_id", deliveryID,
+		"event_type", eventType,
+		"signature_present", signature != "",
+		"signature_prefix", maskGitHubSignature(signature),
+		"payload_bytes", len(payload),
+		"user_agent", strings.TrimSpace(c.GetHeader("User-Agent")),
+		"client_ip", strings.TrimSpace(c.ClientIP()),
+	)
+
 	result, err := ctl.githubWebhooks.Handle(service.GitHubWebhookCommand{
-		DeliveryID: c.GetHeader("X-GitHub-Delivery"),
-		EventType:  c.GetHeader("X-GitHub-Event"),
-		Signature:  c.GetHeader("X-Hub-Signature-256"),
+		DeliveryID: deliveryID,
+		EventType:  eventType,
+		Signature:  signature,
 		Payload:    payload,
 	})
 	if err != nil {
-		logGitHubWebhookOutcome(c, c.GetHeader("X-GitHub-Delivery"), c.GetHeader("X-GitHub-Event"), nil, err)
+		logGitHubWebhookOutcome(c, deliveryID, eventType, nil, err)
 		switch {
 		case errors.Is(err, service.ErrWebhookNotConfigured):
 			response.Error(c, http.StatusServiceUnavailable, "github webhook not configured", "webhook_not_configured", nil)
@@ -91,4 +108,15 @@ func logGitHubWebhookOutcome(c *gin.Context, deliveryID, eventType string, resul
 	}
 
 	logger.Info("github_webhook_accepted", args...)
+}
+
+func maskGitHubSignature(signature string) string {
+	trimmed := strings.TrimSpace(signature)
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) <= 18 {
+		return trimmed
+	}
+	return trimmed[:18] + "..."
 }

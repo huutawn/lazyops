@@ -66,10 +66,6 @@ export default function GitHubIntegrationsPage() {
 
   const repos = reposData?.items ?? [];
   const handleQuickSync = () => {
-    if (repos.length === 0) {
-      window.location.href = '/api/auth/oauth/github/start?next=/integrations/github';
-      return;
-    }
     quickSync.mutate({ github_access_token: '' });
   };
 
@@ -116,7 +112,7 @@ export default function GitHubIntegrationsPage() {
               onClick={handleQuickSync}
               disabled={quickSync.isPending}
             >
-              {quickSync.isPending ? 'Đang tải...' : repos.length === 0 ? 'Liên kết lại' : '🔄 ĐỒNG BỘ'}
+              {quickSync.isPending ? 'Đang tải...' : '🔄 ĐỒNG BỘ'}
             </button>
             <button
               type="button"
