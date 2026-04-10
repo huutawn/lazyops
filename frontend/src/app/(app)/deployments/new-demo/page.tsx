@@ -2,12 +2,9 @@
 
 import Link from 'next/link';
 import { ArrowLeft, CheckCircle2, GitCommit, Server, Clock } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useParams } from 'next/navigation';
 
-export default function DeploymentDetailsPage() {
-  const params = useParams();
-  const id = params.id || 'd1';
+export default function DeploymentDetailsDemoPage() {
+  const id = 'd1';
 
   return (
     <div className="flex flex-col max-w-4xl mx-auto py-8 lg:px-4">

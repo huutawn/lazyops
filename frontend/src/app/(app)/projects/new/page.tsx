@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Github, Server, Database, ServerCrash, Layers, DatabaseZap, Box, TerminalSquare, Rocket, PlaySquare } from 'lucide-react';
+import { Check, GitBranch, Server, Database, ServerCrash, Layers, DatabaseZap, Box, TerminalSquare, Rocket, PlaySquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function NewProjectWizard() {
@@ -80,7 +80,7 @@ export default function NewProjectWizard() {
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex items-center gap-3 mb-2">
               <div className="text-[#38BDF8]">
-                <Github className="size-6" />
+                <GitBranch className="size-6" />
               </div>
               <h2 className="text-xl font-bold text-white">Kết nối mã nguồn</h2>
             </div>

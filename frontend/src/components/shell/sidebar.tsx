@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation';
 import { LayoutGrid, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { NAV_ITEMS } from '@/lib/navigation';
-import { useAuth } from '@/lib/auth/auth-hooks';
+import { useLogout } from '@/lib/auth/auth-hooks';
 
 type SidebarProps = {
   mobileOpen?: boolean;
@@ -17,7 +17,7 @@ type SidebarProps = {
 export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [logoError, setLogoError] = useState(false);
-  const { logout } = useAuth();
+  const logout = useLogout();
 
   return (
     <>
@@ -86,7 +86,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
         <div className="p-4 border-t border-[#1e293b]">
           <button
-            onClick={() => logout()}
+            onClick={() => logout.mutate()}
             className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-[15px] font-medium text-slate-400 transition-all hover:text-slate-200 hover:bg-[#111c2e]"
           >
             <LogOut className="size-[18px]" />
