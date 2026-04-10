@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/primitives/status-badge';
 import { ProjectThreeStepWizard } from '@/modules/bootstrap/project-three-step-wizard';
 import { CreateProjectForm } from '@/modules/onboarding/create-project-form';
 import { useProjects } from '@/modules/projects/project-hooks';
+import { cn } from '@/lib/utils';
 
 export default function OnboardingPage() {
   const { data: projects, isLoading } = useProjects();
