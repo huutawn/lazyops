@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -67,21 +68,50 @@ func (p *GitHubProvider) ExchangeCode(ctx context.Context, code string) (string,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", errors.New("github token exchange failed")
-	}
-
-	var payload struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(payload.AccessToken) == "" {
+
+	var jsonPayload struct {
+		AccessToken      string `json:"access_token"`
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &jsonPayload)
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if strings.TrimSpace(jsonPayload.ErrorDescription) != "" || strings.TrimSpace(jsonPayload.Error) != "" {
+			return "", fmt.Errorf("github token exchange failed: %s (%s)", strings.TrimSpace(jsonPayload.Error), strings.TrimSpace(jsonPayload.ErrorDescription))
+		}
+		parsed, _ := url.ParseQuery(string(body))
+		if errDesc := strings.TrimSpace(parsed.Get("error_description")); errDesc != "" {
+			return "", fmt.Errorf("github token exchange failed: %s (%s)", strings.TrimSpace(parsed.Get("error")), errDesc)
+		}
+		raw := strings.TrimSpace(string(body))
+		if raw != "" {
+			return "", fmt.Errorf("github token exchange failed (status=%d): %s", resp.StatusCode, raw)
+		}
+		return "", fmt.Errorf("github token exchange failed (status=%d)", resp.StatusCode)
+	}
+
+	accessToken := strings.TrimSpace(jsonPayload.AccessToken)
+	if accessToken == "" {
+		parsed, _ := url.ParseQuery(string(body))
+		accessToken = strings.TrimSpace(parsed.Get("access_token"))
+	}
+	if accessToken == "" {
+		if strings.TrimSpace(jsonPayload.ErrorDescription) != "" || strings.TrimSpace(jsonPayload.Error) != "" {
+			return "", fmt.Errorf("github access token missing: %s (%s)", strings.TrimSpace(jsonPayload.Error), strings.TrimSpace(jsonPayload.ErrorDescription))
+		}
+		parsed, _ := url.ParseQuery(string(body))
+		if errDesc := strings.TrimSpace(parsed.Get("error_description")); errDesc != "" {
+			return "", fmt.Errorf("github access token missing: %s (%s)", strings.TrimSpace(parsed.Get("error")), errDesc)
+		}
 		return "", errors.New("github access token missing")
 	}
 
-	return payload.AccessToken, nil
+	return accessToken, nil
 }
 
 func (p *GitHubProvider) FetchIdentity(ctx context.Context, accessToken string) (*service.GitHubIdentity, error) {
