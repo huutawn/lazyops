@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { useCreateProject } from '@/modules/projects/project-hooks';
 import { createProjectSchema, type CreateProjectFormData, INTERNAL_SERVICE_KINDS } from '@/modules/projects/project-types';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
@@ -35,14 +35,18 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<CreateProjectFormData>({
     resolver: zodResolver(createProjectSchema),
     defaultValues: { name: '', slug: '', default_branch: 'main', internal_services: [] },
   });
 
-  const selectedServices = watch('internal_services') || [];
+  const selectedServices = useWatch<CreateProjectFormData>({
+    control,
+    name: 'internal_services',
+    defaultValue: [],
+  }) as string[];
   const createProject = useCreateProject();
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
