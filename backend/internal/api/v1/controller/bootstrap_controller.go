@@ -13,6 +13,7 @@ import (
 	requestdto "lazyops-server/internal/api/v1/dto/request"
 	"lazyops-server/internal/api/v1/mapper"
 	"lazyops-server/internal/service"
+	"lazyops-server/pkg/logger"
 )
 
 type BootstrapController struct {
@@ -227,6 +228,18 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 		ContainerName:      strings.TrimSpace(req.ContainerName),
 	})
 	if err != nil {
+		logger.Warn("infra_connect_ssh_install_failed",
+			"request_id", middleware.GetRequestID(c),
+			"correlation_id", middleware.GetCorrelationID(c),
+			"user_id", claims.UserID,
+			"project_id", projectID,
+			"instance_id", createResult.Instance.ID,
+			"instance_name", instanceName,
+			"ssh_host", sshHost,
+			"ssh_port", req.SSHPort,
+			"ssh_username", strings.TrimSpace(req.SSHUsername),
+			"error", err.Error(),
+		)
 		switch {
 		case errors.Is(err, service.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, "infra connect failed", "invalid_input", err.Error())
