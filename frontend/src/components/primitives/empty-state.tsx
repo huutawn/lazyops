@@ -2,8 +2,8 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 type EmptyStateProps = {
-  title: string;
-  description: string;
+  title: ReactNode;
+  description: ReactNode;
   action?: ReactNode;
   icon?: ReactNode;
   className?: string;

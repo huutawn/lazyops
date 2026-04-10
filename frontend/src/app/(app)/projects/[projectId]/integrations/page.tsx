@@ -10,65 +10,11 @@ import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { HealthChip } from '@/components/primitives/health-chip';
 import { SkeletonPage } from '@/components/primitives/skeleton';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
 import Link from 'next/link';
-
-function getNextSteps(threeStepFlowEnabled: boolean) {
-  if (threeStepFlowEnabled) {
-    return [
-      {
-        title: 'Kết nối mã nguồn',
-        description: 'Liên kết GitHub cho dự án.',
-        href: '',
-        done: false,
-      },
-      {
-        title: 'Kết nối máy chủ',
-        description: 'Thêm ít nhất 1 máy chủ để triển khai.',
-        href: '/instances',
-        done: false,
-      },
-      {
-        title: 'Triển khai',
-        description: 'Mở luồng 3 bước và bấm triển khai.',
-        href: '',
-        done: false,
-      },
-    ];
-  }
-
-  return [
-    {
-      title: 'Link a repository',
-      description: 'Connect a GitHub repo to this project.',
-      href: '/repo-link',
-      done: false,
-    },
-    {
-      title: 'Create a deployment binding',
-      description: 'Define where services will be deployed.',
-      href: '/bindings',
-      done: false,
-    },
-    {
-      title: 'Review the deploy contract',
-      description: 'Validate your lazyops.yaml configuration.',
-      href: '/validate',
-      done: false,
-    },
-    {
-      title: 'Compile the blueprint',
-      description: 'Generate the deployment plan.',
-      href: '/blueprint',
-      done: false,
-    },
-  ];
-}
 
 export default function ProjectIntegrationsPage() {
   const params = useParams();
   const projectId = params?.projectId as string;
-  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
 
   const { data: reposData, isLoading: reposLoading } = useGitHubInstallations();
   const { data: appConfig } = useGitHubAppConfig();
@@ -87,146 +33,104 @@ export default function ProjectIntegrationsPage() {
   const hasGitHub = repos.length > 0;
   const hasRepoLink = !!repoLink;
 
-  const steps = getNextSteps(threeStepFlowEnabled).map((step) => ({
-    ...step,
-    href: step.href ? `/projects/${projectId}${step.href}` : `/projects/${projectId}`,
-    done: step.title.toLowerCase().includes('link') || step.title.toLowerCase().includes('code') ? hasRepoLink : false,
-  }));
-
-  const completedSteps = steps.filter((s) => s.done).length;
-
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Tích hợp"
-        subtitle={
-          threeStepFlowEnabled
-            ? 'Quản lý kết nối ngoài. Các bước hạ tầng nằm trong luồng 3 bước.'
-            : 'Quản lý các kết nối ngoài cho dự án.'
+    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
+      <div className="mb-2">
+        <h1 className="text-3xl font-bold tracking-tight mb-2">Cài đặt Tích hợp</h1>
+        <p className="text-muted-foreground text-lg">
+          Quản lý nguồn mã tham chiếu từ kho lưu trữ để hệ thống tự động triển khai.
+        </p>
+      </div>
+
+      <SectionCard
+        title={
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🐙</span>
+            <span>Kho mã nguồn GitHub</span>
+          </div>
         }
-      />
-
-      <SectionCard title="Setup progress" description={`${completedSteps} of ${steps.length} steps completed.`}>
-        <div className="mb-4 h-2 w-full rounded-full bg-lazyops-border/30">
-          <div
-            className="h-2 rounded-full bg-primary transition-all"
-            style={{ width: `${(completedSteps / steps.length) * 100}%` }}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          {steps.map((step) => (
-            <div
-              key={step.title}
-              className="flex items-center justify-between rounded-lg px-3 py-2 transition-colors hover:bg-lazyops-border/10"
-            >
-              <div className="flex items-center gap-3">
-                {step.done ? (
-                  <HealthChip label="Done" status="healthy" size="sm" />
-                ) : (
-                  <StatusBadge label="Pending" variant="neutral" size="sm" dot={false} />
-                )}
-                <div>
-                  <span className="text-sm font-medium text-lazyops-text">{step.title}</span>
-                  <p className="text-xs text-lazyops-muted">{step.description}</p>
-                </div>
-              </div>
-              {!step.done && (
-                <Link
-                  href={step.href}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Go →
-                </Link>
-              )}
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="GitHub App" description="Repository and webhook integration status.">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-lazyops-muted">GitHub connection</span>
+        className="shadow-md rounded-2xl"
+      >
+        <div className="flex flex-col gap-6 mt-2">
+          {/* GitHub Connection Status */}
+          <div className="flex items-center justify-between border-b pb-4">
+            <span className="text-base font-medium">Trạng thái kết nối App</span>
             <StatusBadge
-              label={hasGitHub ? 'Connected' : 'Not connected'}
+              label={hasGitHub ? 'Đã kết nối' : 'Chưa kết nối'}
               variant={hasGitHub ? 'success' : 'neutral'}
-              size="sm"
+              size="md"
             />
           </div>
 
-          {hasGitHub && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <SummaryField label="Repositories available" value={String(repos.length)} />
-              <SummaryField
-                label="Account"
-                value={repos[0]?.installation_account_login ?? '—'}
-              />
+          {!hasGitHub ? (
+            <div className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-warning-foreground mt-2">
+              <p className="text-sm font-medium mb-3">
+                Bạn chưa cài đặt GitHub App trên hệ thống gốc. Vui lòng vào <strong>Hệ thống & Tích hợp</strong> để cấu hình lần đầu.
+              </p>
+              <Link
+                href="/integrations/github"
+                className="rounded-lg bg-warning px-4 py-2 text-sm font-bold text-warning-foreground transition-all hover:bg-warning/80"
+              >
+                Cài đặt GitHub ngay &rarr;
+              </Link>
             </div>
-          )}
+          ) : null}
 
-          {!hasGitHub && (
-            <p className="text-sm text-lazyops-muted">
-              Connect your GitHub App to enable automated deployments from your repositories.
-            </p>
-          )}
-
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-lazyops-muted">Linked repository</span>
+          {/* Linked Repo Status */}
+          <div className="flex items-center justify-between border-b pb-4">
+            <span className="text-base font-medium">Kho lưu trữ đã gán</span>
             {hasRepoLink ? (
-              <StatusBadge label={repoLink!.repo_full_name} variant="info" size="sm" dot={false} />
+              <StatusBadge label={repoLink!.repo_full_name} variant="info" size="md" dot={false} />
             ) : (
-              <StatusBadge label="Not linked" variant="neutral" size="sm" dot={false} />
+              <StatusBadge label="Chưa gán" variant="neutral" size="md" dot={false} />
             )}
           </div>
 
-          {hasRepoLink && (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <SummaryField label="Tracked branch" value={repoLink!.tracked_branch} />
+          {hasRepoLink ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 bg-muted/30 p-4 rounded-xl">
+              <SummaryField label="Nhánh theo dõi (Branch)" value={repoLink!.tracked_branch} />
               <SummaryField
-                label="Preview deploys"
-                value={repoLink!.preview_enabled ? 'Enabled' : 'Disabled'}
+                label="Bản nháp (Preview Deploys)"
+                value={repoLink!.preview_enabled ? 'Bật' : 'Tắt'}
               />
               <SummaryField
-                label="Webhook"
-                value="Configured"
+                label="Cập nhật tự động"
+                value="Sẵn sàng"
               />
+            </div>
+          ) : (
+            <div className="text-center py-6 bg-accent/20 rounded-xl">
+              <p className="text-muted-foreground mb-4">
+                Dự án này chưa được kết nối với repository nào để triển khai tự động.
+              </p>
+              <Link
+                href={`/projects/${projectId}/repo-link`}
+                className="rounded-xl bg-primary px-6 py-3 text-base font-bold text-primary-foreground transition-all hover:bg-primary/90 shadow-md"
+              >
+                🔗 Gán mã nguồn
+              </Link>
             </div>
           )}
         </div>
       </SectionCard>
 
       <SectionCard
-        title="Webhook health"
-        description="Status of the GitHub webhook connection."
+        title={
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📡</span>
+            <span>Tín hiệu Webhook</span>
+          </div>
+        }
+        className="shadow-sm rounded-2xl"
       >
-        <div className="flex items-center gap-3">
-          <HealthChip label="Healthy" status="healthy" size="md" />
-          <span className="text-sm text-lazyops-muted">
-            Webhook is receiving events from GitHub.
+        <div className="flex items-center gap-4 mt-2 bg-health-healthy/5 p-4 rounded-xl border border-health-healthy/20">
+          <HealthChip label="Hoạt động tốt" status="healthy" size="md" />
+          <span className="text-base text-muted-foreground font-medium">
+            Hệ thống đang sẵn sàng nhận lệnh từ GitHub.
           </span>
         </div>
-        <p className="mt-2 text-xs text-lazyops-muted/60">
-          Webhook URL: <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-xs">{webhookURL}</code>
-        </p>
-      </SectionCard>
-
-      <SectionCard
-        title="Build activity"
-        description="Recent deployment activity for this project."
-      >
-        <div className="flex flex-col items-center gap-3 py-8 text-center">
-          <div className="text-3xl text-lazyops-muted/30" aria-hidden="true">📦</div>
-          <p className="text-sm text-lazyops-muted">
-            No builds yet. Link a repository and push to your tracked branch to trigger your first deployment.
-          </p>
-          {hasRepoLink && (
-            <Link
-              href={`/projects/${projectId}/blueprint`}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-            >
-              Compile blueprint
-            </Link>
-          )}
+        <div className="mt-4 break-all bg-card border p-3 rounded-lg text-sm text-muted-foreground font-mono">
+          <span className="font-bold text-foreground">Webhook URL:</span> {webhookURL}
         </div>
       </SectionCard>
     </div>
@@ -235,9 +139,9 @@ export default function ProjectIntegrationsPage() {
 
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="text-sm text-lazyops-text">{value}</span>
+    <div className="flex flex-col gap-1 p-2 rounded-lg bg-background border shadow-sm">
+      <span className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{label}</span>
+      <span className="text-base font-semibold text-foreground">{value}</span>
     </div>
   );
 }

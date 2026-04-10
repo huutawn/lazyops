@@ -36,15 +36,17 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
         <div className="flex h-20 shrink-0 items-center justify-center gap-3 border-b border-border/50 px-6 mt-2">
           {/* USER INSTRUCTION: Ensure /logo.png exists in /frontend/public/ */}
           {!logoError ? (
-            <Image
-              src="/logo.png"
-              alt="LazyOps Logo"
-              width={160}
-              height={40}
-              className="h-10 w-auto object-contain drop-shadow-md"
-              onError={() => setLogoError(true)}
-              priority
-            />
+            <div className="relative h-12 w-48">
+              <Image
+                src="/logo.png"
+                alt="LazyOps Logo"
+                fill
+                className="object-contain drop-shadow-md"
+                onError={() => setLogoError(true)}
+                unoptimized
+                priority
+              />
+            </div>
           ) : (
             <div className="flex flex-col items-start leading-none tracking-tight">
               <span className="text-xl font-black bg-gradient-to-r from-primary to-blue-500 bg-clip-text text-transparent">LazyOps</span>

@@ -40,27 +40,20 @@ export default function GitHubIntegrationsPage() {
 
   if (reposError) {
     return (
-      <div className="flex flex-col gap-6">
-        <PageHeader title="GitHub App" subtitle="Manage your GitHub App installations and repositories." />
+      <div className="flex flex-col gap-6 max-w-5xl mx-auto py-4">
+        <PageHeader title="Tích hợp GitHub" subtitle="Quản lý mã nguồn và ứng dụng GitHub của bạn." />
         <ErrorState
-          title="Failed to load GitHub data"
-          message="Could not fetch GitHub repository data. Make sure your GitHub account is linked."
+          title="Không thể tải dữ liệu"
+          message="Vui lòng kiểm tra lại kết nối và chắc chắn tài khoản của bạn đã liên kết với GitHub."
           action={
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3 mt-4">
               <button
                 type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
+                className="rounded-xl bg-primary px-6 py-3 text-base font-bold text-primary-foreground shadow-lg transition-all hover:bg-primary/90 disabled:opacity-60"
                 onClick={() => quickSync.mutate({ github_access_token: '' })}
                 disabled={quickSync.isPending}
               >
-                {quickSync.isPending ? 'Refreshing...' : 'Refresh installations'}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
-                onClick={() => setShowSyncModal(true)}
-              >
-                Advanced sync
+                {quickSync.isPending ? 'Đang làm mới...' : 'Thử tải lại ngay'}
               </button>
             </div>
           }
@@ -79,150 +72,122 @@ export default function GitHubIntegrationsPage() {
   }, {});
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="GitHub App"
-        subtitle="Manage GitHub App installations and linked repositories."
-        actions={
-          <div className="flex items-center gap-2">
+    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-2">Tích hợp GitHub</h1>
+          <p className="text-muted-foreground text-lg">Cài đặt ứng dụng GitHub để tự động đồng bộ mã nguồn của bạn vào LazyOps.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {appInstallURL && (
             <a
-              href="/api/auth/oauth/github/start?next=/integrations/github"
-              className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+              href={appInstallURL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-xl bg-primary px-6 py-3 text-base font-bold text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:scale-105"
             >
-              Link GitHub
+              Cài đặt GitHub App
             </a>
-            {appInstallURL && (
-              <a
-                href={appInstallURL}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
-              >
-                Install GitHub App
-              </a>
-            )}
+          )}
+        </div>
+      </div>
+
+      <SectionCard className="p-4 shadow-sm rounded-xl bg-primary/5 border-primary/20">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold">Làm mới dữ liệu</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Nếu bạn vừa mới cài đặt hoặc cấp quyền mới trên GitHub mà chưa thấy thay đổi, hãy nhấn ĐỒNG BỘ ngay.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
+              className="rounded-xl bg-foreground px-6 py-3 text-base font-bold text-background transition-all hover:bg-foreground/90 disabled:opacity-50 min-w-[120px] shadow-md"
               onClick={() => quickSync.mutate({ github_access_token: '' })}
               disabled={quickSync.isPending}
             >
-              {quickSync.isPending ? 'Refreshing...' : 'Refresh'}
+              {quickSync.isPending ? 'Đang tải...' : '🔄 ĐỒNG BỘ'}
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border-2 border-border px-4 py-3 text-sm font-semibold transition-colors hover:bg-muted"
+              onClick={() => setShowSyncModal(true)}
+            >
+              Nâng cao
             </button>
           </div>
-        }
-      />
-
-      <SectionCard title="Faster flow" description="Install app -> return here -> Refresh once.">
-        <p className="text-sm text-lazyops-muted">
-          You do not need to enter a token every time. Use <span className="font-medium text-lazyops-text">Advanced sync</span> only when PAT-based force sync is needed.
-        </p>
+        </div>
         {quickSync.error && (
-          <div className="mt-3 rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
-            {(quickSync.error as Error).message}
+          <div className="mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive font-medium">
+            Có lỗi xảy ra: {(quickSync.error as Error).message}
           </div>
         )}
       </SectionCard>
 
       {repos.length === 0 ? (
-        <SectionCard title="No installations" description="Sync your GitHub App to see available installations and repositories.">
+        <SectionCard className="shadow-lg p-6 rounded-2xl border-dashed border-2">
           <EmptyState
-            title="No GitHub installations found"
-            description={`If refresh stays empty, click Link GitHub once, install ${appName}, then refresh.`}
+            icon={<span className="text-5xl">🔌</span>}
+            title="Chưa tìm thấy Repository nào"
+            description="Bạn chưa cấp quyền truy cập repository trên GitHub cho LazyOps. Vui lòng bấm vào 'Cài đặt GitHub App' và cấp quyền cho tổ chức hoặc cá nhân của bạn, sau đó quay lại trang này và nhấn ĐỒNG BỘ."
             action={
-              <div className="flex items-center gap-2">
+              <div className="mt-4 flex flex-col sm:flex-row items-center gap-3">
                 <a
                   href="/api/auth/oauth/github/start?next=/integrations/github"
-                  className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+                  className="rounded-xl border-2 border-primary text-primary px-6 py-3 font-bold hover:bg-primary/5 transition-all"
                 >
-                  Link GitHub
+                  Liên kết Tài khoản GitHub
                 </a>
-                {appInstallURL && (
-                  <a
-                    href={appInstallURL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
-                  >
-                    Install GitHub App
-                  </a>
-                )}
-                <button
-                  type="button"
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-60"
-                  onClick={() => quickSync.mutate({ github_access_token: '' })}
-                  disabled={quickSync.isPending}
-                >
-                  {quickSync.isPending ? 'Refreshing...' : 'Refresh installations'}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border border-lazyops-border px-4 py-2 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
-                  onClick={() => setShowSyncModal(true)}
-                >
-                  Advanced sync
-                </button>
               </div>
             }
           />
         </SectionCard>
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           {Object.entries(installations).map(([key, repos]) => {
             const [accountLogin, accountType] = key.split('/');
-            const hasRevoked = false;
             return (
-              <SectionCard
-                key={key}
-                title={accountLogin}
-                description={`${accountType} · ${repos.length} repositor${repos.length > 1 ? 'ies' : 'y'}`}
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <StatusBadge label={accountType === 'Organization' ? 'Org' : 'User'} variant="info" size="sm" dot={false} />
-                  {hasRevoked && <StatusBadge label="Revoked" variant="danger" size="sm" />}
+              <div key={key} className="flex flex-col gap-3">
+                <div className="flex items-center gap-3 border-b pb-2">
+                  <h2 className="text-2xl font-extrabold text-foreground">{accountLogin}</h2>
+                  <StatusBadge label={accountType === 'Organization' ? 'Tổ chức' : 'Cá nhân'} variant="info" size="sm" dot={false} />
+                  <span className="text-muted-foreground ml-auto bg-muted px-3 py-1 rounded-full text-sm font-bold">
+                    {repos.length} Kho lưu trữ
+                  </span>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-lazyops-border">
-                        <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Repository</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Visibility</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Permissions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {repos.map((repo) => (
-                        <tr key={repo.github_repo_id} className="border-b border-lazyops-border/50 transition-colors hover:bg-lazyops-border/10">
-                          <td className="px-4 py-2">
-                            <span className="font-medium text-lazyops-text">{repo.full_name}</span>
-                          </td>
-                          <td className="px-4 py-2">
-                            <StatusBadge
-                              label={repo.private ? 'Private' : 'Public'}
-                              variant={repo.private ? 'warning' : 'neutral'}
-                              size="sm"
-                              dot={false}
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <div className="flex flex-wrap gap-1">
-                              {Object.entries(repo.permissions).map(([perm, level]) => (
-                                <span
-                                  key={perm}
-                                  className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-[10px] text-lazyops-muted"
-                                >
-                                  {perm}: {level}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-2">
+                  {repos.map((repo) => (
+                    <div key={repo.github_repo_id} className="rounded-xl border border-border bg-card p-4 shadow-sm hover:shadow-md hover:border-primary/40 transition-all group">
+                      <div className="flex items-start justify-between mb-2">
+                        <span className="font-bold text-lg text-foreground group-hover:text-primary transition-colors truncate block w-[80%]" title={repo.full_name}>
+                          {repo.full_name.split('/')[1] || repo.full_name}
+                        </span>
+                        <StatusBadge
+                          label={repo.private ? 'Riêng tư' : 'Công khai'}
+                          variant={repo.private ? 'warning' : 'neutral'}
+                          size="sm"
+                          dot={false}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground uppercase font-semibold mb-2 tracking-wider">
+                        Quyền truy cập
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.entries(repo.permissions).map(([perm]) => (
+                          <span
+                            key={perm}
+                            className="rounded bg-accent px-2 py-1 text-xs font-medium text-foreground"
+                          >
+                            {perm === 'admin' ? 'Quản trị' : perm === 'maintain' ? 'Bảo trì' : perm === 'push' ? 'Ghi' : perm === 'pull' ? 'Đọc' : perm}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </SectionCard>
+              </div>
             );
           })}
         </div>
@@ -261,30 +226,33 @@ function SyncInstallationsModal({ open, onClose }: SyncInstallationsModalProps) 
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Sync GitHub installations" size="md">
+    <Modal open={open} onClose={onClose} title="Cài đặt Đồng bộ Nâng cao" size="md">
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-        <p className="text-sm text-lazyops-muted">
-          Provide a GitHub PAT only when you want to force sync from GitHub API. You can leave it empty to reload current cache.
+        <p className="text-base text-muted-foreground">
+          Chỉ cần điền GitHub PAT nếu API của bạn bị lỗi hoặc cần ép hệ thống quét lại toàn bộ mà không thông qua Webhook. Mặc định là không cần.
         </p>
 
-        <FormField label="GitHub access token" error={errors.github_access_token?.message}>
+        <FormField label="GitHub Token (PAT - Tùy chọn)" error={errors.github_access_token?.message}>
           <FormInput
             type="password"
-            placeholder="(optional) ghp_xxxxxxxxxxxx"
+            placeholder="ghp_xxxxxxxxxxxx"
             error={!!errors.github_access_token}
             {...register('github_access_token')}
+            className="p-3 text-lg"
           />
         </FormField>
 
         {serverError && (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
             {serverError}
           </div>
         )}
 
-        <FormButton type="submit" loading={isSubmitting || syncInstallations.isPending}>
-          Sync installations
-        </FormButton>
+        <div className="mt-4">
+          <FormButton type="submit" loading={isSubmitting || syncInstallations.isPending} className="w-full text-lg font-bold py-6">
+            Bắt đầu quét
+          </FormButton>
+        </div>
       </form>
     </Modal>
   );
