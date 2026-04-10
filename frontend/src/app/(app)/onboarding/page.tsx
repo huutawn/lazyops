@@ -3,11 +3,8 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { LoadingBlock } from '@/components/primitives/loading';
-import { EmptyState } from '@/components/primitives/empty-state';
 import { PageHeader } from '@/components/primitives/page-header';
-import { SectionCard } from '@/components/primitives/section-card';
 import { SkeletonPage } from '@/components/primitives/skeleton';
-import { StatusBadge } from '@/components/primitives/status-badge';
 import { ProjectThreeStepWizard } from '@/modules/bootstrap/project-three-step-wizard';
 import { CreateProjectForm } from '@/modules/onboarding/create-project-form';
 import { useProjects } from '@/modules/projects/project-hooks';
@@ -61,13 +58,22 @@ export default function OnboardingPage() {
               </button>
             </div>
           ) : (
-            <div className="shadow-2xl rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6">
+            <div className="shadow-2xl rounded-2xl border border-[#1e293b] bg-[#0F172A] p-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white">Tạo dự án mới</h2>
+                <button 
+                  onClick={() => setShowCreateForm(false)}
+                  className="text-[#64748b] hover:text-white transition-colors"
+                >
+                  Hủy bỏ
+                </button>
+              </div>
               <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
             </div>
           )}
         </div>
       ) : (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
           {showCreateForm ? (
             <div className="animate-in fade-in slide-in-from-top-4 duration-500 shadow-2xl rounded-2xl border border-[#1e293b] bg-[#0F172A] p-8">
               <div className="flex items-center justify-between mb-6">
@@ -82,61 +88,64 @@ export default function OnboardingPage() {
               <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
             </div>
           ) : (
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
-              <div className="flex items-start justify-between mb-6">
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-8 shadow-sm">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-8">
                 <div>
-                  <h2 className="text-[17px] font-bold text-white">Lựa chọn dự án</h2>
-                  <p className="text-[14px] text-[#94a3b8] mt-1">Vui lòng chọn dự án bạn muốn tiếp tục cấu hình triển khai.</p>
+                  <h2 className="text-xl font-bold text-white">Lựa chọn dự án</h2>
+                  <p className="text-[15px] text-[#94a3b8] mt-1 font-medium">Chọn dự án bên dưới để xem trạng thái thiết lập.</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setShowCreateForm(true)}
-                    className="rounded-lg bg-[#0EA5E9] text-white hover:bg-[#0284c7] px-4 py-2 text-[13px] font-bold transition-all hover:scale-105"
+                    className="rounded-xl bg-[#0EA5E9] text-white hover:bg-[#0284c7] px-5 py-2.5 text-sm font-bold transition-all hover:scale-105 shadow-lg shadow-[#0ea5e9]/20"
                   >
                     + Tạo dự án mới
                   </button>
-                  {selectedProject ? (
+                  {selectedProject && (
                     <Link
                       href={`/projects/${selectedProject.id}`}
-                      className="rounded-lg bg-[#1e293b] text-white hover:bg-[#2d3a4f] px-4 py-2 text-[13px] font-semibold transition-colors border border-[#334155]"
+                      className="rounded-xl bg-[#1e293b] text-white hover:bg-[#2d3a4f] px-5 py-2.5 text-sm font-bold transition-colors border border-[#334155]"
                     >
-                      Truy cập trang dự án &rarr;
+                      Chi tiết dự án &rarr;
                     </Link>
-                  ) : null}
+                  )}
                 </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {projectItems.map((project) => {
-                const selected = project.id === effectiveProjectID;
-                return (
-                  <button
-                    key={project.id}
-                    type="button"
-                    className={cn(
-                      "rounded-xl border-2 p-4 text-left transition-all duration-200",
-                      selected
-                        ? 'border-[#0EA5E9] bg-[#0c1a2c] shadow-[0_0_15px_rgba(14,165,233,0.1)]'
-                        : 'border-[#1e293b] bg-[#0F172A] hover:border-[#334155] hover:bg-[#131c31]'
-                    )}
-                    onClick={() => setSelectedProjectID(project.id)}
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-base font-bold text-white">{project.name}</span>
-                      <span className="text-[11px] text-[#64748b] font-mono">{project.default_branch}</span>
-                    </div>
-                    <p className="text-[13px] text-[#64748b]">/{project.slug}</p>
-                  </button>
-                );
-              })}
+                {projectItems.map((project) => {
+                  const isSelected = project.id === effectiveProjectID;
+                  return (
+                    <button
+                      key={project.id}
+                      type="button"
+                      className={cn(
+                        "rounded-xl border-2 p-5 text-left transition-all duration-300",
+                        isSelected
+                          ? 'border-[#0EA5E9] bg-[#0c1a2c] shadow-[0_0_20px_rgba(14,165,233,0.15)] ring-1 ring-[#0EA5E9]/30'
+                          : 'border-[#1e293b] bg-[#0F172A] hover:border-[#334155] hover:bg-[#131c31]'
+                      )}
+                      onClick={() => setSelectedProjectID(project.id)}
+                    >
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[15px] font-bold text-white">{project.name}</span>
+                        <span className="text-[11px] text-[#64748b] font-mono bg-[#1e293b] px-1.5 py-0.5 rounded border border-[#334155]/30">{project.default_branch}</span>
+                      </div>
+                      <p className="text-sm text-[#64748b] font-mono">/{project.slug}</p>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+          <div className="animate-in fade-in slide-in-from-bottom-10 duration-1000">
             {selectedProject ? (
               <ProjectThreeStepWizard projectId={selectedProject.id} />
             ) : (
-              <LoadingBlock label="Đang tải dữ liệu dự án..." className="py-12" />
+              <div className="py-20 flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#1e293b]">
+                <LoadingBlock label="Đang cấu hình dữ liệu..." />
+              </div>
             )}
           </div>
         </div>
