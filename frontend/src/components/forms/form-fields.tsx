@@ -30,30 +30,39 @@ export function FormField({ label, error, children, className }: FormFieldProps)
   const id = useId();
 
   return (
-    <div className={cn('flex flex-col gap-1.5', className)}>
-      <label htmlFor={id} className="text-sm font-medium text-lazyops-text">{label}</label>
+    <div className={cn('flex flex-col gap-2', className)}>
+      <label htmlFor={id} className="text-[13px] font-bold text-[#94a3b8] uppercase tracking-wider ml-1">{label}</label>
       {addIdToFirstInput(children, id)}
-      {error && <p className="text-xs text-health-unhealthy" role="alert">{error}</p>}
+      {error && <p className="text-xs font-medium text-[#ef4444] animate-in fade-in slide-in-from-left-2 mt-1" role="alert">{error}</p>}
     </div>
   );
 }
 
 type FormInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
   error?: boolean;
+  icon?: React.ReactNode;
 };
 
-export function FormInput({ className, error, ...props }: FormInputProps) {
+export function FormInput({ className, error, icon, ...props }: FormInputProps) {
   return (
-    <input
-      className={cn(
-        'h-10 w-full rounded-lg border bg-lazyops-bg-accent/60 px-3 text-sm text-lazyops-text outline-none transition-colors placeholder:text-lazyops-muted/60',
-        'focus:border-primary/60 focus:ring-1 focus:ring-primary/30',
-        error && 'border-health-unhealthy/60 focus:border-health-unhealthy/60 focus:ring-health-unhealthy/30',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        className,
+    <div className="relative group">
+      {icon && (
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] group-focus-within:text-[#0EA5E9] transition-colors pointer-events-none">
+          {icon}
+        </div>
       )}
-      {...props}
-    />
+      <input
+        className={cn(
+          'h-12 w-full rounded-xl border bg-[#0B1120]/40 px-4 text-[15px] text-white outline-none transition-all placeholder:text-[#64748b]/50',
+          icon ? 'pl-10' : 'pl-4',
+          'border-[#1e293b] focus:border-[#0EA5E9]/50 focus:ring-4 focus:ring-[#0EA5E9]/10 focus:bg-[#0B1120]/60',
+          error && 'border-[#ef4444]/50 focus:border-[#ef4444]/60 focus:ring-[#ef4444]/10',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+          className,
+        )}
+        {...props}
+      />
+    </div>
   );
 }
 
@@ -65,9 +74,10 @@ export function FormButton({ children, loading, disabled, className, type = 'sub
   return (
     <button
       className={cn(
-        'h-10 w-full rounded-lg bg-primary px-4 text-sm font-semibold text-lazyops-bg shadow transition-colors',
-        'hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-lazyops-bg',
-        'disabled:cursor-not-allowed disabled:opacity-50',
+        'h-12 w-full rounded-xl bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] px-6 text-[15px] font-bold text-white shadow-lg transition-all',
+        'hover:from-[#0284c7] hover:to-[#0EA5E9] hover:scale-[1.02] active:scale-[0.98] shadow-[#0ea5e9]/20',
+        'focus:outline-none focus:ring-4 focus:ring-[#0EA5E9]/30',
+        'disabled:cursor-not-allowed disabled:opacity-50 disabled:from-[#1e293b] disabled:to-[#1e293b] disabled:text-[#64748b] disabled:shadow-none',
         className,
       )}
       type={type}
@@ -76,8 +86,8 @@ export function FormButton({ children, loading, disabled, className, type = 'sub
     >
       {loading ? (
         <span className="flex items-center justify-center gap-2">
-          <span className="size-4 animate-spin rounded-full border-2 border-lazyops-bg/30 border-t-lazyops-bg" />
-          Processing…
+          <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          Đang xử lý...
         </span>
       ) : (
         children

@@ -177,9 +177,9 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 	publicIP := strings.TrimSpace(req.PublicIP)
 	privateIP := strings.TrimSpace(req.PrivateIP)
 	if publicIP == "" && privateIP == "" {
-		if parsed := net.ParseIP(sshHost); parsed != nil {
-			publicIP = sshHost
-		}
+		resolvedPublicIP, resolvedPrivateIP := resolveInstanceIPsFromSSHHost(c, sshHost)
+		publicIP = resolvedPublicIP
+		privateIP = resolvedPrivateIP
 	}
 
 	instanceName := strings.TrimSpace(req.InstanceName)
@@ -343,4 +343,45 @@ func defaultControlPlaneURL(c *gin.Context) string {
 	}
 
 	return strings.ToLower(proto) + "://" + host
+}
+
+func resolveInstanceIPsFromSSHHost(c *gin.Context, sshHost string) (publicIP, privateIP string) {
+	host := strings.TrimSpace(sshHost)
+	if host == "" {
+		return "", ""
+	}
+
+	parsed := net.ParseIP(host)
+	if parsed != nil {
+		if parsed.IsPrivate() {
+			return "", parsed.String()
+		}
+		return parsed.String(), ""
+	}
+
+	resolved, err := net.DefaultResolver.LookupIP(c.Request.Context(), "ip", host)
+	if err != nil || len(resolved) == 0 {
+		return "", ""
+	}
+
+	for _, ip := range resolved {
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() {
+			continue
+		}
+		if ip.IsPrivate() {
+			continue
+		}
+		return ip.String(), ""
+	}
+
+	for _, ip := range resolved {
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() {
+			continue
+		}
+		if ip.IsPrivate() {
+			return "", ip.String()
+		}
+	}
+
+	return "", ""
 }

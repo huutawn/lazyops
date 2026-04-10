@@ -223,9 +223,6 @@ func normalizeInstanceIPs(publicIPInput, privateIPInput string) (*string, *strin
 	if err != nil {
 		return nil, nil, err
 	}
-	if publicIP == nil && privateIP == nil {
-		return nil, nil, ErrInvalidInput
-	}
 
 	return publicIP, privateIP, nil
 }

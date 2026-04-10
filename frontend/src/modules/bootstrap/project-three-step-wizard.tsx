@@ -151,6 +151,7 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
     ssh_private_key: '',
     ssh_host_key_fingerprint: '',
   });
+  const [showInfraAdvanced, setShowInfraAdvanced] = useState(false);
   const [infraFormError, setInfraFormError] = useState<string | null>(null);
   const isAdmin = session?.role === 'admin';
 
@@ -297,6 +298,7 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
         ssh_private_key: '',
         ssh_host_key_fingerprint: '',
       });
+      setShowInfraAdvanced(false);
       await queryClient.invalidateQueries({ queryKey: bootstrapStatusQueryKey(projectId) });
     } catch (err) {
       setInfraFormError(err instanceof Error ? err.message : 'Kết nối SSH thất bại');
@@ -520,7 +522,7 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-lazyops-muted">
-            Nhập thông tin SSH, LazyOps sẽ tự cài agent và tự gắn máy chủ vào dự án.
+            Nhập thông tin SSH, LazyOps sẽ tự cài agent và tự gắn máy chủ vào dự án. Bạn không cần biết Private IP.
           </p>
 
           <FormField label="Tên máy chủ (tuỳ chọn)">
@@ -531,25 +533,6 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
               onChange={(event) => setInfraForm((prev) => ({ ...prev, instance_name: event.target.value }))}
             />
           </FormField>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Public IP (tuỳ chọn)">
-              <FormInput
-                type="text"
-                placeholder="203.0.113.10"
-                value={infraForm.public_ip}
-                onChange={(event) => setInfraForm((prev) => ({ ...prev, public_ip: event.target.value }))}
-              />
-            </FormField>
-            <FormField label="Private IP (tuỳ chọn)">
-              <FormInput
-                type="text"
-                placeholder="10.0.1.10"
-                value={infraForm.private_ip}
-                onChange={(event) => setInfraForm((prev) => ({ ...prev, private_ip: event.target.value }))}
-              />
-            </FormField>
-          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="SSH host">
@@ -569,6 +552,35 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
               />
             </FormField>
           </div>
+
+          <button
+            type="button"
+            className="w-fit rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-muted transition-colors hover:bg-lazyops-border/10"
+            onClick={() => setShowInfraAdvanced((prev) => !prev)}
+          >
+            {showInfraAdvanced ? 'Ẩn cấu hình nâng cao' : 'Mở cấu hình nâng cao'}
+          </button>
+
+          {showInfraAdvanced ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Public IP (tuỳ chọn)">
+                <FormInput
+                  type="text"
+                  placeholder="203.0.113.10"
+                  value={infraForm.public_ip}
+                  onChange={(event) => setInfraForm((prev) => ({ ...prev, public_ip: event.target.value }))}
+                />
+              </FormField>
+              <FormField label="Private IP (tuỳ chọn)">
+                <FormInput
+                  type="text"
+                  placeholder="10.0.1.10"
+                  value={infraForm.private_ip}
+                  onChange={(event) => setInfraForm((prev) => ({ ...prev, private_ip: event.target.value }))}
+                />
+              </FormField>
+            </div>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="SSH username">

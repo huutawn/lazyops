@@ -272,6 +272,26 @@ func TestInstanceServiceRejectsInvalidIP(t *testing.T) {
 	}
 }
 
+func TestInstanceServiceAllowsMissingIPs(t *testing.T) {
+	instanceStore := newFakeInstanceStore()
+	tokenStore := newFakeBootstrapTokenStore()
+	service := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
+
+	result, err := service.Create(CreateInstanceCommand{
+		UserID: "usr_123",
+		Name:   "edge-hcm-no-ip",
+	})
+	if err != nil {
+		t.Fatalf("create instance without ip should succeed: %v", err)
+	}
+	if result.Instance.PublicIP != nil {
+		t.Fatalf("expected nil public ip, got %#v", result.Instance.PublicIP)
+	}
+	if result.Instance.PrivateIP != nil {
+		t.Fatalf("expected nil private ip, got %#v", result.Instance.PrivateIP)
+	}
+}
+
 func TestInstanceServiceIssuesBootstrapToken(t *testing.T) {
 	instanceStore := newFakeInstanceStore()
 	tokenStore := newFakeBootstrapTokenStore()

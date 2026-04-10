@@ -4,10 +4,17 @@ import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useCreateProject } from '@/modules/projects/project-hooks';
-import { INTERNAL_SERVICE_KINDS, createProjectSchema, type CreateProjectFormData } from '@/modules/projects/project-types';
+import { createProjectSchema, type CreateProjectFormData, INTERNAL_SERVICE_KINDS } from '@/modules/projects/project-types';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
-import { SectionCard } from '@/components/primitives/section-card';
 import { cn } from '@/lib/utils';
+import { FolderGit2, Hash, GitBranch, Database, Zap, MessageSquare, Box, Rocket, AlertCircle } from 'lucide-react';
+
+const SERVICE_ICONS: Record<string, any> = {
+  postgres: Database,
+  mysql: Database,
+  redis: Zap,
+  rabbitmq: MessageSquare,
+};
 
 type CreateProjectFormProps = {
   onSuccess?: () => void;
@@ -28,12 +35,14 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
     register,
     handleSubmit,
     setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<CreateProjectFormData>({
     resolver: zodResolver(createProjectSchema),
     defaultValues: { name: '', slug: '', default_branch: 'main', internal_services: [] },
   });
 
+  const selectedServices = watch('internal_services') || [];
   const createProject = useCreateProject();
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,82 +67,123 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
   const serverError = createProject.error?.message ?? null;
 
   return (
-    <SectionCard title="Tạo dự án đầu tiên" description="Dự án là nền tảng cho toàn bộ luồng triển khai LazyOps.">
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-        <FormField label="Tên dự án" error={errors.name?.message}>
-          <FormInput
-            type="text"
-            placeholder="my-awesome-app"
-            error={!!errors.name}
-            {...register('name', { onChange: handleNameChange })}
-          />
-        </FormField>
-
-        <FormField label="Slug" error={errors.slug?.message}>
-          <div className="flex items-center gap-2">
+    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-8" noValidate>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="flex flex-col gap-6">
+          <FormField label="Tên dự án" error={errors.name?.message}>
             <FormInput
               type="text"
-              placeholder="my-awesome-app"
-              error={!!errors.slug}
-              className="flex-1"
-              {...register('slug')}
+              placeholder="Ví dụ: LazyOps Dashboard"
+              icon={<FolderGit2 className="size-5" />}
+              error={!!errors.name}
+              {...register('name', { onChange: handleNameChange })}
             />
-            <button
-              type="button"
-              className={cn(
-                'shrink-0 rounded-lg border px-2.5 py-2 text-xs transition-colors',
-                autoSlug
-                  ? 'border-primary/30 bg-primary/10 text-primary'
-                  : 'border-lazyops-border text-lazyops-muted hover:text-lazyops-text',
-              )}
-              onClick={handleToggleAutoSlug}
-            >
-              {autoSlug ? 'Tự động' : 'Thủ công'}
-            </button>
-          </div>
-        </FormField>
+          </FormField>
 
-        <FormField label="Nhánh mặc định" error={errors.default_branch?.message}>
-          <FormInput
-            type="text"
-            placeholder="main"
-            error={!!errors.default_branch}
-            {...register('default_branch')}
-          />
-        </FormField>
-
-        <FormField label="Dịch vụ nội bộ" error={errors.internal_services?.message}>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {INTERNAL_SERVICE_KINDS.map((kind) => (
-              <label
-                key={kind}
-                className="flex items-center gap-2 rounded-lg border border-lazyops-border bg-lazyops-surface px-3 py-2 text-sm text-lazyops-text"
+          <FormField label="Slug dự án" error={errors.slug?.message}>
+            <div className="flex items-center gap-3">
+              <FormInput
+                type="text"
+                placeholder="lazyops-dashboard"
+                icon={<Hash className="size-5" />}
+                error={!!errors.slug}
+                className="flex-1"
+                {...register('slug')}
+              />
+              <button
+                type="button"
+                onClick={handleToggleAutoSlug}
+                className={cn(
+                  'h-12 px-4 rounded-xl text-xs font-bold transition-all border',
+                  autoSlug
+                    ? 'bg-[#0EA5E9]/10 text-[#0EA5E9] border-[#0EA5E9]/30'
+                    : 'bg-[#1e293b] text-[#94a3b8] border-[#334155]'
+                )}
               >
-                <input
-                  type="checkbox"
-                  value={kind}
-                  className="size-4 rounded border-lazyops-border bg-transparent"
-                  {...register('internal_services')}
-                />
-                <span className="capitalize">{kind}</span>
-              </label>
-            ))}
-          </div>
-          <p className="text-xs text-lazyops-muted">
-            Chọn dịch vụ nội bộ để LazyOps tự nối sidecar/localhost cho ứng dụng.
-          </p>
-        </FormField>
+                {autoSlug ? 'Tự động' : 'Thủ công'}
+              </button>
+            </div>
+          </FormField>
 
-        {serverError && (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
-            {serverError}
-          </div>
-        )}
+          <FormField label="Nhánh mặc định" error={errors.default_branch?.message}>
+            <FormInput
+              type="text"
+              placeholder="main"
+              icon={<GitBranch className="size-5" />}
+              error={!!errors.default_branch}
+              {...register('default_branch')}
+            />
+          </FormField>
+        </div>
 
-        <FormButton type="submit" loading={isSubmitting || createProject.isPending}>
-          Tạo dự án
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1 mb-2">
+            <span className="text-[13px] font-bold text-[#94a3b8] uppercase tracking-wider ml-1">Dịch vụ nội bộ</span>
+            <p className="text-xs text-[#64748b] ml-1">Kích hoạt sẵn các hạ tầng bổ trợ cho ứng dụng.</p>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-3">
+            {INTERNAL_SERVICE_KINDS.map((kind) => {
+              const isSelected = selectedServices.includes(kind);
+              const Icon = SERVICE_ICONS[kind] || Box;
+              return (
+                <label
+                  key={kind}
+                  className={cn(
+                    "relative flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer group",
+                    isSelected 
+                      ? "border-[#0EA5E9] bg-[#0EA5E9]/5 shadow-[0_0_15px_rgba(14,165,233,0.1)]" 
+                      : "border-[#1e293b] bg-[#0F172A] hover:border-[#334155] hover:bg-[#131c31]"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    value={kind}
+                    className="sr-only"
+                    {...register('internal_services')}
+                  />
+                  <div className={cn(
+                    "p-2 rounded-lg transition-colors",
+                    isSelected ? "bg-[#0EA5E9] text-white" : "bg-[#1e293b] text-[#64748b] group-hover:text-white"
+                  )}>
+                    <Icon className="size-5" />
+                  </div>
+                  <span className={cn(
+                    "text-sm font-bold capitalize transition-colors",
+                    isSelected ? "text-white" : "text-[#94a3b8] group-hover:text-white"
+                  )}>
+                    {kind}
+                  </span>
+                  {isSelected && (
+                    <div className="absolute top-2 right-2 size-2 rounded-full bg-[#0EA5E9] shadow-[0_0_5px_#0EA5E9]" />
+                  )}
+                </label>
+              );
+            })}
+          </div>
+          {errors.internal_services?.message && (
+            <p className="text-xs text-[#ef4444] mt-1">{errors.internal_services.message}</p>
+          )}
+        </div>
+      </div>
+
+      {serverError && (
+        <div className="p-4 rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/10 flex items-center gap-3 text-sm text-[#ef4444] animate-in shake-in duration-300">
+          <AlertCircle className="size-5 shrink-0" />
+          {serverError}
+        </div>
+      )}
+
+      <div className="pt-4 border-t border-[#1e293b]">
+        <FormButton 
+          type="submit" 
+          loading={isSubmitting || createProject.isPending}
+          className="h-14 text-lg"
+        >
+          <Rocket className="size-5 mr-2" />
+          Tạo dự án & Bắt đầu thôi!
         </FormButton>
-      </form>
-    </SectionCard>
+      </div>
+    </form>
   );
 }
