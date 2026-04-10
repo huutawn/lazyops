@@ -242,7 +242,9 @@ func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentM
 		allowed[*instance.PrivateIP] = struct{}{}
 	}
 	if len(allowed) == 0 {
-		return ErrBootstrapOwnershipMismatch
+		// Lazy SSH onboarding can intentionally omit instance IP metadata.
+		// In that case, single-use bootstrap token possession is the trust anchor.
+		return nil
 	}
 
 	for _, rawIP := range machine.IPs {

@@ -187,6 +187,44 @@ func TestAgentEnrollmentRejectsOwnershipMismatch(t *testing.T) {
 	}
 }
 
+func TestAgentEnrollmentAllowsMissingInstanceIPs(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_1",
+		UserID:                  "usr_1",
+		Name:                    "edge-hcm-1",
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	bootstrapStore := newFakeBootstrapTokenStore(&models.BootstrapToken{
+		ID:         "boot_1",
+		UserID:     "usr_1",
+		InstanceID: "inst_1",
+		TokenHash:  hashOpaqueToken("lop_boot_valid_no_ip"),
+		ExpiresAt:  time.Now().UTC().Add(time.Minute),
+	})
+	agentStore := &fakeAgentStore{}
+	agentTokenStore := newFakeAgentTokenStore()
+	service := NewAgentEnrollmentService(agentStore, instanceStore, bootstrapStore, agentTokenStore, testEnrollmentAndAgentTokenConfig())
+
+	enrolled, err := service.Enroll(AgentEnrollmentCommand{
+		BootstrapToken: "lop_boot_valid_no_ip",
+		RuntimeMode:    "standalone",
+		AgentKind:      "instance_agent",
+		Machine: AgentMachineInfo{
+			Hostname: "edge-hcm-1",
+			IPs:      []string{"13.212.158.91"},
+		},
+		Capabilities: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("enroll agent without instance ips should succeed: %v", err)
+	}
+	if !strings.HasPrefix(enrolled.AgentID, "agt_") {
+		t.Fatalf("expected enrolled agent id, got %q", enrolled.AgentID)
+	}
+}
+
 func TestAgentEnrollmentMarksInstanceOnlineAndHeartbeatUpdatesState(t *testing.T) {
 	instanceStore := newFakeInstanceStore(&models.Instance{
 		ID:                      "inst_1",
