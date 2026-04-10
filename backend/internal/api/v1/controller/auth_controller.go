@@ -14,6 +14,7 @@ import (
 	"lazyops-server/internal/api/v1/mapper"
 	"lazyops-server/internal/config"
 	"lazyops-server/internal/service"
+	"lazyops-server/pkg/logger"
 )
 
 type AuthController struct {
@@ -223,6 +224,16 @@ func (ctl *AuthController) GitHubOAuthCallback(c *gin.Context) {
 
 	if err != nil {
 		status, code := mapGitHubOAuthError(err)
+		logger.Warn("github_oauth_callback_failed",
+			"request_id", middleware.GetRequestID(c),
+			"correlation_id", middleware.GetCorrelationID(c),
+			"status", status,
+			"error_code", code,
+			"provider_error_param", strings.TrimSpace(c.Query("error")),
+			"has_code", strings.TrimSpace(c.Query("code")) != "",
+			"state_present", strings.TrimSpace(c.Query("state")) != "",
+			"error", err.Error(),
+		)
 		if !forceJSON {
 			failureURL := strings.TrimSpace(ctl.githubOAuth.FailureRedirectURL())
 			if failureURL == "" {
