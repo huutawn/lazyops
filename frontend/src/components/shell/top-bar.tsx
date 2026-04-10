@@ -11,7 +11,7 @@ type TopBarProps = {
 
 export function TopBar({ onMenuClick, breadcrumb }: TopBarProps) {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/40 bg-background/60 px-6 backdrop-blur-xl transition-all supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-30 flex h-20 items-center justify-between border-b border-[#1e293b] bg-[#0B1120] px-6 transition-all">
       <div className="flex items-center gap-4">
         <button
           type="button"
@@ -29,7 +29,9 @@ export function TopBar({ onMenuClick, breadcrumb }: TopBarProps) {
         )}
       </div>
 
-      <UserMenu />
+      <div className="flex items-center">
+        <UserMenu />
+      </div>
     </header>
   );
 }

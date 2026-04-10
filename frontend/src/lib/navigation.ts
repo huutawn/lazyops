@@ -1,6 +1,5 @@
 import {
-  Rocket, FolderGit2, Target, Blocks,
-  Send, ServerIcon, type LucideIcon
+  LayoutGrid, FolderGit2, Rocket, Settings, type LucideIcon
 } from 'lucide-react';
 
 export type NavItem = {
@@ -11,9 +10,8 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { label: 'Tổng quan', href: '/onboarding', icon: Rocket },
+  { label: 'Tổng quan', href: '/dashboard', icon: LayoutGrid },
   { label: 'Dự án', href: '/projects', icon: FolderGit2 },
-  { label: 'Lịch sử Triển khai', href: '/deployments', icon: Send },
-  // Optional/Advanced nested settings for Targets & Github integrations
-  { label: 'Hệ thống & Tích hợp', href: '/integrations/github', icon: ServerIcon },
+  { label: 'Triển khai', href: '/deployments', icon: Rocket },
+  { label: 'Tích hợp', href: '/integrations', icon: Settings },
 ];

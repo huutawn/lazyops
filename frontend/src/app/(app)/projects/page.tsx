@@ -31,14 +31,14 @@ export default function ProjectsPage() {
     <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-2">Danh sách Dự án</h1>
-          <p className="text-muted-foreground text-lg">Quản lý mã nguồn, cấu hình hạ tầng và xem lịch sử triển khai của bạn.</p>
+          <h1 className="text-3xl font-bold tracking-tight mb-2 text-white">Danh sách Dự án</h1>
+          <p className="text-[#94a3b8] text-lg">Quản lý mã nguồn, cấu hình hạ tầng và xem lịch sử triển khai của bạn.</p>
         </div>
         <Link
-          href="/onboarding"
-          className="rounded-xl bg-primary px-6 py-3 text-base font-bold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 hover:scale-105"
+          href="/projects/new"
+          className="rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[15px] font-semibold text-white shadow-sm transition-all hover:bg-[#0284c7]"
         >
-          + Thêm Dự án mới
+          + Dự án mới
         </Link>
       </div>
 
@@ -50,8 +50,8 @@ export default function ProjectsPage() {
             description="Tạo dự án mới để kết nối mã nguồn và tự động triển khai."
             action={
               <Link
-                href="/onboarding"
-                className="mt-4 inline-block rounded-xl bg-primary px-8 py-3 text-base font-bold text-primary-foreground transition-all hover:bg-primary/90 shadow-md hover:-translate-y-1"
+                href="/projects/new"
+                className="mt-4 inline-block rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[15px] font-semibold text-white transition-all hover:bg-[#0284c7] shadow-md"
               >
                 Tạo dự án đầu tiên
               </Link>
