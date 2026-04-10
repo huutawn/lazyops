@@ -20,6 +20,7 @@ type Driver interface {
 	ReconcileRevision(context.Context, RuntimeContext) (ReconcileRevisionResult, error)
 	RenderGatewayConfig(context.Context, RuntimeContext) (GatewayRenderResult, error)
 	RenderSidecars(context.Context, RuntimeContext) (SidecarRenderResult, error)
+	ProvisionInternalServices(context.Context, ProvisionInternalServicesRequest) (ProvisionInternalServicesResult, error)
 	StartReleaseCandidate(context.Context, RuntimeContext) (CandidateRecord, error)
 	RunHealthGate(context.Context, RuntimeContext) (HealthGateResult, error)
 	PromoteRelease(context.Context, RuntimeContext) (PromoteReleaseResult, error)
@@ -51,6 +52,22 @@ type RuntimeDependencyContext struct {
 	PlacementByService   map[string]contracts.PlacementAssignment `json:"-"`
 	ServiceByName        map[string]ServiceRuntimeContext         `json:"-"`
 	PlacementFingerprint string                                   `json:"-"`
+}
+
+type ProvisionInternalServicesRequest struct {
+	ProjectID string
+	BindingID string
+	Services  []contracts.InternalServiceProvisionSpec
+}
+
+type ProvisionInternalServicesResult struct {
+	ProjectID string    `json:"project_id"`
+	BindingID string    `json:"binding_id,omitempty"`
+	Created   []string  `json:"created,omitempty"`
+	Updated   []string  `json:"updated,omitempty"`
+	Removed   []string  `json:"removed,omitempty"`
+	Summary   string    `json:"summary"`
+	AppliedAt time.Time `json:"applied_at"`
 }
 
 type ProjectMetadata struct {

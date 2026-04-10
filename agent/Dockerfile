@@ -15,15 +15,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata iptables \
-    && addgroup -S lazyops \
-    && adduser -S -D -H -h /var/lib/lazyops-agent -G lazyops lazyops \
-    && mkdir -p /var/lib/lazyops-agent \
-    && chown -R lazyops:lazyops /var/lib/lazyops-agent
+RUN apk add --no-cache ca-certificates tzdata iptables docker-cli \
+    && mkdir -p /var/lib/lazyops-agent
 
 COPY --from=builder /out/lazyops-agent /usr/local/bin/lazyops-agent
-
-USER lazyops
 
 VOLUME ["/var/lib/lazyops-agent"]
 

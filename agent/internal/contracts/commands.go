@@ -9,6 +9,7 @@ const (
 	CommandSyncOverlayRoutes       CommandType = "sync_overlay_routes"
 	CommandRenderSidecars          CommandType = "render_sidecars"
 	CommandRenderGatewayConfig     CommandType = "render_gateway_config"
+	CommandProvisionInternalSvc    CommandType = "provision_internal_services"
 	CommandStartReleaseCandidate   CommandType = "start_release_candidate"
 	CommandRunHealthGate           CommandType = "run_health_gate"
 	CommandPromoteRelease          CommandType = "promote_release"
@@ -29,6 +30,7 @@ var MinimumCommandSet = []CommandType{
 	CommandSyncOverlayRoutes,
 	CommandRenderSidecars,
 	CommandRenderGatewayConfig,
+	CommandProvisionInternalSvc,
 	CommandStartReleaseCandidate,
 	CommandRunHealthGate,
 	CommandPromoteRelease,
@@ -85,6 +87,12 @@ var CommandHandlerBindings = map[CommandType]CommandHandlerSpec{
 		Module:      "instance/gateway",
 		HandlerKey:  "gateway.render_gateway_config",
 		Description: "Render Caddy gateway configuration for public ingress and traffic shift.",
+	},
+	CommandProvisionInternalSvc: {
+		Command:     CommandProvisionInternalSvc,
+		Module:      "instance/internal_services",
+		HandlerKey:  "internal_services.provision",
+		Description: "Provision project internal services (postgres/mysql/redis/rabbitmq) on target instance.",
 	},
 	CommandStartReleaseCandidate: {
 		Command:     CommandStartReleaseCandidate,

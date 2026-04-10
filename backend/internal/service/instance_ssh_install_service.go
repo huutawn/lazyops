@@ -281,6 +281,7 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 			"docker_exec pull %s >/dev/null 2>&1 || true; "+
 			"if [ -n \"$SUDO\" ]; then $SUDO mkdir -p %s %s; $SUDO chmod 0777 %s %s; else mkdir -p %s %s; chmod 0777 %s %s; fi; "+
 			"docker_exec run -d --name %s --restart unless-stopped --network host --privileged "+
+			"--user root "+
 			"-v /var/run/docker.sock:/var/run/docker.sock "+
 			"-v %s:%s -v %s:%s "+
 			"-e AGENT_BOOTSTRAP_TOKEN=%s "+

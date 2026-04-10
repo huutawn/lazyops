@@ -11,6 +11,7 @@ const (
 	CommandTypeSyncOverlayRoutes       = "sync_overlay_routes"
 	CommandTypeRenderSidecars          = "render_sidecars"
 	CommandTypeRenderGatewayConfig     = "render_gateway_config"
+	CommandTypeProvisionInternalSvc    = "provision_internal_services"
 	CommandTypeStartReleaseCandidate   = "start_release_candidate"
 	CommandTypeRunHealthGate           = "run_health_gate"
 	CommandTypePromoteRelease          = "promote_release"
@@ -31,6 +32,7 @@ var ValidAgentCommands = map[string]struct{}{
 	CommandTypeSyncOverlayRoutes:       {},
 	CommandTypeRenderSidecars:          {},
 	CommandTypeRenderGatewayConfig:     {},
+	CommandTypeProvisionInternalSvc:    {},
 	CommandTypeStartReleaseCandidate:   {},
 	CommandTypeRunHealthGate:           {},
 	CommandTypePromoteRelease:          {},

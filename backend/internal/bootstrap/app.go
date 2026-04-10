@@ -193,6 +193,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	rtRegistry.Register(runtime.NewDistributedK3sDriver())
 	commandTracker := service.NewCommandTracker()
 	controlService := service.NewControlService(controlHub, commandTracker, rtRegistry, instanceRepo, agentRepo)
+	projectInternalSvc.WithRuntimeProvisioner(deploymentBindingRepo, instanceRepo, controlService)
 
 	rolloutPlanner := service.NewRolloutPlanner(
 		rtRegistry,

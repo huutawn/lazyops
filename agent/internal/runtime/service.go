@@ -138,6 +138,7 @@ func (s *Service) Register(registry *dispatcher.Registry) {
 	registry.Register(contracts.CommandPrepareReleaseWorkspace, dispatcher.HandlerFunc(s.handlePrepareReleaseWorkspace))
 	registry.Register(contracts.CommandRenderGatewayConfig, dispatcher.HandlerFunc(s.handleRenderGatewayConfig))
 	registry.Register(contracts.CommandRenderSidecars, dispatcher.HandlerFunc(s.handleRenderSidecars))
+	registry.Register(contracts.CommandProvisionInternalSvc, dispatcher.HandlerFunc(s.handleProvisionInternalServices))
 	registry.Register(contracts.CommandStartReleaseCandidate, dispatcher.HandlerFunc(s.handleStartReleaseCandidate))
 	registry.Register(contracts.CommandRunHealthGate, dispatcher.HandlerFunc(s.handleRunHealthGate))
 	registry.Register(contracts.CommandPromoteRelease, dispatcher.HandlerFunc(s.handlePromoteRelease))
@@ -149,6 +150,33 @@ func (s *Service) Register(registry *dispatcher.Registry) {
 	registry.Register(contracts.CommandReportTopologyState, dispatcher.HandlerFunc(s.handleReportTopologyState))
 	registry.Register(contracts.CommandSleepService, dispatcher.HandlerFunc(s.handleSleepService))
 	registry.Register(contracts.CommandWakeService, dispatcher.HandlerFunc(s.handleWakeService))
+}
+
+func (s *Service) handleProvisionInternalServices(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	var payload contracts.ProvisionInternalServicesPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return dispatcher.NonRetryable("invalid_provision_internal_services_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	result, err := s.driver.ProvisionInternalServices(ctx, ProvisionInternalServicesRequest{
+		ProjectID: payload.ProjectID,
+		BindingID: payload.BindingID,
+		Services:  payload.Services,
+	})
+	if err != nil {
+		return dispatchOperationError(
+			err,
+			"provision_internal_services_failed",
+			map[string]any{
+				"project_id": payload.ProjectID,
+				"binding_id": payload.BindingID,
+			},
+		)
+	}
+
+	return dispatcher.Done(result.Summary)
 }
 
 func (s *Service) handlePrepareReleaseWorkspace(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {

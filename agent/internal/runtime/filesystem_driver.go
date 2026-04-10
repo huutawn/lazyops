@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"lazyops-agent/internal/contracts"
@@ -320,6 +322,89 @@ func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx R
 	return candidate, nil
 }
 
+func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, request ProvisionInternalServicesRequest) (ProvisionInternalServicesResult, error) {
+	projectID := strings.TrimSpace(request.ProjectID)
+	if projectID == "" {
+		return ProvisionInternalServicesResult{}, &OperationError{
+			Code:      "invalid_project_id",
+			Message:   "project_id is required",
+			Retryable: false,
+		}
+	}
+
+	desired := make(map[string]contracts.InternalServiceProvisionSpec, len(request.Services))
+	for _, item := range request.Services {
+		kind := strings.ToLower(strings.TrimSpace(item.Kind))
+		if kind == "" {
+			continue
+		}
+		if _, ok := internalServiceRuntimeSpecs[kind]; !ok {
+			return ProvisionInternalServicesResult{}, &OperationError{
+				Code:      "unsupported_internal_service_kind",
+				Message:   fmt.Sprintf("unsupported internal service kind %q", kind),
+				Retryable: false,
+			}
+		}
+		desired[kind] = item
+	}
+
+	created := make([]string, 0, len(desired))
+	updated := make([]string, 0, len(desired))
+	removed := make([]string, 0, len(internalServiceRuntimeSpecs))
+
+	for kind, definition := range internalServiceRuntimeSpecs {
+		containerName := internalServiceContainerName(projectID, kind)
+		spec, keep := desired[kind]
+		exists, err := d.internalServiceContainerExists(ctx, containerName)
+		if err != nil {
+			return ProvisionInternalServicesResult{}, err
+		}
+
+		if !keep {
+			if exists {
+				if err := d.removeInternalServiceContainer(ctx, containerName); err != nil {
+					return ProvisionInternalServicesResult{}, err
+				}
+				removed = append(removed, kind)
+			}
+			continue
+		}
+
+		if err := d.recreateInternalServiceContainer(ctx, projectID, containerName, definition, spec.Port); err != nil {
+			return ProvisionInternalServicesResult{}, err
+		}
+		if exists {
+			updated = append(updated, kind)
+		} else {
+			created = append(created, kind)
+		}
+	}
+
+	sort.Strings(created)
+	sort.Strings(updated)
+	sort.Strings(removed)
+
+	summary := fmt.Sprintf("internal services applied (created=%d, updated=%d, removed=%d)", len(created), len(updated), len(removed))
+	if d.logger != nil {
+		d.logger.Info("internal services provisioned",
+			"project_id", projectID,
+			"created", len(created),
+			"updated", len(updated),
+			"removed", len(removed),
+		)
+	}
+
+	return ProvisionInternalServicesResult{
+		ProjectID: projectID,
+		BindingID: strings.TrimSpace(request.BindingID),
+		Created:   created,
+		Updated:   updated,
+		Removed:   removed,
+		Summary:   summary,
+		AppliedAt: d.now(),
+	}, nil
+}
+
 func (d *FilesystemDriver) SleepService(ctx context.Context, runtimeCtx RuntimeContext, serviceName string) error {
 	if d.processManager != nil {
 		if err := d.processManager.StopProcess(serviceName); err != nil {
@@ -382,4 +467,170 @@ func publicServiceNames(services []ServiceRuntimeContext) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+type internalServiceRuntimeSpec struct {
+	Image            string
+	Port             int
+	ContainerDataDir string
+	HostDataDirName  string
+	Env              map[string]string
+	Command          []string
+}
+
+var internalServiceRuntimeSpecs = map[string]internalServiceRuntimeSpec{
+	"postgres": {
+		Image:            "postgres:16-alpine",
+		Port:             5432,
+		ContainerDataDir: "/var/lib/postgresql/data",
+		HostDataDirName:  "postgres",
+		Env: map[string]string{
+			"POSTGRES_DB":       "app",
+			"POSTGRES_USER":     "lazyops",
+			"POSTGRES_PASSWORD": "lazyops",
+		},
+	},
+	"mysql": {
+		Image:            "mysql:8.4",
+		Port:             3306,
+		ContainerDataDir: "/var/lib/mysql",
+		HostDataDirName:  "mysql",
+		Env: map[string]string{
+			"MYSQL_ROOT_PASSWORD": "lazyops",
+			"MYSQL_DATABASE":      "app",
+			"MYSQL_USER":          "lazyops",
+			"MYSQL_PASSWORD":      "lazyops",
+		},
+	},
+	"redis": {
+		Image:            "redis:7-alpine",
+		Port:             6379,
+		ContainerDataDir: "/data",
+		HostDataDirName:  "redis",
+		Command:          []string{"redis-server", "--appendonly", "yes"},
+	},
+	"rabbitmq": {
+		Image:            "rabbitmq:3.13-management-alpine",
+		Port:             5672,
+		ContainerDataDir: "/var/lib/rabbitmq",
+		HostDataDirName:  "rabbitmq",
+	},
+}
+
+func internalServiceContainerName(projectID, kind string) string {
+	return fmt.Sprintf("lazyops-int-%s-%s", normalizeContainerToken(projectID), normalizeContainerToken(kind))
+}
+
+func normalizeContainerToken(input string) string {
+	raw := strings.ToLower(strings.TrimSpace(input))
+	if raw == "" {
+		return "default"
+	}
+	var builder strings.Builder
+	builder.Grow(len(raw))
+	lastDash := false
+	for _, ch := range raw {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			builder.WriteRune(ch)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(builder.String(), "-")
+	if out == "" {
+		return "default"
+	}
+	if len(out) > 40 {
+		return out[:40]
+	}
+	return out
+}
+
+func (d *FilesystemDriver) internalServiceContainerExists(ctx context.Context, name string) (bool, error) {
+	output, err := d.runDockerCommand(ctx, "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
+}
+
+func (d *FilesystemDriver) removeInternalServiceContainer(ctx context.Context, name string) error {
+	if _, err := d.runDockerCommand(ctx, "rm", "-f", name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context, projectID, containerName string, definition internalServiceRuntimeSpec, requestedPort int) error {
+	if requestedPort <= 0 {
+		requestedPort = definition.Port
+	}
+	if requestedPort <= 0 {
+		return &OperationError{
+			Code:      "invalid_internal_service_port",
+			Message:   "internal service port must be greater than zero",
+			Retryable: false,
+		}
+	}
+
+	// Remove existing container before recreate to keep config deterministic.
+	if _, err := d.runDockerCommand(ctx, "rm", "-f", containerName); err != nil {
+		// Ignore "No such container" style errors.
+		if !strings.Contains(strings.ToLower(err.Error()), "no such container") {
+			return err
+		}
+	}
+
+	hostDataDir := filepath.Join("/var/lib/lazyops-agent", "internal-services", normalizeContainerToken(projectID), definition.HostDataDirName)
+	if err := os.MkdirAll(hostDataDir, 0o755); err != nil {
+		return &OperationError{
+			Code:      "internal_service_data_dir_failed",
+			Message:   fmt.Sprintf("prepare data directory for %s failed", containerName),
+			Retryable: false,
+			Err:       err,
+		}
+	}
+
+	args := []string{
+		"run", "-d",
+		"--name", containerName,
+		"--restart", "unless-stopped",
+		"--label", "lazyops.managed=internal-service",
+		"--label", "lazyops.project_id=" + projectID,
+		"--label", "lazyops.kind=" + definition.HostDataDirName,
+		"-p", fmt.Sprintf("127.0.0.1:%d:%d", requestedPort, definition.Port),
+	}
+
+	if definition.ContainerDataDir != "" {
+		args = append(args, "-v", hostDataDir+":"+definition.ContainerDataDir)
+	}
+	for key, value := range definition.Env {
+		args = append(args, "-e", key+"="+value)
+	}
+	args = append(args, definition.Image)
+	args = append(args, definition.Command...)
+
+	if _, err := d.runDockerCommand(ctx, args...); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *FilesystemDriver) runDockerCommand(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	output, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(output))
+	if err != nil {
+		return text, &OperationError{
+			Code:      "docker_command_failed",
+			Message:   fmt.Sprintf("docker %s failed: %s", strings.Join(args, " "), text),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+	return text, nil
 }
