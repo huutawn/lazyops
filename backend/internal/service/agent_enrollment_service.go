@@ -230,10 +230,6 @@ func validateInstanceEnrollmentMode(runtimeMode, agentKind string) error {
 }
 
 func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentMachineInfo) error {
-	if len(machine.IPs) == 0 {
-		return ErrBootstrapOwnershipMismatch
-	}
-
 	allowed := make(map[string]struct{}, 2)
 	if instance.PublicIP != nil && *instance.PublicIP != "" {
 		allowed[*instance.PublicIP] = struct{}{}
@@ -241,10 +237,22 @@ func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentM
 	if instance.PrivateIP != nil && *instance.PrivateIP != "" {
 		allowed[*instance.PrivateIP] = struct{}{}
 	}
+
+	// Lazy SSH onboarding can intentionally omit private/public IP metadata.
+	// In that case, single-use bootstrap token possession is the trust anchor.
 	if len(allowed) == 0 {
-		// Lazy SSH onboarding can intentionally omit instance IP metadata.
-		// In that case, single-use bootstrap token possession is the trust anchor.
 		return nil
+	}
+
+	// When only public IP is known (common for SSH onboarding), the agent can still
+	// report only private interface IPs from inside the host network namespace.
+	// Accept the enrollment and rely on single-use bootstrap token ownership.
+	if instance.PrivateIP == nil || strings.TrimSpace(*instance.PrivateIP) == "" {
+		return nil
+	}
+
+	if len(machine.IPs) == 0 {
+		return ErrBootstrapOwnershipMismatch
 	}
 
 	for _, rawIP := range machine.IPs {
