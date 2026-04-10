@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -37,11 +36,12 @@ func (r *ProjectRepoLinkRepository) Upsert(link *models.ProjectRepoLink) error {
 
 func (r *ProjectRepoLinkRepository) GetByProjectID(projectID string) (*models.ProjectRepoLink, error) {
 	var link models.ProjectRepoLink
-	if err := r.db.Where("project_id = ?", projectID).First(&link).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+	tx := r.db.Where("project_id = ?", projectID).Limit(1).Find(&link)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, nil
 	}
 
 	return &link, nil
@@ -49,13 +49,15 @@ func (r *ProjectRepoLinkRepository) GetByProjectID(projectID string) (*models.Pr
 
 func (r *ProjectRepoLinkRepository) GetByRepoBranch(githubInstallationID string, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error) {
 	var link models.ProjectRepoLink
-	if err := r.db.
+	tx := r.db.
 		Where("github_installation_id = ? AND github_repo_id = ? AND tracked_branch = ?", githubInstallationID, githubRepoID, trackedBranch).
-		First(&link).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+		Limit(1).
+		Find(&link)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, nil
 	}
 
 	return &link, nil
@@ -63,19 +65,25 @@ func (r *ProjectRepoLinkRepository) GetByRepoBranch(githubInstallationID string,
 
 func (r *ProjectRepoLinkRepository) LookupWebhookRoute(githubInstallationID int64, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error) {
 	var lookup models.ProjectRepoLink
-	if err := r.db.
-		Table("project_repo_links").
-		Select("project_repo_links.*").
-		Joins("JOIN github_installations ON github_installations.id = project_repo_links.github_installation_id").
-		Where("github_installations.github_installation_id = ?", githubInstallationID).
-		Where("github_installations.revoked_at IS NULL").
+
+	installationIDs := r.db.
+		Model(&models.GitHubInstallation{}).
+		Select("id").
+		Where("github_installation_id = ?", githubInstallationID).
+		Where("revoked_at IS NULL")
+
+	tx := r.db.
+		Model(&models.ProjectRepoLink{}).
+		Where("project_repo_links.github_installation_id IN (?)", installationIDs).
 		Where("project_repo_links.github_repo_id = ?", githubRepoID).
 		Where("project_repo_links.tracked_branch = ?", trackedBranch).
-		First(&lookup).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+		Limit(1).
+		Find(&lookup)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, nil
 	}
 
 	return &lookup, nil

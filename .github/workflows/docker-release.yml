@@ -135,7 +135,22 @@ jobs:
             type=sha,prefix=sha-
             type=ref,event=tag
 
-      - name: Build and Push Agent
+      - name: Build and Push Agent (Attempt 1)
+        id: build_agent_attempt_1
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: ./agent
+          file: ./agent/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=lazyops-agent
+          cache-to: type=gha,scope=lazyops-agent,mode=max
+
+      - name: Build and Push Agent (Retry)
+        if: steps.build_agent_attempt_1.outcome == 'failure'
         uses: docker/build-push-action@v6
         with:
           context: ./agent
