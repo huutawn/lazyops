@@ -6,7 +6,10 @@ import '@/styles/globals.css';
 
 export const metadata: Metadata = {
   title: 'LazyOps Console',
-  description: 'Operator console scaffold for LazyOps.',
+  description: 'Trình quản lý và triển khai dự án dễ dàng cho LazyOps.',
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 type RootLayoutProps = {

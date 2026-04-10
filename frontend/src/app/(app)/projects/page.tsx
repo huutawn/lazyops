@@ -18,9 +18,9 @@ export default function ProjectsPage() {
 
   if (isError) {
     return (
-      <div className="flex flex-col gap-6">
-        <PageHeader title="Projects" subtitle="Manage your application projects." />
-        <ErrorState title="Failed to load projects" message="Could not fetch projects from API." />
+      <div className="flex flex-col gap-6 max-w-5xl mx-auto py-4">
+        <PageHeader title="Dự án của bạn" subtitle="Quản lý các ứng dụng và dự án đã được kết nối." />
+        <ErrorState title="Lỗi tải dữ liệu" message="Không thể lấy danh sách dự án từ máy chủ." />
       </div>
     );
   }
@@ -28,53 +28,60 @@ export default function ProjectsPage() {
   const projects = data?.items ?? [];
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Projects"
-        subtitle="Manage repositories, infrastructure readiness, and deployments per project."
-        actions={
-          <Link
-            href="/onboarding"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-          >
-            New project
-          </Link>
-        }
-      />
+    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-2">Danh sách Dự án</h1>
+          <p className="text-muted-foreground text-lg">Quản lý mã nguồn, cấu hình hạ tầng và xem lịch sử triển khai của bạn.</p>
+        </div>
+        <Link
+          href="/onboarding"
+          className="rounded-xl bg-primary px-6 py-3 text-base font-bold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 hover:scale-105"
+        >
+          + Thêm Dự án mới
+        </Link>
+      </div>
 
       {projects.length === 0 ? (
-        <SectionCard title="No projects yet" description="Create your first project to get started.">
+        <SectionCard className="shadow-lg p-6 rounded-2xl border-dashed border-2">
           <EmptyState
-            title="No projects found"
-            description="Create a project from the onboarding flow, then connect repo and targets."
+            icon={<span className="text-4xl text-muted-foreground">📂</span>}
+            title="Bạn chưa có dự án nào"
+            description="Tạo dự án mới để kết nối mã nguồn và tự động triển khai."
             action={
               <Link
                 href="/onboarding"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                className="mt-4 inline-block rounded-xl bg-primary px-8 py-3 text-base font-bold text-primary-foreground transition-all hover:bg-primary/90 shadow-md hover:-translate-y-1"
               >
-                Open onboarding
+                Tạo dự án đầu tiên
               </Link>
             }
           />
         </SectionCard>
       ) : (
-        <SectionCard>
-          <div className="flex flex-col gap-2">
-            {projects.map((project) => (
-              <Link
-                key={project.id}
-                href={`/projects/${project.id}`}
-                className="flex items-center justify-between rounded-lg border border-lazyops-border/50 px-3 py-3 transition-colors hover:bg-lazyops-border/10"
-              >
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-lazyops-text">{project.name}</span>
-                  <span className="text-xs text-lazyops-muted">/{project.slug}</span>
+        <div className="grid gap-4 mt-2">
+          {projects.map((project) => (
+            <Link
+              key={project.id}
+              href={`/projects/${project.id}`}
+              className="group flex flex-col md:flex-row items-start md:items-center justify-between rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/50 hover:bg-accent/50 hover:shadow-md"
+            >
+              <div className="flex flex-col mb-2 md:mb-0">
+                <span className="text-xl font-bold text-foreground group-hover:text-primary transition-colors">{project.name}</span>
+                <span className="text-sm text-muted-foreground mt-1 font-mono">/{project.slug}</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>Nhánh:</span>
+                  <StatusBadge label={project.default_branch} variant="neutral" size="sm" dot={false} />
                 </div>
-                <StatusBadge label={project.default_branch} variant="neutral" size="sm" dot={false} />
-              </Link>
-            ))}
-          </div>
-        </SectionCard>
+                <div className="flex size-8 items-center justify-center rounded-full bg-secondary/50 text-secondary-foreground group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                  &rarr;
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
       )}
     </div>
   );

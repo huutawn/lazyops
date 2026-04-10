@@ -30,17 +30,21 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           mobileOpen ? 'translate-x-0 shadow-2xl shadow-primary/10' : '-translate-x-full',
         )}
       >
-        <div className="flex h-16 shrink-0 items-center gap-3 px-6 border-b border-border/50">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-inner shadow-primary/20">
-            <LayoutGrid className="size-4" />
+        <div className="flex h-20 shrink-0 items-center justify-center gap-3 border-b border-border/50 px-6 mt-2">
+          {/* USER INSTRUCTION: Ensure /logo.png exists in /frontend/public/ */}
+          <img src="/logo.png" alt="LazyOps Logo" className="h-10 object-contain drop-shadow-md" onError={(e) => {
+            (e.target as HTMLImageElement).style.display = 'none';
+            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+          }} />
+          <div className="hidden flex-col items-start leading-none tracking-tight">
+            <span className="text-xl font-black bg-gradient-to-r from-primary to-blue-500 bg-clip-text text-transparent">LazyOps</span>
           </div>
-          <span className="text-lg font-semibold tracking-tight text-foreground">LazyOps</span>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-4 py-6 scrollbar-hide" aria-label="Main navigation">
           
-          <div className="mb-4 px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
-            Điều hướng
+          <div className="mb-4 px-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">
+            Menu Chính
           </div>
 
           <ul className="flex flex-col gap-1.5">

@@ -8,28 +8,11 @@ import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
 import { ProjectThreeStepWizard } from '@/modules/bootstrap/project-three-step-wizard';
 import { CreateProjectForm } from '@/modules/onboarding/create-project-form';
-import { RuntimeModeCard } from '@/modules/onboarding/runtime-mode-card';
-import { RUNTIME_MODES } from '@/modules/onboarding/runtime-modes';
 import { useProjects } from '@/modules/projects/project-hooks';
 
-const ONBOARDING_STEPS = [
-  { step: 1, title: 'Tạo dự án', description: 'Tạo không gian triển khai cho ứng dụng của bạn.' },
-  { step: 2, title: 'Kết nối GitHub', description: 'Liên kết repository để tự động triển khai.' },
-  { step: 3, title: 'Kết nối máy chủ', description: 'Đăng ký máy chủ hoặc cụm để triển khai.' },
-  { step: 4, title: 'Triển khai', description: 'LazyOps tự xử lý phần còn lại, không cần YAML.' },
-];
-
 export default function OnboardingPage() {
-  if (!isFeatureEnabled('ux_three_step_flow')) {
-    return <LegacyOnboardingPage />;
-  }
-  return <ThreeStepOnboardingPage />;
-}
-
-function ThreeStepOnboardingPage() {
   const { data: projects, isLoading } = useProjects();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [selectedProjectID, setSelectedProjectID] = useState<string | null>(null);
@@ -47,191 +30,92 @@ function ThreeStepOnboardingPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Bắt đầu với LazyOps"
-        subtitle="Kết nối mã nguồn, kết nối máy chủ, rồi triển khai. Không cần cấu hình JSON phức tạp."
-      />
+    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
+      <div className="text-center md:text-left mb-4">
+        <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-foreground mb-3">
+          Bắt đầu triển khai với LazyOps
+        </h1>
+        <p className="text-lg text-muted-foreground max-w-2xl">
+          Chỉ cần 3 bước đơn giản: Tạo dự án, Kết nối GitHub, và Triển khai thẳng lên máy chủ của bạn mà không cần rành DevOps!
+        </p>
+      </div>
 
       {projectItems.length === 0 ? (
-        <>
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
           {!showCreateForm ? (
-            <SectionCard
-              title="Step 0: Create your first project"
-              description="Tạo dự án đầu tiên để mở luồng triển khai 3 bước."
-              actions={
-                <button
-                  type="button"
-                  className="rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-                  onClick={() => setShowCreateForm(true)}
-                >
-                  Tạo dự án
-                </button>
-              }
-            >
+            <SectionCard className="shadow-xl rounded-2xl border-primary/20 bg-card/60 backdrop-blur-sm p-4">
               <EmptyState
-                title="No projects yet"
-                description="Tạo một dự án để mở luồng thiết lập đơn giản."
+                icon={<span className="text-5xl">🚀</span>}
+                title="Bước 1: Tạo dự án đầu tiên"
+                description="Hãy bắt đầu bằng cách tạo một không gian ảo chứa mã nguồn và môi trường của bạn."
                 action={
                   <button
                     type="button"
-                    className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                    className="mt-4 rounded-xl bg-primary px-8 py-4 text-lg font-bold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:scale-105 active:scale-95"
                     onClick={() => setShowCreateForm(true)}
                   >
-                    Tạo dự án
+                    + Tạo dự án mới ngay
                   </button>
                 }
               />
             </SectionCard>
           ) : (
-            <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
+            <div className="shadow-2xl rounded-2xl border-primary/20 bg-card p-6">
+              <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
+            </div>
           )}
-        </>
+        </div>
       ) : (
-        <>
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <SectionCard
-            title="Choose project"
-            description="Wizard bên dưới sẽ cấu hình dự án bạn chọn."
+            title="Lựa chọn dự án"
+            description="Vui lòng chọn dự án bạn muốn tiếp tục cấu hình triển khai."
+            className="shadow-md rounded-xl"
             actions={
               selectedProject ? (
                 <Link
                   href={`/projects/${selectedProject.id}`}
-                  className="rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+                  className="rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 px-4 py-2 text-sm font-semibold transition-colors shadow-sm"
                 >
-                  Mở trang dự án
+                  Truy cập trang dự án &rarr;
                 </Link>
               ) : null
             }
           >
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {projectItems.map((project) => {
                 const selected = project.id === effectiveProjectID;
                 return (
                   <button
                     key={project.id}
                     type="button"
-                    className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                    className={`rounded-xl border-2 p-4 text-left transition-all duration-200 group ${
                       selected
-                        ? 'border-primary/50 bg-primary/10'
-                        : 'border-lazyops-border hover:bg-lazyops-border/10'
+                        ? 'border-primary bg-primary/5 shadow-md scale-[1.02]'
+                        : 'border-border hover:border-primary/40 hover:bg-accent hover:shadow-sm'
                     }`}
                     onClick={() => setSelectedProjectID(project.id)}
                   >
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-sm font-medium text-lazyops-text">{project.name}</span>
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-base font-bold text-foreground group-hover:text-primary transition-colors">{project.name}</span>
                       <StatusBadge label={project.default_branch} variant="neutral" size="sm" dot={false} />
                     </div>
-                    <p className="text-xs text-lazyops-muted">/{project.slug}</p>
+                    <p className="text-sm text-muted-foreground truncate">/{project.slug}</p>
                   </button>
                 );
               })}
             </div>
           </SectionCard>
 
-          {selectedProject ? <ProjectThreeStepWizard projectId={selectedProject.id} /> : <LoadingBlock label="Loading project..." className="py-6" />}
-        </>
-      )}
-    </div>
-  );
-}
-
-function LegacyOnboardingPage() {
-  const { data: projects, isLoading } = useProjects();
-  const [showCreateForm, setShowCreateForm] = useState(false);
-
-  if (isLoading) {
-    return <SkeletonPage title cards={2} />;
-  }
-
-  const hasProjects = projects && projects.items.length > 0;
-
-  return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Chào mừng đến LazyOps"
-        subtitle="Triển khai hạ tầng theo cách đơn giản nhất."
-      />
-
-      {hasProjects && (
-        <SectionCard title="Dự án của bạn" description="Bạn đã có sẵn các dự án.">
-          <div className="flex flex-col gap-2">
-            {projects.items.map((project) => (
-              <Link
-                key={project.id}
-                href={`/projects/${project.id}`}
-                className="flex items-center justify-between rounded-lg px-3 py-2 transition-colors hover:bg-lazyops-border/20"
-              >
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-lazyops-text">{project.name}</span>
-                  <span className="text-xs text-lazyops-muted">/{project.slug}</span>
-                </div>
-                <StatusBadge label={project.default_branch} variant="neutral" size="sm" dot={false} />
-              </Link>
-            ))}
+          <div className="rounded-2xl border bg-card/50 shadow-sm overflow-hidden p-2">
+            {selectedProject ? (
+              <ProjectThreeStepWizard projectId={selectedProject.id} />
+            ) : (
+              <LoadingBlock label="Đang tải dữ liệu dự án..." className="py-12" />
+            )}
           </div>
-        </SectionCard>
-      )}
-
-      {!showCreateForm ? (
-        <SectionCard
-          title="Get started"
-          description="Tạo dự án đầu tiên để bắt đầu triển khai."
-          actions={
-            <button
-              type="button"
-              className="rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-              onClick={() => setShowCreateForm(true)}
-            >
-              Tạo dự án
-            </button>
-          }
-        >
-          {hasProjects ? null : (
-            <EmptyState
-              title="No projects yet"
-              description="Tạo dự án đầu tiên để bắt đầu quản lý máy chủ và triển khai."
-              action={
-                <button
-                  type="button"
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
-                  onClick={() => setShowCreateForm(true)}
-                >
-                  Tạo dự án
-                </button>
-              }
-            />
-          )}
-        </SectionCard>
-      ) : (
-        <CreateProjectForm onSuccess={() => setShowCreateForm(false)} />
-      )}
-
-      <SectionCard
-        title="How it works"
-        description="LazyOps hỗ trợ 3 chế độ chạy phù hợp theo hạ tầng."
-      >
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {RUNTIME_MODES.map((mode) => (
-            <RuntimeModeCard key={mode.id} {...mode} />
-          ))}
         </div>
-      </SectionCard>
-
-      <SectionCard title="Checklist thiết lập" description="Làm theo các bước sau để chạy service đầu tiên.">
-        <div className="flex flex-col gap-3">
-          {ONBOARDING_STEPS.map((item) => (
-            <div key={item.step} className="flex items-start gap-4">
-              <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
-                {item.step}
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-lazyops-text">{item.title}</span>
-                <span className="text-xs text-lazyops-muted">{item.description}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
+      )}
     </div>
   );
 }
