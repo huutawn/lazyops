@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lazyops-server/internal/runtime"
+	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
 )
 
@@ -83,6 +84,11 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		return nil, ErrInvalidInput
 	}
 
+	logger.Info("rollout_starting",
+		"project_id", projectID,
+		"deployment_id", deploymentID,
+	)
+
 	deployment, err := s.deployments.deployments.GetByIDForProject(projectID, deploymentID)
 	if err != nil {
 		return nil, err
@@ -100,6 +106,12 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 	}
 
 	if rolloutAlreadyStarted(deployment.Status, revision.Status) {
+		logger.Warn("rollout_already_started",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"deployment_status", deployment.Status,
+			"revision_status", revision.Status,
+		)
 		return &RolloutExecutionResult{
 			DeploymentID:   deployment.ID,
 			RevisionID:     revision.ID,
@@ -112,6 +124,11 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		return nil, fmt.Errorf("parse compiled revision: %w", err)
 	}
 	if strings.TrimSpace(compiled.ArtifactRef) == "" && strings.TrimSpace(compiled.ImageRef) == "" {
+		logger.Warn("rollout_artifact_pending",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"revision_id", revision.ID,
+		)
 		return nil, ErrRolloutArtifactPending
 	}
 
@@ -123,6 +140,12 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		return nil, ErrInvalidInput
 	}
 	if binding.RuntimeMode != runtime.RuntimeModeStandalone || binding.TargetKind != "instance" {
+		logger.Warn("rollout_unsupported_target",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"runtime_mode", binding.RuntimeMode,
+			"target_kind", binding.TargetKind,
+		)
 		return nil, ErrRolloutUnsupportedTarget
 	}
 
@@ -131,14 +154,34 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		return nil, err
 	}
 	if instance == nil || instance.AgentID == nil || strings.TrimSpace(*instance.AgentID) == "" || strings.EqualFold(instance.Status, "offline") {
+		logger.Warn("rollout_agent_unavailable",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"instance_id", binding.TargetID,
+			"instance_status", instance.Status,
+			"has_agent_id", instance.AgentID != nil,
+		)
 		return nil, ErrRolloutAgentUnavailable
 	}
 	agentID := strings.TrimSpace(*instance.AgentID)
+
+	logger.Info("rollout_planning_candidate",
+		"project_id", projectID,
+		"deployment_id", deploymentID,
+		"agent_id", agentID,
+	)
 
 	plan, err := s.planner.PlanCandidate(ctx, projectID, revision.ID)
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Info("rollout_transitioning_to_running",
+		"project_id", projectID,
+		"deployment_id", deploymentID,
+		"revision_id", revision.ID,
+		"plan_steps", len(plan.Steps),
+	)
 
 	if _, err := s.deployments.TransitionRevisionStatus(projectID, revision.ID, RevisionStatusPlanned); err != nil {
 		return nil, err
@@ -167,20 +210,50 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		})
 	}
 
-	for _, step := range plan.Steps {
+	for i, step := range plan.Steps {
 		cmd := enrichRolloutCommand(step.Command, projectID, revision.ID, correlationID)
+		logger.Info("rollout_dispatching_command",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"revision_id", revision.ID,
+			"step_index", i,
+			"command_type", cmd.Type,
+			"agent_id", agentID,
+		)
+
 		cmdResult, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd)
 		if err != nil {
+			logger.Error("rollout_dispatch_failed",
+				"project_id", projectID,
+				"deployment_id", deploymentID,
+				"command_type", cmd.Type,
+				"error", err.Error(),
+			)
 			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
 			return result, err
 		}
 		result.DispatchedCommands = append(result.DispatchedCommands, cmd.Type)
+
+		logger.Info("rollout_waiting_for_response",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"command_type", cmd.Type,
+			"request_id", cmdResult.RequestID,
+			"timeout", "5m",
+		)
 
 		waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Minute)
 		tracked, waitErr := s.dispatcher.WaitForCommand(waitCtx, cmdResult.RequestID)
 		waitCancel()
 
 		if waitErr != nil {
+			logger.Error("rollout_command_timeout",
+				"project_id", projectID,
+				"deployment_id", deploymentID,
+				"command_type", cmd.Type,
+				"request_id", cmdResult.RequestID,
+				"error", waitErr.Error(),
+			)
 			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
 			_, _ = s.planner.RecordIncident(projectID, deployment.ID, revision.ID, IncidentKindHealthGateTimeout, IncidentSeverityCritical, "command execution timed out or failed", map[string]any{
 				"command_type": cmd.Type,
@@ -196,6 +269,13 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		}
 
 		if tracked.State == CommandStateFailed {
+			logger.Error("rollout_command_failed",
+				"project_id", projectID,
+				"deployment_id", deploymentID,
+				"command_type", cmd.Type,
+				"request_id", cmdResult.RequestID,
+				"tracked_error", tracked.Error,
+			)
 			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
 			_, _ = s.planner.RecordIncident(projectID, deployment.ID, revision.ID, IncidentKindUnhealthyCandidate, IncidentSeverityCritical, "command execution failed", map[string]any{
 				"command_type": cmd.Type,
@@ -209,6 +289,13 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 			}
 			return result, fmt.Errorf("command %q failed: %s", cmd.Type, tracked.Error)
 		}
+
+		logger.Info("rollout_command_completed",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"command_type", cmd.Type,
+			"state", tracked.State,
+		)
 
 		switch cmd.Type {
 		case runtime.CommandTypeStartReleaseCandidate:
@@ -262,6 +349,13 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 			}
 		}
 	}
+
+	logger.Info("rollout_completed",
+		"project_id", projectID,
+		"deployment_id", deploymentID,
+		"revision_id", revision.ID,
+		"commands_dispatched", len(result.DispatchedCommands),
+	)
 
 	return result, nil
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lazyops-server/internal/runtime"
+	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
 )
 
@@ -148,6 +149,10 @@ func (s *ControlService) UnregisterAgent(agentID string) {
 
 func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cmd runtime.AgentCommand) (*runtime.CommandResult, error) {
 	if !s.hub.IsConnected(agentID) {
+		logger.Warn("control_dispatch_agent_not_connected",
+			"agent_id", agentID,
+			"command_type", cmd.Type,
+		)
 		return nil, fmt.Errorf("agent %q is not connected", agentID)
 	}
 
@@ -173,8 +178,21 @@ func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cm
 	)
 
 	if err := s.hub.SendToAgent(agentID, envelope); err != nil {
+		logger.Error("control_dispatch_send_failed",
+			"agent_id", agentID,
+			"command_type", cmd.Type,
+			"request_id", cmd.RequestID,
+			"error", err.Error(),
+		)
 		return nil, err
 	}
+
+	logger.Info("control_dispatched",
+		"agent_id", agentID,
+		"command_type", cmd.Type,
+		"request_id", cmd.RequestID,
+		"correlation_id", cmd.CorrelationID,
+	)
 
 	return &runtime.CommandResult{
 		RequestID: cmd.RequestID,

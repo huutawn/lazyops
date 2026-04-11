@@ -34,6 +34,9 @@ func Migrate(db *gorm.DB) error {
 	if err := migrateProjectRepoLinkLegacyColumns(db); err != nil {
 		return err
 	}
+	if err := migrateBuildJobGitHubDeliveryColumn(db); err != nil {
+		return err
+	}
 
 	return db.AutoMigrate(
 		&models.User{},
@@ -95,4 +98,20 @@ func migrateProjectRepoLinkLegacyColumns(db *gorm.DB) error {
 	}
 
 	return nil
+}
+
+func migrateBuildJobGitHubDeliveryColumn(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("build_jobs") {
+		return nil
+	}
+	if db.Migrator().HasColumn(&models.BuildJob{}, "github_delivery_id") {
+		return nil
+	}
+	if err := db.Exec(`ALTER TABLE build_jobs ADD COLUMN github_delivery_id VARCHAR(255) NOT NULL DEFAULT ''`).Error; err != nil {
+		return err
+	}
+	return db.Exec(`CREATE INDEX IF NOT EXISTS idx_build_jobs_github_delivery_id ON build_jobs(github_delivery_id)`).Error
 }
