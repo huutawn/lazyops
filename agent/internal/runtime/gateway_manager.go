@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"lazyops-agent/internal/contracts"
@@ -483,21 +484,36 @@ func execCaddyReload(configPath string) error {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get("http://localhost:2019/config")
 	if err != nil {
-		// Caddy isn't running, start it
+		// Caddy isn't running, start it as a background process
 		slog.Default().Info("caddy not running, starting with config",
 			"config_path", configPath,
 		)
-		// Use context with timeout to avoid hanging
-		startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(startCtx, "caddy", "start", "--config", configPath, "--adapter", "caddyfile")
-		output, startErr := cmd.CombinedOutput()
-		if startErr != nil {
-			return fmt.Errorf("caddy start: %s: %w", strings.TrimSpace(string(output)), startErr)
+		// First validate the config
+		if err := execCaddyValidate(configPath); err != nil {
+			return fmt.Errorf("caddy validate before start: %w", err)
 		}
-		// Wait briefly for Caddy to become available
+		// Start Caddy as a background daemon (detached from parent process)
+		cmd := exec.Command("caddy", "run", "--config", configPath, "--adapter", "caddyfile")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("caddy start failed: %w", err)
+		}
+		// Detach from the child process — don't wait for it
+		// The child will continue running in the background
+		// Wait briefly then check if it's running
 		time.Sleep(2 * time.Second)
-		return nil
+		for i := 0; i < 5; i++ {
+			r, pingErr := client.Get("http://localhost:2019/config")
+			if pingErr == nil {
+				_ = r.Body.Close()
+				slog.Default().Info("caddy started successfully")
+				return nil
+			}
+			time.Sleep(1 * time.Second)
+		}
+		return fmt.Errorf("caddy started but admin API not reachable after 7s")
 	}
 	_ = resp.Body.Close()
 
