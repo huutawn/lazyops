@@ -65,7 +65,15 @@ func (ctl *AgentControlController) ControlStream(c *gin.Context) {
 		"agent_id": agentID,
 	})
 
-	go ctl.runControlLoop(client, claims.UserID)
+	// Block the HTTP handler goroutine so the WebSocket stays open.
+	// runControlLoop runs in a separate goroutine and will close the
+	// connection + unregister when done.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ctl.runControlLoop(client, claims.UserID)
+	}()
+	<-done
 }
 
 func (ctl *AgentControlController) runControlLoop(client *service.ControlClient, userID string) {
