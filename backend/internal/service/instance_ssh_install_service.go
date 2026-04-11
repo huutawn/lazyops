@@ -83,7 +83,7 @@ func (e *NativeSSHExecutor) Execute(ctx context.Context, input SSHExecutionInput
 
 	timeout := input.ConnectionTimeout
 	if timeout <= 0 {
-		timeout = 15 * time.Second
+		timeout = 120 * time.Second
 	}
 
 	clientConfig := &ssh.ClientConfig{
