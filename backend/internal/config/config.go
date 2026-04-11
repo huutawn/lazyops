@@ -129,7 +129,7 @@ func Load() Config {
 			Host:           getEnv("SERVER_HOST", "0.0.0.0"),
 			Port:           getEnv("SERVER_PORT", "8080"),
 			GinMode:        getEnv("GIN_MODE", "debug"),
-			RequestTimeout: getEnvAsDuration("SERVER_REQUEST_TIMEOUT", 15*time.Second),
+			RequestTimeout: getEnvAsDuration("SERVER_REQUEST_TIMEOUT", 120*time.Second),
 		},
 		Database: DatabaseConfig{
 			Host:         getEnv("DB_HOST", "127.0.0.1"),

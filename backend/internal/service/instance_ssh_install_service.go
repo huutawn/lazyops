@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -86,6 +87,9 @@ func (e *NativeSSHExecutor) Execute(ctx context.Context, input SSHExecutionInput
 		timeout = 120 * time.Second
 	}
 
+	// NativeSSHExecutor has no logger, so we just set the timeout silently.
+	// The caller (InstanceSSHInstallService) logs the attempt.
+
 	clientConfig := &ssh.ClientConfig{
 		User:            strings.TrimSpace(input.Username),
 		Auth:            authMethods,
@@ -158,6 +162,14 @@ func (s *InstanceSSHInstallService) WithBootstrapOrchestrator(bootstrap *Bootstr
 }
 
 func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInstanceAgentSSHCommand) (*InstallInstanceAgentSSHResult, error) {
+	// Log with timeout marker to confirm new binary is deployed
+	slog.Info("ssh_install_starting",
+		"instance_id", cmd.InstanceID,
+		"host", cmd.Host,
+		"port", cmd.Port,
+		"username", cmd.Username,
+		"ssh_timeout", "120s",
+	)
 	userID := strings.TrimSpace(cmd.UserID)
 	instanceID := strings.TrimSpace(cmd.InstanceID)
 	if userID == "" || instanceID == "" {
