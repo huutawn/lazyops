@@ -23,8 +23,8 @@ func (r *ProjectRepoLinkRepository) Upsert(link *models.ProjectRepoLink) error {
 			{Name: "project_id"},
 		},
 		DoUpdates: clause.Assignments(map[string]any{
-			"git_hub_installation_id": link.GitHubInstallationID,
-			"git_hub_repo_id":         link.GitHubRepoID,
+			"github_installation_id": link.GitHubInstallationID,
+			"github_repo_id":         link.GitHubRepoID,
 			"repo_owner":             link.RepoOwner,
 			"repo_name":              link.RepoName,
 			"tracked_branch":         link.TrackedBranch,
@@ -50,7 +50,7 @@ func (r *ProjectRepoLinkRepository) GetByProjectID(projectID string) (*models.Pr
 func (r *ProjectRepoLinkRepository) GetByRepoBranch(githubInstallationID string, githubRepoID int64, trackedBranch string) (*models.ProjectRepoLink, error) {
 	var link models.ProjectRepoLink
 	tx := r.db.
-		Where("git_hub_installation_id = ? AND git_hub_repo_id = ? AND tracked_branch = ?", githubInstallationID, githubRepoID, trackedBranch).
+		Where("github_installation_id = ? AND github_repo_id = ? AND tracked_branch = ?", githubInstallationID, githubRepoID, trackedBranch).
 		Limit(1).
 		Find(&link)
 	if tx.Error != nil {
@@ -74,8 +74,8 @@ func (r *ProjectRepoLinkRepository) LookupWebhookRoute(githubInstallationID int6
 
 	tx := r.db.
 		Model(&models.ProjectRepoLink{}).
-		Where("project_repo_links.git_hub_installation_id IN (?)", installationIDs).
-		Where("project_repo_links.git_hub_repo_id = ?", githubRepoID).
+		Where("project_repo_links.github_installation_id IN (?)", installationIDs).
+		Where("project_repo_links.github_repo_id = ?", githubRepoID).
 		Where("project_repo_links.tracked_branch = ?", trackedBranch).
 		Limit(1).
 		Find(&lookup)

@@ -143,7 +143,6 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
   const [infraForm, setInfraForm] = useState({
     instance_name: '',
     public_ip: '',
-    private_ip: '',
     ssh_host: '',
     ssh_port: '22',
     ssh_username: 'root',
@@ -277,7 +276,6 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
       await connectInfra.mutateAsync({
         instance_name: infraForm.instance_name.trim() || undefined,
         public_ip: infraForm.public_ip.trim() || undefined,
-        private_ip: infraForm.private_ip.trim() || undefined,
         ssh_host: infraForm.ssh_host.trim(),
         ssh_port: Number.parseInt(infraForm.ssh_port, 10) || 22,
         ssh_username: infraForm.ssh_username.trim(),
@@ -290,7 +288,6 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
       setInfraForm({
         instance_name: '',
         public_ip: '',
-        private_ip: '',
         ssh_host: '',
         ssh_port: '22',
         ssh_username: 'root',
@@ -562,21 +559,13 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
           </button>
 
           {showInfraAdvanced ? (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-1">
               <FormField label="Public IP (tuỳ chọn)">
                 <FormInput
                   type="text"
                   placeholder="203.0.113.10"
                   value={infraForm.public_ip}
                   onChange={(event) => setInfraForm((prev) => ({ ...prev, public_ip: event.target.value }))}
-                />
-              </FormField>
-              <FormField label="Private IP (tuỳ chọn)">
-                <FormInput
-                  type="text"
-                  placeholder="10.0.1.10"
-                  value={infraForm.private_ip}
-                  onChange={(event) => setInfraForm((prev) => ({ ...prev, private_ip: event.target.value }))}
                 />
               </FormField>
             </div>

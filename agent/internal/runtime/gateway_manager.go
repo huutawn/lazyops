@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"lazyops-agent/internal/contracts"
 )
 
 type GatewayManager struct {
@@ -281,6 +283,8 @@ func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) (G
 		RouteFingerprint:     resolver.RouteFingerprint(),
 		InvalidationRules:    resolver.InvalidationRules(),
 		Routes:               routes,
+		RoutingPolicy:        runtimeCtx.RoutingPolicy(),
+		Services:             runtimeCtx.Services,
 	}, nil
 }
 
@@ -522,6 +526,16 @@ func (m *GatewayManager) defaultRollback(_ context.Context, _ GatewayPlan, paths
 }
 
 func renderCaddyfile(plan GatewayPlan) string {
+	// If routing policy has routes, generate path-based config
+	if len(plan.RoutingPolicy.Routes) > 0 {
+		return renderCaddyfileWithPathRouting(plan)
+	}
+
+	// Fallback: per-service domains (existing behavior)
+	return renderCaddyfilePerService(plan)
+}
+
+func renderCaddyfilePerService(plan GatewayPlan) string {
 	if len(plan.Routes) == 0 {
 		return "{\n  auto_https disable_redirects\n}\n\n# no public services for this revision\n"
 	}
@@ -534,10 +548,172 @@ func renderCaddyfile(plan GatewayPlan) string {
 	for _, route := range plan.Routes {
 		builder.WriteString(fmt.Sprintf("https://%s, https://%s {\n", route.PrimaryHost, route.FallbackHost))
 		builder.WriteString("  encode zstd gzip\n")
+
+		// WebSocket support: detect /ws paths and add explicit handling
+		wsPath := inferWebSocketPath(route.ServiceName)
+		if wsPath != "" {
+			builder.WriteString(fmt.Sprintf("  @ws path %s*\n", wsPath))
+			builder.WriteString("  handle @ws {\n")
+			builder.WriteString(fmt.Sprintf("    reverse_proxy %s {\n", route.Upstream))
+			builder.WriteString("      transport http {\n")
+			builder.WriteString("        keepalive 60s\n")
+			builder.WriteString("        keepalive_idle_conns 100\n")
+			builder.WriteString("        read_buffer 32k\n")
+			builder.WriteString("        write_buffer 32k\n")
+			builder.WriteString("        flush_interval -1\n")
+			builder.WriteString("      }\n")
+			builder.WriteString("      health_uri /health\n")
+			builder.WriteString("      health_interval 30s\n")
+			builder.WriteString("      health_timeout 10s\n")
+			builder.WriteString("    }\n")
+			builder.WriteString("  }\n\n")
+		}
+
 		builder.WriteString(fmt.Sprintf("  reverse_proxy %s\n", route.Upstream))
 		builder.WriteString("}\n\n")
 	}
 	return builder.String()
+}
+
+func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
+	if len(plan.Routes) == 0 && plan.RoutingPolicy.SharedDomain == "" {
+		return renderCaddyfilePerService(plan)
+	}
+
+	var builder strings.Builder
+	builder.WriteString("{\n")
+	builder.WriteString("  auto_https on\n")
+	builder.WriteString("}\n\n")
+
+	// Shared domain with path-based routing
+	if plan.RoutingPolicy.SharedDomain != "" {
+		domain := plan.RoutingPolicy.SharedDomain
+
+		// Add magic domain fallbacks for the first service's domain
+		for _, route := range plan.Routes {
+			if len(plan.RoutingPolicy.Routes) > 0 && route.ServiceName == plan.RoutingPolicy.Routes[0].Service {
+				domain = fmt.Sprintf("%s, https://%s, https://%s",
+					domain, route.PrimaryHost, route.FallbackHost)
+				break
+			}
+		}
+
+		builder.WriteString(fmt.Sprintf("%s {\n", domain))
+		builder.WriteString("  encode zstd gzip\n\n")
+
+		// WebSocket routes (must be first)
+		wsRoutes := filterRoutes(plan.RoutingPolicy.Routes, true)
+		for i, route := range wsRoutes {
+			svc := findServiceByRouteName(route.Service, plan.Services)
+			if svc == nil {
+				continue
+			}
+
+			matcher := fmt.Sprintf("  @ws%d path %s*", i, route.Path)
+			builder.WriteString(matcher + "\n")
+			builder.WriteString(fmt.Sprintf("  handle @ws%d {\n", i))
+			builder.WriteString(fmt.Sprintf("    reverse_proxy %s:%d {\n", svc.Name, svc.HealthCheck.Port))
+			builder.WriteString("      transport http {\n")
+			builder.WriteString("        keepalive 60s\n")
+			builder.WriteString("        keepalive_idle_conns 100\n")
+			builder.WriteString("        read_buffer 32k\n")
+			builder.WriteString("        write_buffer 32k\n")
+			builder.WriteString("        flush_interval -1\n")
+			builder.WriteString("      }\n")
+			builder.WriteString("      health_uri /health\n")
+			builder.WriteString("      health_interval 30s\n")
+			builder.WriteString("      health_timeout 10s\n")
+			builder.WriteString("    }\n")
+			builder.WriteString("  }\n\n")
+		}
+
+		// HTTP routes
+		httpRoutes := filterRoutes(plan.RoutingPolicy.Routes, false)
+		for _, route := range httpRoutes {
+			svc := findServiceByRouteName(route.Service, plan.Services)
+			if svc == nil {
+				continue
+			}
+
+			if route.Path == "/" {
+				// Default route (catch-all)
+				builder.WriteString("  handle {\n")
+				if route.StripPrefix {
+					builder.WriteString("    uri strip_prefix /\n")
+				}
+				builder.WriteString(fmt.Sprintf("    reverse_proxy %s:%d\n", svc.Name, svc.HealthCheck.Port))
+				builder.WriteString("  }\n\n")
+			} else {
+				matcher := fmt.Sprintf("  @%s path %s*", sanitizePathMatcher(route.Path), route.Path)
+				builder.WriteString(matcher + "\n")
+				builder.WriteString(fmt.Sprintf("  handle @%s {\n", sanitizePathMatcher(route.Path)))
+				if route.StripPrefix {
+					builder.WriteString(fmt.Sprintf("    uri strip_prefix %s\n", route.Path))
+				}
+				builder.WriteString(fmt.Sprintf("    reverse_proxy %s:%d\n", svc.Name, svc.HealthCheck.Port))
+				builder.WriteString("  }\n\n")
+			}
+		}
+
+		builder.WriteString("}\n\n")
+	}
+
+	// Individual service domains (keep for direct access)
+	for _, route := range plan.Routes {
+		builder.WriteString(fmt.Sprintf("https://%s, https://%s {\n", route.PrimaryHost, route.FallbackHost))
+		builder.WriteString("  encode zstd gzip\n")
+		builder.WriteString(fmt.Sprintf("  reverse_proxy %s\n", route.Upstream))
+		builder.WriteString("}\n\n")
+	}
+
+	return builder.String()
+}
+
+func filterRoutes(routes []contracts.RoutePayload, websocket bool) []contracts.RoutePayload {
+	var filtered []contracts.RoutePayload
+	for _, r := range routes {
+		if r.WebSocket == websocket {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func findServiceByRouteName(name string, services []ServiceRuntimeContext) *ServiceRuntimeContext {
+	for i := range services {
+		if services[i].Name == name {
+			return &services[i]
+		}
+	}
+	return nil
+}
+
+func sanitizePathMatcher(path string) string {
+	// Convert "/api/v1" → "api_v1" for Caddy matcher name
+	path = strings.TrimPrefix(path, "/")
+	path = strings.ReplaceAll(path, "/", "_")
+	path = strings.ReplaceAll(path, "-", "_")
+	return path
+}
+
+// inferWebSocketPath returns a common WebSocket path prefix for a service
+// based on service name conventions. Returns empty string if no WebSocket
+// path is inferred.
+func inferWebSocketPath(serviceName string) string {
+	lower := strings.ToLower(serviceName)
+	// Common WebSocket path conventions
+	if strings.Contains(lower, "realtime") || strings.Contains(lower, "socket") || strings.Contains(lower, "ws") {
+		return "/ws"
+	}
+	// For backend services, common WS paths
+	if strings.Contains(lower, "backend") || strings.Contains(lower, "api") || strings.Contains(lower, "server") {
+		return "/ws"
+	}
+	// For gateway/hub services
+	if strings.Contains(lower, "gateway") || strings.Contains(lower, "hub") || strings.Contains(lower, "chat") {
+		return "/ws"
+	}
+	return ""
 }
 
 func gatewayVersion(runtimeCtx RuntimeContext) string {

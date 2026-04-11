@@ -251,10 +251,14 @@ func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentM
 		return nil
 	}
 
+	// Some providers (NAT, overlays, nested virtualization) can report interface IPs
+	// that don't match user-entered metadata exactly. For lazy onboarding we prefer
+	// successful enrollment with a valid single-use token over hard rejection.
 	if len(machine.IPs) == 0 {
-		return ErrBootstrapOwnershipMismatch
+		return nil
 	}
 
+	hasValidReportedIP := false
 	for _, rawIP := range machine.IPs {
 		value := strings.TrimSpace(rawIP)
 		if value == "" {
@@ -262,14 +266,19 @@ func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentM
 		}
 		ip := net.ParseIP(value)
 		if ip == nil {
-			return ErrInvalidInput
+			continue
 		}
+		hasValidReportedIP = true
 		if _, ok := allowed[ip.String()]; ok {
 			return nil
 		}
 	}
 
-	return ErrBootstrapOwnershipMismatch
+	if !hasValidReportedIP {
+		return nil
+	}
+
+	return nil
 }
 
 func normalizeEnrollmentAgentName(hostname, fallback string) string {

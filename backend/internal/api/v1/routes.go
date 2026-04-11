@@ -17,6 +17,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	buildController := controller.NewBuildController(app.BuildCallbackSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
 	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc)
+	routingController := controller.NewRoutingController(app.RoutingSvc)
 	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator, app.InstanceService, app.InstanceSSHInstallSvc)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
 	initContractController := controller.NewInitContractController(app.InitContractSvc)
@@ -96,6 +97,11 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.PUT("/projects/:id/internal-services",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				projectInternalServiceController.Configure,
+			)
+			userProtected.GET("/projects/:id/routing", routingController.Get)
+			userProtected.PUT("/projects/:id/routing",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				routingController.Update,
 			)
 			userProtected.GET("/projects/:id/bootstrap/status", bootstrapController.Status)
 			userProtected.POST("/projects/bootstrap/auto", bootstrapController.Auto)

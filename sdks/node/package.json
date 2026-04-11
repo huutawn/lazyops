@@ -1,0 +1,26 @@
+{
+  "name": "lazyops-sdk",
+  "version": "0.1.0",
+  "description": "LazyOps SDK for service discovery and communication",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "tawn",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "keywords": [
+    "lazyops",
+    "service-discovery",
+    "microservices"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tawn/lazyops"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

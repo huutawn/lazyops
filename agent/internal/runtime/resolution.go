@@ -102,8 +102,8 @@ func (r *runtimeDependencyResolver) ResolveDependency(service ServiceRuntimeCont
 	resolution := resolvedRoute{
 		RouteScope:          "local",
 		ResolutionStatus:    "local_verified",
-		ResolvedEndpoint:    derivedDependencyEndpoint(dependency),
-		ResolvedUpstream:    derivedProxyUpstream(dependency),
+		ResolvedEndpoint:    derivedDependencyEndpoint(dependency, r.runtimeCtx.Project.ProjectID),
+		ResolvedUpstream:    derivedProxyUpstream(dependency, r.runtimeCtx.Project.ProjectID),
 		PlacementTargetID:   targetPlacement.TargetID,
 		PlacementTargetKind: targetPlacement.TargetKind,
 		PlacementPeerRef:    targetPeerRef,

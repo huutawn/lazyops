@@ -110,7 +110,7 @@ export default function ProjectInternalServicesPage() {
           <FormButton
             type="button"
             loading={configure.isPending}
-            disabled={!dirty}
+            disabled={configure.isPending}
             onClick={() => {
               const kinds = [...working].sort() as InternalServiceKind[];
               void configure.mutateAsync({ kinds }).then(() => {
@@ -118,7 +118,7 @@ export default function ProjectInternalServicesPage() {
               });
             }}
           >
-            Lưu cấu hình
+            {dirty ? 'Lưu cấu hình' : 'Đồng bộ lại'}
           </FormButton>
         </div>
       </SectionCard>

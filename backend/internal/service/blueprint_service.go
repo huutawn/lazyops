@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"lazyops-server/internal/models"
@@ -70,6 +71,9 @@ func (s *BlueprintService) Compile(cmd CompileBlueprintCommand) (*CompileBluepri
 	if err := validateLazyopsDocument(document, *project); err != nil {
 		return nil, err
 	}
+	if err := validateRoutingPolicy(document.RoutingPolicy, document.Services); err != nil {
+		return nil, err
+	}
 
 	targetRef := normalizeBindingTargetRef(document.DeploymentBinding.TargetRef)
 	binding, err := s.bindings.GetByTargetRefForProject(project.ID, targetRef)
@@ -132,6 +136,7 @@ func (s *BlueprintService) Compile(cmd CompileBlueprintCommand) (*CompileBluepri
 		CompatibilityPolicy: document.CompatibilityPolicy,
 		MagicDomainPolicy:   magicDomainPolicy,
 		ScaleToZeroPolicy:   document.ScaleToZeroPolicy,
+		RoutingPolicy:       document.RoutingPolicy,
 		ArtifactMetadata:    artifact,
 	}
 
@@ -184,6 +189,7 @@ func (s *BlueprintService) Compile(cmd CompileBlueprintCommand) (*CompileBluepri
 			CompatibilityPolicy:  document.CompatibilityPolicy,
 			MagicDomainPolicy:    magicDomainPolicy,
 			ScaleToZeroPolicy:    document.ScaleToZeroPolicy,
+			RoutingPolicy:        document.RoutingPolicy,
 			PlacementAssignments: buildPlacementAssignments(serviceContracts, bindingRecord),
 		},
 	}, nil
@@ -417,4 +423,35 @@ func ToBlueprintRecord(item models.Blueprint) (BlueprintRecord, error) {
 		Compiled:   compiled,
 		CreatedAt:  item.CreatedAt,
 	}, nil
+}
+
+func validateRoutingPolicy(policy LazyopsYAMLRoutingPolicy, services []LazyopsYAMLService) error {
+	if len(policy.Routes) == 0 {
+		return nil
+	}
+
+	// Check all routes reference valid services
+	serviceNames := make(map[string]bool)
+	for _, svc := range services {
+		serviceNames[svc.Name] = true
+	}
+
+	for _, route := range policy.Routes {
+		if !serviceNames[route.Service] {
+			return fmt.Errorf("route path %q references unknown service %q", route.Path, route.Service)
+		}
+	}
+
+	// Check for overlapping path prefixes
+	for i, r1 := range policy.Routes {
+		for j, r2 := range policy.Routes {
+			if i != j && r1.Path != "/" && r2.Path != "/" {
+				if strings.HasPrefix(r1.Path, r2.Path) || strings.HasPrefix(r2.Path, r1.Path) {
+					return fmt.Errorf("route path %q overlaps with %q", r1.Path, r2.Path)
+				}
+			}
+		}
+	}
+
+	return nil
 }

@@ -332,6 +332,7 @@ type LazyopsYAMLDocument struct {
 	MagicDomainPolicy   LazyopsYAMLMagicDomainPolicy    `json:"magic_domain_policy,omitempty"`
 	PreviewPolicy       LazyopsYAMLPreviewPolicy        `json:"preview_policy,omitempty"`
 	ScaleToZeroPolicy   LazyopsYAMLScaleToZeroPolicy    `json:"scale_to_zero_policy,omitempty"`
+	RoutingPolicy       LazyopsYAMLRoutingPolicy        `json:"routing_policy,omitempty"`
 }
 
 type LazyopsYAMLDeploymentBindingRef struct {
@@ -363,6 +364,20 @@ type LazyopsYAMLCompatibilityPolicy struct {
 	EnvInjection       bool `json:"env_injection"`
 	ManagedCredentials bool `json:"managed_credentials"`
 	LocalhostRescue    bool `json:"localhost_rescue"`
+	TransparentProxy   bool `json:"transparent_proxy"`
+}
+
+type LazyopsYAMLRoutingPolicy struct {
+	SharedDomain string              `json:"shared_domain,omitempty"`
+	Routes       []LazyopsYAMLRoute  `json:"routes,omitempty"`
+}
+
+type LazyopsYAMLRoute struct {
+	Path        string `json:"path"`
+	Service     string `json:"service"`
+	Port        int    `json:"port,omitempty"`
+	WebSocket   bool   `json:"websocket,omitempty"`
+	StripPrefix bool   `json:"strip_prefix,omitempty"`
 }
 
 type LazyopsYAMLMagicDomainPolicy struct {
@@ -464,6 +479,7 @@ type BlueprintCompiledContractRecord struct {
 	CompatibilityPolicy LazyopsYAMLCompatibilityPolicy
 	MagicDomainPolicy   LazyopsYAMLMagicDomainPolicy
 	ScaleToZeroPolicy   LazyopsYAMLScaleToZeroPolicy
+	RoutingPolicy       LazyopsYAMLRoutingPolicy
 	ArtifactMetadata    BlueprintArtifactMetadata
 }
 
@@ -491,6 +507,7 @@ type DesiredStateRevisionDraftRecord struct {
 	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy
 	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy
 	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy
+	RoutingPolicy        LazyopsYAMLRoutingPolicy
 	PlacementAssignments []PlacementAssignmentRecord
 }
 

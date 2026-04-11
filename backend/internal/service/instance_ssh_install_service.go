@@ -257,7 +257,10 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 	}
 
 	dockerBootstrap := strings.Join([]string{
-		`if [ "$(id -u)" -eq 0 ]; then SUDO=""; elif command -v sudo >/dev/null 2>&1; then SUDO="sudo -n"; else SUDO=""; fi;`,
+		`if [ "$(id -u)" -eq 0 ]; then SUDO=""; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then SUDO="sudo -n"; else SUDO=""; fi;`,
+		`STATE_DIR=` + shellQuote(stateDir) + `;`,
+		`RUNTIME_ROOT=` + shellQuote(runtimeRoot) + `;`,
+		`if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then STATE_DIR="${HOME:-/tmp}/.lazyops-agent"; RUNTIME_ROOT="${HOME:-/tmp}/.lazyops-runtime"; fi;`,
 		`if ! command -v docker >/dev/null 2>&1; then`,
 		`  if command -v apt-get >/dev/null 2>&1; then`,
 		`    if [ -n "$SUDO" ]; then $SUDO apt-get update -y >/dev/null 2>&1 || $SUDO apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y docker.io >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1; else apt-get update -y >/dev/null 2>&1 || apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1; fi;`,
@@ -275,46 +278,34 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 	}, " ")
 
 	return fmt.Sprintf(
-		"set -e; "+
+		"set -eu; "+
 			"%s "+
 			"docker_exec rm -f %s >/dev/null 2>&1 || true; "+
 			"docker_exec pull %s >/dev/null 2>&1 || true; "+
-			"if [ -n \"$SUDO\" ]; then $SUDO mkdir -p %s %s; $SUDO chmod 0777 %s %s; else mkdir -p %s %s; chmod 0777 %s %s; fi; "+
+			"if [ -n \"$SUDO\" ]; then $SUDO mkdir -p \"$STATE_DIR\" \"$RUNTIME_ROOT\"; $SUDO chmod 0777 \"$STATE_DIR\" \"$RUNTIME_ROOT\"; else mkdir -p \"$STATE_DIR\" \"$RUNTIME_ROOT\"; chmod 0777 \"$STATE_DIR\" \"$RUNTIME_ROOT\"; fi; "+
 			"docker_exec run -d --name %s --restart unless-stopped --network host --privileged "+
 			"--user root "+
 			"-v /var/run/docker.sock:/var/run/docker.sock "+
-			"-v %s:%s -v %s:%s "+
+			"-v \"$STATE_DIR\":\"$STATE_DIR\" -v \"$RUNTIME_ROOT\":\"$RUNTIME_ROOT\" "+
 			"-e AGENT_BOOTSTRAP_TOKEN=%s "+
 			"-e AGENT_STATE_ENCRYPTION_KEY=%s "+
 			"-e AGENT_CONTROL_PLANE_URL=%s "+
 			"-e AGENT_RUNTIME_MODE=%s "+
 			"-e AGENT_KIND=%s "+
 			"-e AGENT_TARGET_REF=%s "+
-			"-e AGENT_STATE_DIR=%s "+
-			"-e AGENT_RUNTIME_ROOT_DIR=%s "+
+			"-e AGENT_STATE_DIR=\"$STATE_DIR\" "+
+			"-e AGENT_RUNTIME_ROOT_DIR=\"$RUNTIME_ROOT\" "+
 			"%s >/dev/null",
 		dockerBootstrap,
 		shellQuote(containerName),
 		shellQuote(agentImage),
-		shellQuote(stateDir),
-		shellQuote(runtimeRoot),
-		shellQuote(stateDir),
-		shellQuote(runtimeRoot),
-		shellQuote(stateDir),
-		shellQuote(runtimeRoot),
-		shellQuote(stateDir),
-		shellQuote(runtimeRoot),
 		shellQuote(containerName),
-		shellQuote(stateDir), shellQuote(stateDir),
-		shellQuote(runtimeRoot), shellQuote(runtimeRoot),
 		shellQuote(bootstrapToken),
 		shellQuote(encryptionKey),
 		shellQuote(controlPlaneURL),
 		shellQuote(runtimeMode),
 		shellQuote(agentKind),
 		shellQuote(targetRef),
-		shellQuote(stateDir),
-		shellQuote(runtimeRoot),
 		shellQuote(agentImage),
 	)
 }

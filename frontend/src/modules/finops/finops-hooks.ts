@@ -8,10 +8,12 @@ import {
   mockFetchRamTrend,
 } from '@/modules/finops/finops-mocks';
 
+const USE_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true';
+
 export function useMetricAggregates() {
   return useQuery({
     queryKey: ['finops', 'aggregates'],
-    queryFn: () => mockFetchMetricAggregates(),
+    queryFn: () => (USE_MOCK ? mockFetchMetricAggregates() : Promise.resolve([])),
     staleTime: 60 * 1000,
   });
 }
@@ -19,7 +21,7 @@ export function useMetricAggregates() {
 export function useIdleCandidates() {
   return useQuery({
     queryKey: ['finops', 'idle-candidates'],
-    queryFn: () => mockFetchIdleCandidates(),
+    queryFn: () => (USE_MOCK ? mockFetchIdleCandidates() : Promise.resolve([])),
     staleTime: 60 * 1000,
   });
 }
@@ -27,7 +29,7 @@ export function useIdleCandidates() {
 export function useScaleToZeroCandidates() {
   return useQuery({
     queryKey: ['finops', 'scale-to-zero'],
-    queryFn: () => mockFetchScaleToZeroCandidates(),
+    queryFn: () => (USE_MOCK ? mockFetchScaleToZeroCandidates() : Promise.resolve([])),
     staleTime: 60 * 1000,
   });
 }
@@ -35,7 +37,7 @@ export function useScaleToZeroCandidates() {
 export function useCostEstimates() {
   return useQuery({
     queryKey: ['finops', 'cost-estimates'],
-    queryFn: () => mockFetchCostEstimates(),
+    queryFn: () => (USE_MOCK ? mockFetchCostEstimates() : Promise.resolve([])),
     staleTime: 60 * 1000,
   });
 }
@@ -43,7 +45,7 @@ export function useCostEstimates() {
 export function useCpuTrend() {
   return useQuery({
     queryKey: ['finops', 'cpu-trend'],
-    queryFn: () => mockFetchCpuTrend(),
+    queryFn: () => (USE_MOCK ? mockFetchCpuTrend() : Promise.resolve([])),
     staleTime: 60 * 1000,
   });
 }
@@ -51,7 +53,7 @@ export function useCpuTrend() {
 export function useRamTrend() {
   return useQuery({
     queryKey: ['finops', 'ram-trend'],
-    queryFn: () => mockFetchRamTrend(),
+    queryFn: () => (USE_MOCK ? mockFetchRamTrend() : Promise.resolve([])),
     staleTime: 60 * 1000,
   });
 }

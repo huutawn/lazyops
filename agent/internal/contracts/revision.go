@@ -15,6 +15,7 @@ type DesiredRevisionPayload struct {
 	CompatibilityPolicy  CompatibilityPolicy        `json:"compatibility_policy"`
 	MagicDomainPolicy    MagicDomainPolicy          `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    ScaleToZeroPolicy          `json:"scale_to_zero_policy"`
+	RoutingPolicy        RoutingPolicyPayload       `json:"routing_policy,omitempty"`
 	PlacementAssignments []PlacementAssignment      `json:"placement_assignments,omitempty"`
 }
 
@@ -59,6 +60,20 @@ type CompatibilityPolicy struct {
 	EnvInjection       bool `json:"env_injection"`
 	ManagedCredentials bool `json:"managed_credentials"`
 	LocalhostRescue    bool `json:"localhost_rescue"`
+	TransparentProxy   bool `json:"transparent_proxy"`
+}
+
+type RoutingPolicyPayload struct {
+	SharedDomain string         `json:"shared_domain,omitempty"`
+	Routes       []RoutePayload `json:"routes,omitempty"`
+}
+
+type RoutePayload struct {
+	Path        string `json:"path"`
+	Service     string `json:"service"`
+	Port        int    `json:"port,omitempty"`
+	WebSocket   bool   `json:"websocket,omitempty"`
+	StripPrefix bool   `json:"strip_prefix,omitempty"`
 }
 
 type MagicDomainPolicy struct {

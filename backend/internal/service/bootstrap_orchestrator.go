@@ -16,6 +16,7 @@ const (
 	bootstrapModeStandalone      = "standalone"
 	bootstrapModeDistributedMesh = "distributed-mesh"
 	bootstrapModeDistributedK3s  = "distributed-k3s"
+	bootstrapDeployStuckTimeout  = 10 * time.Minute
 )
 
 type BootstrapOrchestrator struct {
@@ -882,6 +883,13 @@ func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraSta
 	status := strings.ToLower(strings.TrimSpace(latest.Status))
 	switch status {
 	case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
+		lastActivity := latest.UpdatedAt
+		if lastActivity.IsZero() {
+			lastActivity = latest.CreatedAt
+		}
+		if !lastActivity.IsZero() && time.Since(lastActivity) > bootstrapDeployStuckTimeout {
+			return "error", "Triển khai trước đó có thể đang bị kẹt. Vui lòng triển khai lại", nil
+		}
 		return "deploying", "Đang triển khai", nil
 	case DeploymentStatusPromoted:
 		return "healthy", "Bản triển khai mới nhất đang hoạt động tốt", nil

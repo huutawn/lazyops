@@ -77,6 +77,7 @@ type Application struct {
 	IncidentRepo           *repository.RuntimeIncidentRepository
 	PreviewRepo            *repository.PreviewEnvironmentRepository
 	PreviewService         *service.PreviewEnvironmentService
+	RoutingSvc             *service.RoutingService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -229,6 +230,9 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		operatorStreamHub,
 	)
 
+	routingPolicyRepo := repository.NewRoutingPolicyRepository(db)
+	routingSvc := service.NewRoutingService(routingPolicyRepo, serviceRepo)
+
 	return &Application{
 		Config:                 cfg,
 		DB:                     db,
@@ -293,5 +297,6 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		IncidentRepo:           incidentRepo,
 		PreviewRepo:            previewRepo,
 		PreviewService:         previewService,
+		RoutingSvc:             routingSvc,
 	}, nil
 }

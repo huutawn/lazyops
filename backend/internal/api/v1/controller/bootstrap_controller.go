@@ -187,7 +187,7 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 		instanceName = "srv-" + sanitizeInstanceNameSuffix(sshHost)
 	}
 
-	createResult, err := ctl.instances.Create(service.CreateInstanceCommand{
+	instanceSummary, createdNewInstance, err := ctl.resolveOrCreateSSHInstance(claims.UserID, instanceName, service.CreateInstanceCommand{
 		UserID:    claims.UserID,
 		Name:      instanceName,
 		PublicIP:  publicIP,
@@ -216,7 +216,7 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 	installResult, err := ctl.sshInstall.Install(c.Request.Context(), service.InstallInstanceAgentSSHCommand{
 		UserID:             claims.UserID,
 		ProjectID:          projectID,
-		InstanceID:         createResult.Instance.ID,
+		InstanceID:         instanceSummary.ID,
 		Host:               sshHost,
 		Port:               req.SSHPort,
 		Username:           strings.TrimSpace(req.SSHUsername),
@@ -233,7 +233,7 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 			"correlation_id", middleware.GetCorrelationID(c),
 			"user_id", claims.UserID,
 			"project_id", projectID,
-			"instance_id", createResult.Instance.ID,
+			"instance_id", instanceSummary.ID,
 			"instance_name", instanceName,
 			"ssh_host", sshHost,
 			"ssh_port", req.SSHPort,
@@ -263,7 +263,7 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 		RequesterUserID: claims.UserID,
 		RequesterRole:   claims.Role,
 		ProjectID:       projectID,
-		InstanceID:      createResult.Instance.ID,
+		InstanceID:      instanceSummary.ID,
 	})
 	if err != nil {
 		switch {
@@ -281,12 +281,43 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 		return
 	}
 
+	statusCode := http.StatusCreated
+	if !createdNewInstance {
+		statusCode = http.StatusOK
+	}
+
 	response.JSON(
 		c,
-		http.StatusCreated,
+		statusCode,
 		"infra connected via ssh",
-		mapper.ToBootstrapConnectInfraSSHResponse(projectID, createResult.Instance, *installResult, *autoResult),
+		mapper.ToBootstrapConnectInfraSSHResponse(projectID, instanceSummary, *installResult, *autoResult),
 	)
+}
+
+func (ctl *BootstrapController) resolveOrCreateSSHInstance(userID, instanceName string, createCmd service.CreateInstanceCommand) (service.InstanceSummary, bool, error) {
+	createResult, err := ctl.instances.Create(createCmd)
+	if err == nil {
+		return createResult.Instance, true, nil
+	}
+	if !errors.Is(err, service.ErrInstanceNameExists) {
+		return service.InstanceSummary{}, false, err
+	}
+
+	// Retry-friendly path: if this name already exists for the user, reuse it.
+	// This avoids trapping users in 409 after a previous SSH attempt failed mid-flight.
+	instances, listErr := ctl.instances.List(userID)
+	if listErr != nil {
+		return service.InstanceSummary{}, false, listErr
+	}
+
+	lookup := strings.TrimSpace(instanceName)
+	for _, item := range instances.Items {
+		if strings.TrimSpace(item.Name) == lookup {
+			return item, false, nil
+		}
+	}
+
+	return service.InstanceSummary{}, false, err
 }
 
 func sanitizeInstanceNameSuffix(input string) string {

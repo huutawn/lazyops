@@ -147,6 +147,23 @@ func (p *SidecarProxy) startHTTPProxy(ctx context.Context, route SidecarProxyRou
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
+
+	// WebSocket upgrade detection and explicit handling
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		// Log WebSocket upgrades
+		if resp.Request != nil && isWebSocketUpgrade(resp.Request) {
+			if p.logger != nil {
+				p.logger.Info("websocket upgrade detected",
+					"alias", route.Alias,
+					"target_service", route.TargetService,
+					"upstream", route.Upstream,
+					"path", resp.Request.URL.Path,
+				)
+			}
+		}
+		return nil
+	}
+
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, proxyErr error) {
 		p.recordError(routeKey, route)
 		if p.logger != nil {
@@ -162,6 +179,13 @@ func (p *SidecarProxy) startHTTPProxy(ctx context.Context, route SidecarProxyRou
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := p.now()
+
+		// Health check endpoint for WebSocket routes
+		if r.URL.Path == "/health" || r.URL.Path == "/ws/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok","service":"sidecar-proxy","alias":"` + route.Alias + `"}`))
+			return
+		}
 
 		// Inject correlation ID if configured
 		if route.LocalhostRescue {
@@ -180,8 +204,11 @@ func (p *SidecarProxy) startHTTPProxy(ctx context.Context, route SidecarProxyRou
 
 	proxyCtx, cancel := context.WithCancel(ctx)
 	server := &http.Server{
-		Handler:     handler,
-		BaseContext: func(_ net.Listener) context.Context { return proxyCtx },
+		Handler:           handler,
+		BaseContext:       func(_ net.Listener) context.Context { return proxyCtx },
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second, // WebSocket connections can stay idle for longer
+		WriteTimeout:      0,                 // No write timeout for long-lived WebSocket connections
 	}
 
 	p.proxies[routeKey] = &proxyInstance{
@@ -391,4 +418,11 @@ func generateCorrelationID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// isWebSocketUpgrade checks if the request is a WebSocket upgrade request.
+func isWebSocketUpgrade(r *http.Request) bool {
+	upgrade := r.Header.Get("Upgrade")
+	connection := r.Header.Get("Connection")
+	return upgrade != "" && (connection == "Upgrade" || connection == "upgrade")
 }

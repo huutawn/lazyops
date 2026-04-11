@@ -25,6 +25,7 @@ type SidecarManager struct {
 	runtimeRoot    string
 	now            func() time.Time
 	processManager *ProcessManager
+	dnsServer      *DNSServer
 	createHook     func(context.Context, SidecarPlan, sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error)
 	reconcileHook  func(context.Context, SidecarPlan, sidecarRenderPaths, SidecarActivation) (SidecarHookResult, error)
 	restartHook    func(context.Context, SidecarPlan, sidecarRenderPaths, *SidecarActivation, SidecarActivation) (SidecarHookResult, error)
@@ -55,6 +56,7 @@ func NewSidecarManager(logger *slog.Logger, runtimeRoot string) *SidecarManager 
 		logger:         logger,
 		runtimeRoot:    runtimeRoot,
 		processManager: NewProcessManager(logger, runtimeRoot),
+		dnsServer:      NewDNSServer(logger, ""),
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -63,6 +65,11 @@ func NewSidecarManager(logger *slog.Logger, runtimeRoot string) *SidecarManager 
 
 func (m *SidecarManager) WithProcessManager(pm *ProcessManager) *SidecarManager {
 	m.processManager = pm
+	return m
+}
+
+func (m *SidecarManager) WithDNSServer(dns *DNSServer) *SidecarManager {
+	m.dnsServer = dns
 	return m
 }
 
@@ -324,6 +331,13 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 				}
 				config.LocalhostRescueContracts = append(config.LocalhostRescueContracts, contract)
 				config.ProxyRoutes = append(config.ProxyRoutes, route)
+			case "transparent_proxy":
+				contract, route, err := buildTransparentProxyContract(service.Name, dependency, resolution)
+				if err != nil {
+					return SidecarPlan{}, SidecarMetadataCache{}, err
+				}
+				config.TransparentProxyContracts = append(config.TransparentProxyContracts, contract)
+				config.ProxyRoutes = append(config.ProxyRoutes, route)
 			}
 		}
 
@@ -359,6 +373,44 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 		})
 		sort.Strings(config.DependencyAliases)
 		sort.Strings(protocols)
+
+		// Inject LAZYOPS_SERVICE_* env vars for service discovery (Issue 2.3)
+		for _, dep := range service.Dependencies {
+			envKeyPrefix := "LAZYOPS_SERVICE_" + sanitizeEnvKey(nonEmptyAlias(dep.Alias, dep.TargetService))
+			scheme := "http"
+			if dep.Protocol == "grpc" || dep.Protocol == "https" {
+				scheme = "https"
+			}
+
+			// Resolve target service info
+			targetSvc, targetOK := serviceIndex[dep.TargetService]
+			if targetOK {
+				// Register with DNS if available
+				if m.dnsServer != nil {
+					m.dnsServer.RegisterService(ServiceRecord{
+						ServiceName: dep.TargetService,
+						ProjectID:   runtimeCtx.Project.ProjectID,
+						Host:        "127.0.0.1",
+						Port:        targetSvc.HealthCheck.Port,
+						Protocol:    dep.Protocol,
+					})
+				}
+
+				// Use DNS hostname for service discovery
+				dnsHostname := fmt.Sprintf("%s.%s.%s", dep.TargetService, runtimeCtx.Project.ProjectID, "lazyops.internal")
+				config.Env[envKeyPrefix+"_HOST"] = dnsHostname
+				config.Env[envKeyPrefix+"_PORT"] = fmt.Sprintf("%d", targetSvc.HealthCheck.Port)
+				config.Env[envKeyPrefix+"_URL"] = fmt.Sprintf("%s://%s.%s.%s:%d",
+					scheme, dep.TargetService, runtimeCtx.Project.ProjectID, "lazyops.internal", targetSvc.HealthCheck.Port)
+			} else {
+				// Fallback: use derived endpoint with DNS-resolvable hostname
+				derivedEndpoint := derivedDependencyEndpoint(dep, runtimeCtx.Project.ProjectID)
+				if derivedEndpoint != "" {
+					config.Env[envKeyPrefix+"_HOST"] = derivedEndpoint
+				}
+			}
+		}
+
 		plan.EnabledServices = append(plan.EnabledServices, service.Name)
 		plan.Services = append(plan.Services, config)
 		metadataCache.Services[service.Name] = SidecarServiceMetadata{
@@ -368,6 +420,7 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 			EnvContracts:               append([]SidecarEnvContract(nil), config.EnvContracts...),
 			ManagedCredentialContracts: append([]SidecarManagedCredentialContract(nil), config.ManagedCredentialContracts...),
 			LocalhostRescueContracts:   append([]SidecarLocalhostRescueContract(nil), config.LocalhostRescueContracts...),
+			TransparentProxyContracts:  append([]TransparentProxyContract(nil), config.TransparentProxyContracts...),
 			Resolutions:                append([]DependencyResolutionView(nil), config.Resolutions...),
 			CacheInvalidationRules:     append([]string(nil), resolver.InvalidationRules()...),
 			CorrelationPropagation:     true,
@@ -428,6 +481,7 @@ func (m *SidecarManager) injectRuntimeSidecars(layout WorkspaceLayout, runtimeCt
 				"managed_credential_contracts":  config.ManagedCredentialContracts,
 				"managed_credential_audit_path": paths.managedCredentialAuditPath,
 				"localhost_rescue_contracts":    config.LocalhostRescueContracts,
+				"transparent_proxy_contracts":   config.TransparentProxyContracts,
 				"proxy_routes":                  config.ProxyRoutes,
 				"resolutions":                   config.Resolutions,
 				"correlation_propagation":       config.CorrelationPropagation,
@@ -654,10 +708,11 @@ func sidecarVersion(runtimeCtx RuntimeContext) string {
 		runtimeCtx.Binding.BindingID,
 		runtimeCtx.Revision.RevisionID,
 		runtimeCtx.Runtime.PlacementFingerprint,
-		fmt.Sprintf("%t|%t|%t",
+		fmt.Sprintf("%t|%t|%t|%t",
 			runtimeCtx.Revision.CompatibilityPolicy.EnvInjection,
 			runtimeCtx.Revision.CompatibilityPolicy.ManagedCredentials,
 			runtimeCtx.Revision.CompatibilityPolicy.LocalhostRescue,
+			runtimeCtx.Revision.CompatibilityPolicy.TransparentProxy,
 		),
 	}
 	for _, service := range runtimeCtx.Services {
@@ -675,6 +730,8 @@ func sidecarPrecedence() []string {
 
 func selectSidecarMode(policy contracts.CompatibilityPolicy) string {
 	switch {
+	case policy.TransparentProxy:
+		return "transparent_proxy"
 	case policy.EnvInjection:
 		return "env_injection"
 	case policy.ManagedCredentials:
@@ -922,6 +979,96 @@ func validateLocalhostRescueContract(serviceName string, contract SidecarLocalho
 		}
 	}
 	return nil
+}
+
+// TransparentProxyContract types and functions for issue 2.2
+
+func buildTransparentProxyContract(serviceName string, dependency contracts.DependencyBindingPayload, resolution DependencyResolutionView) (TransparentProxyContract, SidecarProxyRoute, error) {
+	// Parse original port from dependency
+	originalPort, err := parsePortFromEndpoint(dependency.LocalEndpoint)
+	if err != nil {
+		return TransparentProxyContract{}, SidecarProxyRoute{}, fmt.Errorf("failed to parse original port for %s: %w", dependency.Alias, err)
+	}
+
+	// Generate proxy port (in sidecar range: 19000-19999)
+	proxyPort := generateProxyPort(originalPort)
+
+	// Build upstream target
+	upstream := resolution.ResolvedUpstream
+	if upstream == "" {
+		upstream = fmt.Sprintf("http://127.0.0.1:%d", originalPort)
+	}
+
+	contract := TransparentProxyContract{
+		Alias:         dependency.Alias,
+		TargetService: dependency.TargetService,
+		Protocol:      dependency.Protocol,
+		OriginalPort:  originalPort,
+		ProxyPort:     proxyPort,
+		Upstream:      upstream,
+	}
+
+	route := SidecarProxyRoute{
+		Alias:            dependency.Alias,
+		TargetService:    dependency.TargetService,
+		Protocol:         dependency.Protocol,
+		ListenerHost:     "127.0.0.1",
+		ListenerPort:     proxyPort,
+		Upstream:         upstream,
+		ForwardingMode:   "transparent",
+		OriginalPort:     originalPort,
+		NetworkNamespace: true,
+		LocalhostRescue:  false,
+	}
+
+	if strings.TrimSpace(route.Upstream) == "" {
+		return TransparentProxyContract{}, SidecarProxyRoute{}, &OperationError{
+			Code:      "transparent_proxy_missing_upstream",
+			Message:   fmt.Sprintf("transparent proxy for service %q dependency %q is missing an upstream target", serviceName, dependency.Alias),
+			Retryable: false,
+		}
+	}
+
+	return contract, route, nil
+}
+
+func parsePortFromEndpoint(endpoint string) (int, error) {
+	// Try to parse port from endpoint like "http://127.0.0.1:5432" or "tcp://127.0.0.1:3306"
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return 0, err
+	}
+	_, portStr, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(portStr)
+}
+
+func generateProxyPort(originalPort int) int {
+	// Map common ports to proxy range
+	// 5432 → 19001, 3306 → 19002, 6379 → 19003, 8000 → 19004, 3000 → 19005
+	base := 19000
+	switch originalPort {
+	case 5432:
+		return base + 1
+	case 3306:
+		return base + 2
+	case 6379:
+		return base + 3
+	case 5672:
+		return base + 4
+	case 8000:
+		return base + 5
+	case 3000:
+		return base + 6
+	case 8080:
+		return base + 7
+	case 9000:
+		return base + 8
+	default:
+		return base + (originalPort % 1000)
+	}
 }
 
 func buildManagedCredentialContract(runtimeCtx RuntimeContext, serviceName, envKeyPrefix string, dependency contracts.DependencyBindingPayload, resolution DependencyResolutionView) SidecarManagedCredentialContract {
@@ -1282,24 +1429,31 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func derivedDependencyEndpoint(binding contracts.DependencyBindingPayload) string {
+// derivedDependencyEndpoint returns a DNS-resolvable hostname for a dependency binding.
+// Uses the format <service>.<project>.lazyops.internal which is resolved by the
+// embedded DNS server (Issue 2.3 fix).
+func derivedDependencyEndpoint(binding contracts.DependencyBindingPayload, projectID string) string {
 	if strings.TrimSpace(binding.LocalEndpoint) != "" {
 		return binding.LocalEndpoint
 	}
+	// Use DNS-resolvable hostname format
+	serviceHost := fmt.Sprintf("%s.%s.lazyops.internal", binding.TargetService, projectID)
 	switch binding.Protocol {
 	case "http":
-		return fmt.Sprintf("http://%s.service.lazyops.internal", binding.TargetService)
+		return "http://" + serviceHost
 	default:
-		return fmt.Sprintf("%s.service.lazyops.internal", binding.TargetService)
+		return serviceHost
 	}
 }
 
-func derivedProxyUpstream(binding contracts.DependencyBindingPayload) string {
+// derivedProxyUpstream returns a DNS-resolvable upstream for proxy routing.
+func derivedProxyUpstream(binding contracts.DependencyBindingPayload, projectID string) string {
+	serviceHost := fmt.Sprintf("%s.%s.lazyops.internal", binding.TargetService, projectID)
 	switch binding.Protocol {
 	case "http":
-		return fmt.Sprintf("http://%s.service.lazyops.internal", binding.TargetService)
+		return "http://" + serviceHost
 	default:
-		return fmt.Sprintf("%s.service.lazyops.internal", binding.TargetService)
+		return serviceHost
 	}
 }
 

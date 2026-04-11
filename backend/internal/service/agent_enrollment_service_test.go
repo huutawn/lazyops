@@ -150,7 +150,7 @@ func TestAgentEnrollmentRejectsReusedBootstrapToken(t *testing.T) {
 	}
 }
 
-func TestAgentEnrollmentRejectsOwnershipMismatch(t *testing.T) {
+func TestAgentEnrollmentAllowsOwnershipMismatchWhenTokenIsValid(t *testing.T) {
 	instanceStore := newFakeInstanceStore(&models.Instance{
 		ID:                      "inst_1",
 		UserID:                  "usr_1",
@@ -172,7 +172,7 @@ func TestAgentEnrollmentRejectsOwnershipMismatch(t *testing.T) {
 	agentTokenStore := newFakeAgentTokenStore()
 	service := NewAgentEnrollmentService(agentStore, instanceStore, bootstrapStore, agentTokenStore, testEnrollmentAndAgentTokenConfig())
 
-	_, err := service.Enroll(AgentEnrollmentCommand{
+	enrolled, err := service.Enroll(AgentEnrollmentCommand{
 		BootstrapToken: "lop_boot_valid",
 		RuntimeMode:    "standalone",
 		AgentKind:      "instance_agent",
@@ -182,8 +182,11 @@ func TestAgentEnrollmentRejectsOwnershipMismatch(t *testing.T) {
 		},
 		Capabilities: map[string]any{},
 	})
-	if !errors.Is(err, ErrBootstrapOwnershipMismatch) {
-		t.Fatalf("expected ErrBootstrapOwnershipMismatch, got %v", err)
+	if err != nil {
+		t.Fatalf("expected enrollment success with valid one-time token, got %v", err)
+	}
+	if !strings.HasPrefix(enrolled.AgentID, "agt_") {
+		t.Fatalf("expected enrolled agent id, got %q", enrolled.AgentID)
 	}
 }
 

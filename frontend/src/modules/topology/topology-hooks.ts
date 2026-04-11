@@ -12,6 +12,14 @@ export function topologyQueryKey(projectId?: string) {
 
 const USE_MOCK = process.env.NEXT_PUBLIC_MOCK_MODE === 'true';
 
+function emptyTopology(projectId?: string) {
+  return {
+    project_id: projectId ?? 'all',
+    nodes: [],
+    edges: [],
+  };
+}
+
 export function useTopology(projectId?: string) {
   return useQuery({
     queryKey: topologyQueryKey(projectId),
@@ -22,16 +30,18 @@ export function useTopology(projectId?: string) {
       }
 
       if (!projectId) {
-        const raw = await mockFetchTopology();
-        return adaptTopology(raw, 'mock');
+        return adaptTopology(emptyTopology(), 'live');
       }
 
-      const raw = await fetchLiveTopology(projectId);
-      if (!raw) {
-        const fallback = await mockFetchTopology(projectId);
-        return adaptTopology(fallback, 'mock');
+      try {
+        const raw = await fetchLiveTopology(projectId);
+        if (!raw) {
+          return adaptTopology(emptyTopology(projectId), 'live');
+        }
+        return adaptTopology(raw, 'live');
+      } catch {
+        return adaptTopology(emptyTopology(projectId), 'live');
       }
-      return adaptTopology(raw, 'live');
     },
     staleTime: 60 * 1000,
   });

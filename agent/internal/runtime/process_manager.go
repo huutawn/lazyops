@@ -114,20 +114,24 @@ func (m *ProcessManager) StartProxyProcess(ctx context.Context, route SidecarPro
 		return nil, fmt.Errorf("failed to start sidecar proxy for %s: %w", route.Alias, err)
 	}
 
-	// If localhost_rescue with iptables intercept, set up DNAT rule
-	if route.LocalhostRescue && route.NetworkNamespace && m.iptablesManager != nil {
+	// If localhost_rescue or transparent_proxy with iptables intercept, set up DNAT rule
+	if (route.LocalhostRescue || route.ForwardingMode == "transparent") && route.NetworkNamespace && m.iptablesManager != nil {
 		if err := m.iptablesManager.EnsureChain(); err != nil {
 			m.logger.Warn("failed to ensure iptables chain, continuing without DNAT",
 				"alias", route.Alias,
 				"error", err,
 			)
 		} else {
-			// The proxy listens on a different port than the original;
-			// redirect the original port to the proxy port
+			// Redirect the original port to the proxy port
+			originalPort := route.OriginalPort
+			if originalPort == 0 {
+				// Fallback: use listener port for backwards compatibility
+				originalPort = route.ListenerPort
+			}
 			iprule := IPTablesRule{
 				Alias:        route.Alias,
 				Protocol:     route.Protocol,
-				OriginalPort: route.ListenerPort,
+				OriginalPort: originalPort,
 				RedirectPort: route.ListenerPort,
 				Comment:      fmt.Sprintf("lazyops-sidecar-%s", route.Alias),
 			}
