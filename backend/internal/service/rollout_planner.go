@@ -120,11 +120,29 @@ func (p *RolloutPlanner) PlanCandidate(ctx context.Context, projectID, revisionI
 		"placement_assignments": compiled.PlacementAssignments,
 	}
 
+	// The agent's prepare_release_workspace handler expects a nested payload
+	// with project, binding, and revision objects.
+	preparePayload := map[string]any{
+		"project": map[string]any{
+			"project_id": projectID,
+		},
+		"binding": map[string]any{
+			"binding_id":   binding.ID,
+			"project_id":   projectID,
+			"name":         binding.Name,
+			"target_ref":   binding.TargetRef,
+			"runtime_mode": binding.RuntimeMode,
+			"target_kind":  binding.TargetKind,
+			"target_id":    binding.TargetID,
+		},
+		"revision": revisionPayload,
+	}
+
 	req := runtime.RolloutRequest{
 		ProjectID:       projectID,
 		RevisionID:      revision.ID,
 		BindingID:       binding.ID,
-		RevisionPayload: revisionPayload,
+		RevisionPayload: preparePayload,
 	}
 
 	plan, err := driver.PlanRollout(ctx, req)
