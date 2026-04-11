@@ -177,6 +177,14 @@ func (s *ControlService) DispatchCommand(ctx context.Context, agentID string, cm
 		cmd.Payload,
 	)
 
+	logger.Info("control_envelope_debug",
+		"agent_id", agentID,
+		"command_type", cmd.Type,
+		"request_id", cmd.RequestID,
+		"source", envelope.Source,
+		"envelope_json", fmt.Sprintf("%+v", envelope),
+	)
+
 	if err := s.hub.SendToAgent(agentID, envelope); err != nil {
 		logger.Error("control_dispatch_send_failed",
 			"agent_id", agentID,

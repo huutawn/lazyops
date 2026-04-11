@@ -212,12 +212,12 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 
 	for i, step := range plan.Steps {
 		cmd := enrichRolloutCommand(step.Command, projectID, revision.ID, correlationID)
-		logger.Info("rollout_dispatching_command",
+		logger.Info("rollout_command_enriched",
 			"project_id", projectID,
 			"deployment_id", deploymentID,
-			"revision_id", revision.ID,
 			"step_index", i,
 			"command_type", cmd.Type,
+			"source", cmd.Source,
 			"agent_id", agentID,
 		)
 
@@ -423,9 +423,10 @@ func (s *RolloutExecutionService) failDeployment(projectID, deploymentID, revisi
 func enrichRolloutCommand(cmd runtime.AgentCommand, projectID, revisionID, correlationID string) runtime.AgentCommand {
 	cmd.ProjectID = projectID
 	cmd.CorrelationID = correlationID
-	if strings.TrimSpace(cmd.Source) == "" {
-		cmd.Source = "backend"
-	}
+	// Agent dispatcher requires source="backend" for all command envelopes.
+	// Drivers may set their own source internally, but the control plane
+	// must always send "backend" to pass agent-side validation.
+	cmd.Source = "backend"
 	if cmd.Payload == nil {
 		cmd.Payload = map[string]any{}
 	}
