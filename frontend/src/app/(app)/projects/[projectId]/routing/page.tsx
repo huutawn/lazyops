@@ -29,7 +29,7 @@ export default function RoutingPage() {
   }, [data?.available_services]);
 
   if (isLoading) {
-    return <SkeletonPage title="Routing Configuration" cards={2} />;
+    return <SkeletonPage cards={2} />;
   }
 
   if (error) {
@@ -37,8 +37,14 @@ export default function RoutingPage() {
       <ErrorState
         title="Failed to load routing configuration"
         message={error.message}
-        actionLabel="Retry"
-        onAction={() => window.location.reload()}
+        action={
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-lg border border-[#1e293b] bg-[#0B1120]/40 px-4 py-2 text-sm font-medium text-[#94a3b8] hover:text-white"
+          >
+            Retry
+          </button>
+        }
       />
     );
   }
