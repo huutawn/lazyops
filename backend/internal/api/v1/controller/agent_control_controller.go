@@ -114,6 +114,8 @@ func (ctl *AgentControlController) runControlLoop(client *service.ControlClient,
 			ctl.handleCommandResponse(client.AgentID, message)
 		case "command.ack":
 			ctl.handleCommandAck(client.AgentID, message)
+		case "command.nack":
+			ctl.handleCommandNack(client.AgentID, message)
 		case "command.error":
 			ctl.handleCommandError(client.AgentID, message)
 		case "agent.log_batch":
@@ -187,6 +189,35 @@ func (ctl *AgentControlController) handleCommandAck(agentID string, raw []byte) 
 	}
 
 	_ = ctl.commandTracker.UpdateState(ack.RequestID, state, output, "")
+}
+
+func (ctl *AgentControlController) handleCommandNack(agentID string, raw []byte) {
+	var nack struct {
+		Type        string         `json:"type"`
+		RequestID   string         `json:"request_id"`
+		Code        string         `json:"code,omitempty"`
+		Message     string         `json:"message"`
+		CommandType string         `json:"command_type,omitempty"`
+		Details     map[string]any `json:"details,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &nack); err != nil {
+		return
+	}
+
+	if nack.RequestID == "" {
+		return
+	}
+
+	if ctl.commandTracker == nil {
+		return
+	}
+
+	output := map[string]any{
+		"code":    nack.Code,
+		"nacked":  true,
+		"details": nack.Details,
+	}
+	_ = ctl.commandTracker.UpdateState(nack.RequestID, service.CommandStateFailed, output, nack.Message)
 }
 
 func (ctl *AgentControlController) handleCommandError(agentID string, raw []byte) {

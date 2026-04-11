@@ -424,7 +424,7 @@ func enrichRolloutCommand(cmd runtime.AgentCommand, projectID, revisionID, corre
 	cmd.ProjectID = projectID
 	cmd.CorrelationID = correlationID
 	if strings.TrimSpace(cmd.Source) == "" {
-		cmd.Source = "rollout_execution_service"
+		cmd.Source = "backend"
 	}
 	if cmd.Payload == nil {
 		cmd.Payload = map[string]any{}
