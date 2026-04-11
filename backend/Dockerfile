@@ -18,10 +18,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata git docker-cli curl \
-    && curl -fsSL https://nixpacks.com/install.sh > /tmp/install-nixpacks.sh \
-    && chmod +x /tmp/install-nixpacks.sh \
-    && /tmp/install-nixpacks.sh \
-    && mv /root/.nixpacks/bin/nixpacks /usr/local/bin/nixpacks \
+    && curl -fsSL https://github.com/railwayapp/nixpacks/releases/download/v1.34.1/nixpacks-v1.34.1-x86_64-unknown-linux-musl.tar.gz | tar xzf - -C /usr/local/bin --strip-components=1 nixpacks \
     && addgroup -S lazyops \
     && adduser -S -D -H -h /app -G lazyops lazyops
 
