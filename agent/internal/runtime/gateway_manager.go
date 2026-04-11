@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -469,6 +470,7 @@ func execCaddyValidate(configPath string) error {
 
 // execCaddyReload runs 'caddy reload' to apply a new config.
 // If caddy binary is not found, it skips the reload (dev mode).
+// If Caddy isn't running, it starts Caddy instead of reloading.
 func execCaddyReload(configPath string) error {
 	if _, err := exec.LookPath("caddy"); err != nil {
 		slog.Default().Warn("caddy binary not found, skipping reload (dev mode)",
@@ -477,6 +479,26 @@ func execCaddyReload(configPath string) error {
 		return nil
 	}
 
+	// Check if Caddy is running by probing the admin API
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://localhost:2019/config")
+	if err != nil {
+		// Caddy isn't running, start it
+		slog.Default().Info("caddy not running, starting with config",
+			"config_path", configPath,
+		)
+		cmd := exec.Command("caddy", "start", "--config", configPath, "--adapter", "caddyfile")
+		output, startErr := cmd.CombinedOutput()
+		if startErr != nil {
+			return fmt.Errorf("caddy start: %s: %w", strings.TrimSpace(string(output)), startErr)
+		}
+		// Wait briefly for Caddy to become available
+		time.Sleep(1 * time.Second)
+		return nil
+	}
+	_ = resp.Body.Close()
+
+	// Caddy is running, reload it
 	cmd := exec.Command("caddy", "reload", "--config", configPath, "--adapter", "caddyfile")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
