@@ -1368,7 +1368,7 @@ func TestFilesystemDriverRenderSidecarsSupportsTCPLocalhostRescue(t *testing.T) 
 	if contract.ListenerEndpoint != "localhost:5432" || contract.ListenerPort != 5432 {
 		t.Fatalf("expected tcp localhost listener to stay on port 5432, got %#v", contract)
 	}
-	if contract.Upstream != "api.service.lazyops.internal" {
+	if contract.Upstream != "api.prj_123.lazyops.internal" {
 		t.Fatalf("expected tcp upstream without http scheme, got %#v", contract)
 	}
 }
