@@ -7,6 +7,12 @@ import (
 	"lazyops-server/pkg/logger"
 )
 
+// Build markers — updated by CI/CD or manually
+const (
+	BuildVersion = "dev"
+	BuildCommit  = "local"
+)
+
 func main() {
 	cfg := config.Load()
 	logger.Setup(cfg.App.Environment)
@@ -21,7 +27,14 @@ func main() {
 
 	router := api.NewRouter(app)
 
-	logger.Info("server listening", "address", cfg.ServerAddress())
+	// Startup markers — visible in logs to confirm binary version
+	logger.Info("🚀 lazyops-server starting",
+		"version", BuildVersion,
+		"commit", BuildCommit,
+		"address", cfg.ServerAddress(),
+		"ssh_install_timeout", "120s",
+	)
+
 	if err := router.Run(cfg.ServerAddress()); err != nil {
 		logger.Fatal("server stopped", "error", err)
 	}
