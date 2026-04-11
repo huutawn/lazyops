@@ -104,9 +104,7 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 					Type:      "start_release_candidate",
 					ProjectID: req.ProjectID,
 					Source:    "standalone_driver",
-					Payload: map[string]any{
-						"revision_id": req.RevisionID,
-					},
+					Payload:   req.RevisionPayload,
 				},
 			},
 			{
@@ -115,7 +113,7 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 					Type:      "run_health_gate",
 					ProjectID: req.ProjectID,
 					Source:    "standalone_driver",
-					Payload:   map[string]any{"revision_id": req.RevisionID},
+					Payload:   req.RevisionPayload,
 				},
 			},
 			{
