@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -46,6 +47,9 @@ func (ctl *AgentControlController) ControlStream(c *gin.Context) {
 	claims := middleware.MustClaims(c)
 	agentID := c.Query("agent_id")
 	if agentID == "" {
+		agentID = c.GetHeader("X-Agent-ID")
+	}
+	if agentID == "" {
 		_ = conn.WriteJSON(gin.H{"type": "error", "message": "agent_id query parameter is required"})
 		_ = conn.Close()
 		return
@@ -77,7 +81,9 @@ func (ctl *AgentControlController) ControlStream(c *gin.Context) {
 }
 
 func (ctl *AgentControlController) runControlLoop(client *service.ControlClient, userID string) {
+	slog.Info("control session runControlLoop started", "agent_id", client.AgentID)
 	defer func() {
+		slog.Info("control session runControlLoop exited", "agent_id", client.AgentID)
 		ctl.controlHub.Unregister(client.AgentID)
 		_ = client.Conn.Close()
 	}()
@@ -85,6 +91,10 @@ func (ctl *AgentControlController) runControlLoop(client *service.ControlClient,
 	for {
 		_, message, err := client.Conn.ReadMessage()
 		if err != nil {
+			slog.Info("control session ReadMessage error",
+				"agent_id", client.AgentID,
+				"error", err,
+			)
 			return
 		}
 
