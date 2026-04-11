@@ -32,7 +32,7 @@ func main() {
 		"version", BuildVersion,
 		"commit", BuildCommit,
 		"address", cfg.ServerAddress(),
-		"ssh_install_timeout", "120s",
+		"ssh_install_timeout", "200s",
 	)
 
 	if err := router.Run(cfg.ServerAddress()); err != nil {

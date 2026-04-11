@@ -138,6 +138,7 @@ func (s *Service) Register(registry *dispatcher.Registry) {
 	registry.Register(contracts.CommandPrepareReleaseWorkspace, dispatcher.HandlerFunc(s.handlePrepareReleaseWorkspace))
 	registry.Register(contracts.CommandRenderGatewayConfig, dispatcher.HandlerFunc(s.handleRenderGatewayConfig))
 	registry.Register(contracts.CommandRenderSidecars, dispatcher.HandlerFunc(s.handleRenderSidecars))
+	registry.Register(contracts.CommandReconcileRevision, dispatcher.HandlerFunc(s.handleReconcileRevision))
 	registry.Register(contracts.CommandProvisionInternalSvc, dispatcher.HandlerFunc(s.handleProvisionInternalServices))
 	registry.Register(contracts.CommandStartReleaseCandidate, dispatcher.HandlerFunc(s.handleStartReleaseCandidate))
 	registry.Register(contracts.CommandRunHealthGate, dispatcher.HandlerFunc(s.handleRunHealthGate))
@@ -408,6 +409,48 @@ func (s *Service) handleRenderSidecars(ctx context.Context, envelope contracts.C
 	}
 
 	return dispatcher.Done(fmt.Sprintf("sidecar config rendered and applied as %s", rendered.Version))
+}
+
+func (s *Service) handleReconcileRevision(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	var payload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return dispatcher.NonRetryable("invalid_reconcile_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	if s.nodeAgentGuard != nil {
+		if err := s.nodeAgentGuard.AssertNotNodeAgent("reconcile_revision"); err != nil {
+			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
+				"operation": "reconcile_revision",
+			})
+		}
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
+	}
+
+	result, err := s.driver.ReconcileRevision(ctx, runtimeCtx)
+	if err != nil {
+		return dispatcher.Retryable("reconcile_revision_failed", err.Error(), map[string]any{
+			"revision_id": runtimeCtx.Revision.RevisionID,
+			"binding_id":  runtimeCtx.Binding.BindingID,
+		})
+	}
+
+	if s.logger != nil {
+		s.logger.Info("runtime revision reconciled",
+			"request_id", envelope.RequestID,
+			"correlation_id", envelope.CorrelationID,
+			"revision_id", runtimeCtx.Revision.RevisionID,
+			"binding_id", runtimeCtx.Binding.BindingID,
+			"applied_steps", len(result.AppliedSteps),
+		)
+	}
+
+	return dispatcher.Done(fmt.Sprintf("revision %s reconciled with %d steps", result.RevisionID, len(result.AppliedSteps)))
 }
 
 func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {

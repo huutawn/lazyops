@@ -84,7 +84,7 @@ func (e *NativeSSHExecutor) Execute(ctx context.Context, input SSHExecutionInput
 
 	timeout := input.ConnectionTimeout
 	if timeout <= 0 {
-		timeout = 120 * time.Second
+		timeout = 200 * time.Second
 	}
 
 	// NativeSSHExecutor has no logger, so we just set the timeout silently.
@@ -168,7 +168,7 @@ func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInst
 		"host", cmd.Host,
 		"port", cmd.Port,
 		"username", cmd.Username,
-		"ssh_timeout", "120s",
+		"ssh_timeout", "200s",
 	)
 	userID := strings.TrimSpace(cmd.UserID)
 	instanceID := strings.TrimSpace(cmd.InstanceID)

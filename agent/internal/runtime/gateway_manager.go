@@ -487,13 +487,16 @@ func execCaddyReload(configPath string) error {
 		slog.Default().Info("caddy not running, starting with config",
 			"config_path", configPath,
 		)
-		cmd := exec.Command("caddy", "start", "--config", configPath, "--adapter", "caddyfile")
+		// Use context with timeout to avoid hanging
+		startCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(startCtx, "caddy", "start", "--config", configPath, "--adapter", "caddyfile")
 		output, startErr := cmd.CombinedOutput()
 		if startErr != nil {
 			return fmt.Errorf("caddy start: %s: %w", strings.TrimSpace(string(output)), startErr)
 		}
 		// Wait briefly for Caddy to become available
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 		return nil
 	}
 	_ = resp.Body.Close()
