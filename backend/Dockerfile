@@ -17,7 +17,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata git nixpacks docker-cli \
+RUN apk add --no-cache ca-certificates tzdata git docker-cli curl \
+    && curl -sSL https://nixpacks.com/install.sh | sh \
+    && mv /root/.nixpacks/bin/nixpacks /usr/local/bin/nixpacks \
     && addgroup -S lazyops \
     && adduser -S -D -H -h /app -G lazyops lazyops
 
