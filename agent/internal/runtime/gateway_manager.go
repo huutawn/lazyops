@@ -542,7 +542,7 @@ func renderCaddyfilePerService(plan GatewayPlan) string {
 
 	var builder strings.Builder
 	builder.WriteString("{\n")
-	builder.WriteString("  auto_https on\n")
+	builder.WriteString("  auto_https disable_redirects\n")
 	builder.WriteString("}\n\n")
 
 	for _, route := range plan.Routes {
@@ -582,7 +582,7 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 
 	var builder strings.Builder
 	builder.WriteString("{\n")
-	builder.WriteString("  auto_https on\n")
+	builder.WriteString("  auto_https disable_redirects\n")
 	builder.WriteString("}\n\n")
 
 	// Shared domain with path-based routing
