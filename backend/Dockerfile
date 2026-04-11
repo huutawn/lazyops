@@ -11,17 +11,20 @@ ARG TARGETOS
 ARG TARGETARCH
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -trimpath -ldflags="-s -w" -o /out/lazyops-backend ./cmd/server
+    go build -trimpath -ldflags="-s -w" -o /out/lazyops-backend ./cmd/server \
+    && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -trimpath -ldflags="-s -w" -o /out/lazyops-build-worker ./cmd/build-worker
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata git nixpacks docker-cli \
     && addgroup -S lazyops \
     && adduser -S -D -H -h /app -G lazyops lazyops
 
 WORKDIR /app
 
 COPY --from=builder /out/lazyops-backend /app/lazyops-backend
+COPY --from=builder /out/lazyops-build-worker /app/lazyops-build-worker
 
 USER lazyops
 

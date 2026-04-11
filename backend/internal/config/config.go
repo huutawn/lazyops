@@ -22,6 +22,7 @@ type Config struct {
 	Security    SecurityConfig
 	Seed        SeedConfig
 	WebSocket   WebSocketConfig
+	BuildWorker BuildWorkerConfig
 }
 
 type AppConfig struct {
@@ -117,6 +118,18 @@ type WebSocketConfig struct {
 	PongWait        time.Duration
 }
 
+type BuildWorkerConfig struct {
+	Enabled        bool
+	PollInterval   time.Duration
+	MaxConcurrency int
+	RegistryHost   string
+	RegistryUser   string
+	RegistryPass   string
+	NixpacksBin    string
+	DockerBin      string
+	WorkspaceDir   string
+}
+
 func Load() Config {
 	jwtSecret := getEnv("JWT_SECRET", "change-me-in-production")
 
@@ -201,6 +214,17 @@ func Load() Config {
 			WriteBufferSize: getEnvAsInt("WS_WRITE_BUFFER_SIZE", 1024),
 			PingPeriod:      getEnvAsDuration("WS_PING_PERIOD", 30*time.Second),
 			PongWait:        getEnvAsDuration("WS_PONG_WAIT", 60*time.Second),
+		},
+		BuildWorker: BuildWorkerConfig{
+			Enabled:        getEnvAsBool("BUILD_WORKER_ENABLED", false),
+			PollInterval:   getEnvAsDuration("BUILD_WORKER_POLL_INTERVAL", 5*time.Second),
+			MaxConcurrency: getEnvAsInt("BUILD_WORKER_MAX_CONCURRENCY", 2),
+			RegistryHost:   getEnv("BUILD_REGISTRY_HOST", ""),
+			RegistryUser:   getEnv("BUILD_REGISTRY_USER", ""),
+			RegistryPass:   getEnv("BUILD_REGISTRY_PASS", ""),
+			NixpacksBin:    getEnv("BUILD_NIXPACKS_BIN", "nixpacks"),
+			DockerBin:      getEnv("BUILD_DOCKER_BIN", "docker"),
+			WorkspaceDir:   getEnv("BUILD_WORKSPACE_DIR", "/tmp/lazyops-builds"),
 		},
 	}
 }
