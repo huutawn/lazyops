@@ -4,7 +4,8 @@
       "Bash(go *)",
       "Bash(mkdir *)",
       "Bash(sed *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(timeout *)"
     ]
   },
   "$version": 3

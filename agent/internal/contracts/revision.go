@@ -98,12 +98,13 @@ type ServicePayload struct {
 }
 
 type HealthCheckPayload struct {
-	Path             string `json:"path,omitempty"`
-	Port             int    `json:"port"`
-	Protocol         string `json:"protocol"`
-	Timeout          string `json:"timeout,omitempty"`
-	SuccessThreshold int    `json:"success_threshold,omitempty"`
-	FailureThreshold int    `json:"failure_threshold,omitempty"`
+	Path               string `json:"path,omitempty"`
+	Port               int    `json:"port"`
+	Protocol           string `json:"protocol"`
+	Timeout            string `json:"timeout,omitempty"`
+	SuccessThreshold   int    `json:"success_threshold,omitempty"`
+	FailureThreshold   int    `json:"failure_threshold,omitempty"`
+	StartupGracePeriod string `json:"startup_grace_period,omitempty"`
 }
 
 type DependencyBindingPayload struct {

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	defaultHealthCheckTimeout = 2 * time.Second
-	defaultHealthRetryDelay   = 100 * time.Millisecond
+	defaultHealthCheckTimeout  = 2 * time.Second
+	defaultHealthRetryDelay    = 100 * time.Millisecond
+	defaultStartupGracePeriod  = 15 * time.Second
 )
 
 func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext) (HealthGateResult, error) {
@@ -25,6 +26,39 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 	candidate, err := loadCandidateRecord(layout)
 	if err != nil {
 		return HealthGateResult{}, fmt.Errorf("load candidate manifest: %w", err)
+	}
+
+	// Wait for startup grace period to allow services to initialize
+	// This is critical for services like Postgres that need time to boot
+	// Use the maximum startup grace period across all services, or the default if none specify it
+	startupGracePeriod := time.Duration(0)
+	hasExplicitGracePeriod := false
+	for _, service := range runtimeCtx.Services {
+		if strings.TrimSpace(service.HealthCheck.StartupGracePeriod) != "" {
+			if parsed, err := time.ParseDuration(service.HealthCheck.StartupGracePeriod); err == nil {
+				hasExplicitGracePeriod = true
+				if parsed > startupGracePeriod {
+					startupGracePeriod = parsed
+				}
+			}
+		}
+	}
+	if !hasExplicitGracePeriod {
+		startupGracePeriod = defaultStartupGracePeriod
+	}
+
+	if d.logger != nil {
+		d.logger.Info("health_gate_startup_delay", "duration", startupGracePeriod.String())
+	}
+
+	select {
+	case <-ctx.Done():
+		return HealthGateResult{}, fmt.Errorf("startup grace period cancelled: %w", ctx.Err())
+	case <-time.After(startupGracePeriod):
+	}
+
+	if d.logger != nil {
+		d.logger.Info("health_gate_probing_started")
 	}
 
 	report := HealthGateResult{

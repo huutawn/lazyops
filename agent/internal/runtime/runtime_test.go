@@ -2165,6 +2165,7 @@ func TestFilesystemDriverRunHealthGateMarksCandidatePromotable(t *testing.T) {
 	configureServiceHealthChecks(t, &payload, server, tcpListener)
 	payload.Revision.Services[0].HealthCheck.SuccessThreshold = 2
 	payload.Revision.Services[0].HealthCheck.Timeout = "400ms"
+	payload.Revision.Services[0].HealthCheck.StartupGracePeriod = "0s"
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
 	if err != nil {
@@ -2234,6 +2235,7 @@ func TestFilesystemDriverRunHealthGateFailsWithRollbackPolicyAndDedupesIncident(
 	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
 	configureServiceHealthChecks(t, &payload, server, tcpListener)
 	payload.Revision.Services[0].HealthCheck.FailureThreshold = 1
+	payload.Revision.Services[0].HealthCheck.StartupGracePeriod = "0s"
 
 	runtimeCtx, err := ContextFromPreparePayload(payload)
 	if err != nil {
@@ -3003,6 +3005,7 @@ func TestRunHealthGateHandlerUpdatesLocalStateOnSuccess(t *testing.T) {
 
 	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
 	configureServiceHealthChecks(t, &payload, server, tcpListener)
+	payload.Revision.Services[0].HealthCheck.StartupGracePeriod = "0s"
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -3225,6 +3228,7 @@ func configureServiceHealthChecks(t *testing.T, payload *contracts.PrepareReleas
 	payload.Revision.Services[0].HealthCheck.Timeout = "400ms"
 	payload.Revision.Services[0].HealthCheck.SuccessThreshold = 1
 	payload.Revision.Services[0].HealthCheck.FailureThreshold = 1
+	payload.Revision.Services[0].HealthCheck.StartupGracePeriod = "0s"
 
 	payload.Revision.Services[1].HealthCheck.Protocol = "tcp"
 	payload.Revision.Services[1].HealthCheck.Port = tcpAddr.Port
@@ -3232,6 +3236,7 @@ func configureServiceHealthChecks(t *testing.T, payload *contracts.PrepareReleas
 	payload.Revision.Services[1].HealthCheck.Timeout = "400ms"
 	payload.Revision.Services[1].HealthCheck.SuccessThreshold = 1
 	payload.Revision.Services[1].HealthCheck.FailureThreshold = 1
+	payload.Revision.Services[1].HealthCheck.StartupGracePeriod = "0s"
 }
 
 func startTCPHealthListener(t *testing.T) (net.Listener, func()) {
