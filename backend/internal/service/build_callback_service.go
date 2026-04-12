@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
 	"lazyops-server/internal/models"
+	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
 )
 
@@ -19,6 +21,10 @@ type UserBroadcaster interface {
 	BroadcastToUser(userID string, payload any) error
 }
 
+type BuildRolloutStarter interface {
+	StartDeployment(ctx context.Context, projectID, deploymentID string) (*RolloutExecutionResult, error)
+}
+
 type BuildCallbackService struct {
 	projects    ProjectStore
 	blueprints  BlueprintStore
@@ -26,6 +32,7 @@ type BuildCallbackService struct {
 	deployments DeploymentStore
 	buildJobs   BuildJobStore
 	events      UserBroadcaster
+	rollouts    BuildRolloutStarter
 }
 
 func NewBuildCallbackService(
@@ -44,6 +51,14 @@ func NewBuildCallbackService(
 		buildJobs:   buildJobs,
 		events:      events,
 	}
+}
+
+func (s *BuildCallbackService) WithRolloutStarter(starter BuildRolloutStarter) *BuildCallbackService {
+	if s == nil {
+		return s
+	}
+	s.rollouts = starter
+	return s
 }
 
 func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackResult, error) {
@@ -112,6 +127,9 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 			return nil, err
 		}
 		result.Deployment = deployment
+		if deployment != nil {
+			s.startRolloutAsync(job.ProjectID, deployment.ID, buildJobID)
+		}
 	}
 	if status == BuildJobStatusFailed || status == BuildJobStatusCanceled {
 		if err := s.broadcastFailureEvent(projectID, buildJobRecord); err != nil {
@@ -188,6 +206,35 @@ func (s *BuildCallbackService) createQueuedDeployment(projectID string, revision
 	}
 	record := ToDeploymentRecord(*deployment)
 	return &record, nil
+}
+
+func (s *BuildCallbackService) startRolloutAsync(projectID, deploymentID, buildJobID string) {
+	if s.rollouts == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+
+		result, err := s.rollouts.StartDeployment(ctx, projectID, deploymentID)
+		if err != nil {
+			logger.Warn("build_callback_rollout_start_failed",
+				"project_id", projectID,
+				"deployment_id", deploymentID,
+				"build_job_id", buildJobID,
+				"error", err.Error(),
+			)
+			return
+		}
+		logger.Info("build_callback_rollout_started",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"build_job_id", buildJobID,
+			"revision_id", result.RevisionID,
+			"already_started", result.AlreadyStarted,
+		)
+	}()
 }
 
 func (s *BuildCallbackService) broadcastFailureEvent(projectID string, buildJob BuildJobRecord) error {

@@ -211,6 +211,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		controlService,
 		operatorStreamHub,
 	)
+	buildCallbackSvc.WithRolloutStarter(rolloutExecutionSvc)
 	bootstrapOrchestrator.WithOneClickPipeline(
 		serviceRepo,
 		initContractSvc,
