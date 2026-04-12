@@ -950,7 +950,9 @@ func (s *BootstrapOrchestrator) buildOneClickLazyopsDocument(project models.Proj
 			Path:   ".",
 			Public: true,
 			Healthcheck: LazyopsYAMLServiceHealthcheck{
-				Path: "/health",
+				// Use "/" as a generic default because many starter apps do not
+				// expose "/health" out of the box.
+				Path: "/",
 				Port: 8080,
 			},
 		})

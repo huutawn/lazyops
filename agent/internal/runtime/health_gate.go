@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	defaultHealthCheckTimeout  = 2 * time.Second
-	defaultHealthRetryDelay    = 100 * time.Millisecond
-	defaultStartupGracePeriod  = 15 * time.Second
+	defaultHealthCheckTimeout = 2 * time.Second
+	defaultHealthRetryDelay   = 100 * time.Millisecond
+	defaultStartupGracePeriod = 45 * time.Second
+	defaultFailureThreshold   = 3
 )
 
 func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext) (HealthGateResult, error) {
@@ -271,7 +272,8 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 	}
 	failureThreshold := service.HealthCheck.FailureThreshold
 	if failureThreshold <= 0 {
-		failureThreshold = 1
+		// Use a small default retry window for startup jitter and warmup latency.
+		failureThreshold = defaultFailureThreshold
 	}
 
 	timeout := defaultHealthCheckTimeout

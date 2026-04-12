@@ -88,7 +88,7 @@ services:
   build-worker:
     image: ${BACKEND_IMAGE:-tawn/lazyops-backend}:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    command: ["/app/lazyops-build-worker"]
+    entrypoint: ["/app/lazyops-build-worker"]
     env_file:
       - ./.env
     environment:

@@ -6,9 +6,9 @@ type BuildJob struct {
 	ID                   string     `json:"id" gorm:"primaryKey;size:64"`
 	ProjectID            string     `json:"project_id" gorm:"size:64;not null;index"`
 	ProjectRepoLinkID    string     `json:"project_repo_link_id" gorm:"size:64;not null;index"`
-	GitHubDeliveryID     string     `json:"github_delivery_id" gorm:"size:255;not null;index"`
-	GitHubInstallationID int64      `json:"github_installation_id" gorm:"not null;index"`
-	GitHubRepoID         int64      `json:"github_repo_id" gorm:"not null;index"`
+	GitHubDeliveryID     string     `json:"github_delivery_id" gorm:"column:github_delivery_id;size:255;not null;index"`
+	GitHubInstallationID int64      `json:"github_installation_id" gorm:"column:github_installation_id;not null;index"`
+	GitHubRepoID         int64      `json:"github_repo_id" gorm:"column:github_repo_id;not null;index"`
 	RepoFullName         string     `json:"repo_full_name" gorm:"size:512;not null"`
 	TriggerKind          string     `json:"trigger_kind" gorm:"size:128;not null;index"`
 	Status               string     `json:"status" gorm:"size:64;not null;default:'queued';index"`

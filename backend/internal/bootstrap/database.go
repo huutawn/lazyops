@@ -34,6 +34,9 @@ func Migrate(db *gorm.DB) error {
 	if err := migrateProjectRepoLinkLegacyColumns(db); err != nil {
 		return err
 	}
+	if err := migrateBuildJobLegacyColumns(db); err != nil {
+		return err
+	}
 	if err := migrateBuildJobGitHubDeliveryColumn(db); err != nil {
 		return err
 	}
@@ -107,11 +110,56 @@ func migrateBuildJobGitHubDeliveryColumn(db *gorm.DB) error {
 	if !db.Migrator().HasTable("build_jobs") {
 		return nil
 	}
-	if db.Migrator().HasColumn(&models.BuildJob{}, "github_delivery_id") {
-		return nil
+	if !db.Migrator().HasColumn("build_jobs", "github_delivery_id") {
+		if err := db.Exec(`ALTER TABLE build_jobs ADD COLUMN github_delivery_id VARCHAR(255) NOT NULL DEFAULT ''`).Error; err != nil {
+			return err
+		}
 	}
-	if err := db.Exec(`ALTER TABLE build_jobs ADD COLUMN github_delivery_id VARCHAR(255) NOT NULL DEFAULT ''`).Error; err != nil {
+	if !db.Migrator().HasColumn("build_jobs", "github_installation_id") {
+		if err := db.Exec(`ALTER TABLE build_jobs ADD COLUMN github_installation_id BIGINT NOT NULL DEFAULT 0`).Error; err != nil {
+			return err
+		}
+	}
+	if !db.Migrator().HasColumn("build_jobs", "github_repo_id") {
+		if err := db.Exec(`ALTER TABLE build_jobs ADD COLUMN github_repo_id BIGINT NOT NULL DEFAULT 0`).Error; err != nil {
+			return err
+		}
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_build_jobs_github_delivery_id ON build_jobs(github_delivery_id)`).Error; err != nil {
 		return err
 	}
-	return db.Exec(`CREATE INDEX IF NOT EXISTS idx_build_jobs_github_delivery_id ON build_jobs(github_delivery_id)`).Error
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_build_jobs_github_installation_id ON build_jobs(github_installation_id)`).Error; err != nil {
+		return err
+	}
+	return db.Exec(`CREATE INDEX IF NOT EXISTS idx_build_jobs_github_repo_id ON build_jobs(github_repo_id)`).Error
+}
+
+func migrateBuildJobLegacyColumns(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("build_jobs") {
+		return nil
+	}
+
+	if db.Migrator().HasColumn("build_jobs", "git_hub_delivery_id") &&
+		!db.Migrator().HasColumn("build_jobs", "github_delivery_id") {
+		if err := db.Exec(`ALTER TABLE build_jobs RENAME COLUMN git_hub_delivery_id TO github_delivery_id`).Error; err != nil {
+			return err
+		}
+	}
+	if db.Migrator().HasColumn("build_jobs", "git_hub_installation_id") &&
+		!db.Migrator().HasColumn("build_jobs", "github_installation_id") {
+		if err := db.Exec(`ALTER TABLE build_jobs RENAME COLUMN git_hub_installation_id TO github_installation_id`).Error; err != nil {
+			return err
+		}
+	}
+	if db.Migrator().HasColumn("build_jobs", "git_hub_repo_id") &&
+		!db.Migrator().HasColumn("build_jobs", "github_repo_id") {
+		if err := db.Exec(`ALTER TABLE build_jobs RENAME COLUMN git_hub_repo_id TO github_repo_id`).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
