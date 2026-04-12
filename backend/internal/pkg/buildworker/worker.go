@@ -197,20 +197,16 @@ func (w *Worker) buildAndPush(ctx context.Context, input BuildWorkerInput) (imag
 	if len(tag) > 12 {
 		tag = tag[:12]
 	}
-	imageName := fmt.Sprintf("%s/%s/%s:%s", w.cfg.BuildWorker.RegistryHost, input.RepoName, input.ProjectID, tag)
+	imageName := w.imageName(input, tag)
 
 	// Login to registry
 	if err := w.dockerLogin(ctx); err != nil {
 		return "", "", nil, fmt.Errorf("docker login: %w", err)
 	}
 
-	// Build with nixpacks
-	slog.Info("running nixpacks build", "dir", repoDir, "image", imageName)
-	cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.NixpacksBin, "build", repoDir, "-t", imageName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", "", nil, fmt.Errorf("nixpacks build: %w", err)
+	// Build with nixpacks when available; fallback to docker build if Dockerfile exists.
+	if err := w.buildImage(ctx, repoDir, imageName); err != nil {
+		return "", "", nil, err
 	}
 
 	// Push image
@@ -231,6 +227,59 @@ func (w *Worker) buildAndPush(ctx context.Context, input BuildWorkerInput) (imag
 	}
 
 	return imageName, digest, services, nil
+}
+
+func (w *Worker) imageName(input BuildWorkerInput, tag string) string {
+	registryHost := strings.TrimSpace(w.cfg.BuildWorker.RegistryHost)
+	namespace := strings.TrimSpace(w.cfg.BuildWorker.RegistryUser)
+	if namespace == "" {
+		namespace = strings.TrimSpace(input.RepoOwner)
+	}
+	if namespace == "" {
+		namespace = "lazyops"
+	}
+
+	repoName := strings.TrimSpace(input.ProjectID)
+	if repoName == "" {
+		repoName = strings.TrimSpace(input.RepoName)
+	}
+	if repoName == "" {
+		repoName = "app"
+	}
+
+	return fmt.Sprintf("%s/%s/%s:%s",
+		strings.ToLower(registryHost),
+		strings.ToLower(namespace),
+		strings.ToLower(repoName),
+		strings.ToLower(strings.TrimSpace(tag)),
+	)
+}
+
+func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) error {
+	if _, err := exec.LookPath(w.cfg.BuildWorker.NixpacksBin); err == nil {
+		slog.Info("running nixpacks build", "dir", repoDir, "image", imageName)
+		cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.NixpacksBin, "build", repoDir, "-t", imageName)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return fmt.Errorf("nixpacks build: %w", runErr)
+		}
+		return nil
+	}
+
+	dockerfilePath := filepath.Join(repoDir, "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); err == nil {
+		slog.Warn("nixpacks not found; falling back to docker build", "image", imageName)
+		cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "build", "-t", imageName, repoDir)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return fmt.Errorf("docker build fallback: %w", runErr)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("nixpacks not found and Dockerfile missing at repository root")
 }
 
 func (w *Worker) cloneRepo(ctx context.Context, input BuildWorkerInput) (string, error) {

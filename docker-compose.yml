@@ -64,13 +64,12 @@ services:
       BUILD_REGISTRY_PASS: ${BUILD_REGISTRY_PASS:-}
       BUILD_NIXPACKS_BIN: ${BUILD_NIXPACKS_BIN:-nixpacks}
       BUILD_DOCKER_BIN: ${BUILD_DOCKER_BIN:-docker}
-      BUILD_WORKSPACE_DIR: /tmp/lazyops-builds
+      BUILD_WORKSPACE_DIR: ${BUILD_WORKSPACE_DIR:-/tmp}
       BUILD_WORKER_CALLBACK_BASE_URL: ${BUILD_WORKER_CALLBACK_BASE_URL:-http://backend:8080}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_SSLMODE: disable
     volumes:
-      - build_workspace:/tmp/lazyops-builds
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
