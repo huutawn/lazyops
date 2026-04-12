@@ -200,14 +200,15 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 
 	if d.processManager != nil {
 		for _, svc := range runtimeCtx.Services {
-			_ = d.processManager.StopProcess(svc.Name)
+			_ = d.processManager.StopProcess(workloadProcessKey(runtimeCtx, svc.Name))
 		}
 
 		stableRoot := revisionRoot(d.root, runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, restoredRevisionID)
 		for _, svc := range runtimeCtx.Services {
 			configPath := filepath.Join(stableRoot, "services", svc.Name, "runtime.json")
 			if _, err := os.Stat(configPath); err == nil {
-				if _, err := d.processManager.RestartProcess(context.Background(), svc.Name, configPath); err != nil && d.logger != nil {
+				processName := workloadProcessKey(runtimeCtx, svc.Name)
+				if _, err := d.processManager.RestartProcess(context.Background(), processName, configPath); err != nil && d.logger != nil {
 					d.logger.Warn("rollback process restart failed",
 						"service", svc.Name,
 						"error", err.Error(),

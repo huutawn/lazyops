@@ -172,6 +172,21 @@ func (a *MetricAggregator) CollectExpiredWindows() map[string]contracts.MetricAg
 	return result
 }
 
+func (a *MetricAggregator) CollectAllWindows() map[string]contracts.MetricAggregate {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	result := make(map[string]contracts.MetricAggregate)
+	for name, slot := range a.slots {
+		if len(slot.samples) == 0 {
+			continue
+		}
+		result[name] = computeAggregate(slot.samples)
+		delete(a.slots, name)
+	}
+	return result
+}
+
 func (a *MetricAggregator) BuildMetricRollup(projectID string, targetKind contracts.TargetKind, targetID, serviceName string, window contracts.MetricWindow, cpu, ram contracts.MetricAggregate, latency *contracts.MetricAggregate) contracts.MetricRollupPayload {
 	payload := contracts.MetricRollupPayload{
 		ProjectID:   projectID,
@@ -227,6 +242,7 @@ type ReportMetricRollupPayload struct {
 	TargetKind    contracts.TargetKind  `json:"target_kind"`
 	TargetID      string                `json:"target_id"`
 	ServiceName   string                `json:"service_name,omitempty"`
+	Force         bool                  `json:"force,omitempty"`
 	WorkspaceRoot string                `json:"workspace_root"`
 	MetricSender  MetricSender          `json:"-"`
 }
@@ -236,7 +252,12 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 		logger = slog.Default()
 	}
 
-	aggregates := a.CollectExpiredWindows()
+	var aggregates map[string]contracts.MetricAggregate
+	if payload.Force {
+		aggregates = a.CollectAllWindows()
+	} else {
+		aggregates = a.CollectExpiredWindows()
+	}
 	if len(aggregates) == 0 {
 		logger.Info("no metric windows to report",
 			"project_id", payload.ProjectID,

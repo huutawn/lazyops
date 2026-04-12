@@ -26,10 +26,10 @@ type SidecarManager struct {
 	now            func() time.Time
 	processManager *ProcessManager
 	dnsServer      *DNSServer
-	createHook     func(context.Context, SidecarPlan, sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error)
-	reconcileHook  func(context.Context, SidecarPlan, sidecarRenderPaths, SidecarActivation) (SidecarHookResult, error)
-	restartHook    func(context.Context, SidecarPlan, sidecarRenderPaths, *SidecarActivation, SidecarActivation) (SidecarHookResult, error)
-	removeHook     func(context.Context, SidecarPlan, sidecarRenderPaths) (SidecarHookResult, error)
+	createHook     func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error)
+	reconcileHook  func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths, SidecarActivation) (SidecarHookResult, error)
+	restartHook    func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths, *SidecarActivation, SidecarActivation) (SidecarHookResult, error)
+	removeHook     func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths) (SidecarHookResult, error)
 }
 
 type sidecarRenderPaths struct {
@@ -141,7 +141,7 @@ func (m *SidecarManager) RenderSidecars(ctx context.Context, runtimeCtx RuntimeC
 		create = m.defaultCreate
 	}
 	previousActivation, _ := loadSidecarActivation(paths.liveActivation)
-	activation, createResult, err := create(ctx, plan, paths)
+	activation, createResult, err := create(ctx, runtimeCtx, plan, paths)
 	if err != nil {
 		return SidecarRenderResult{}, err
 	}
@@ -151,7 +151,7 @@ func (m *SidecarManager) RenderSidecars(ctx context.Context, runtimeCtx RuntimeC
 	if reconcile == nil {
 		reconcile = m.defaultReconcile
 	}
-	reconcileResult, err := reconcile(ctx, plan, paths, activation)
+	reconcileResult, err := reconcile(ctx, runtimeCtx, plan, paths, activation)
 	if err != nil {
 		return SidecarRenderResult{}, err
 	}
@@ -161,7 +161,7 @@ func (m *SidecarManager) RenderSidecars(ctx context.Context, runtimeCtx RuntimeC
 	if restart == nil {
 		restart = m.defaultRestart
 	}
-	restartResult, err := restart(ctx, plan, paths, previousActivation, activation)
+	restartResult, err := restart(ctx, runtimeCtx, plan, paths, previousActivation, activation)
 	if err != nil {
 		return SidecarRenderResult{}, err
 	}
@@ -171,7 +171,7 @@ func (m *SidecarManager) RenderSidecars(ctx context.Context, runtimeCtx RuntimeC
 	if remove == nil {
 		remove = m.defaultRemove
 	}
-	removeResult, err := remove(ctx, plan, paths)
+	removeResult, err := remove(ctx, runtimeCtx, plan, paths)
 	if err != nil {
 		return SidecarRenderResult{}, err
 	}
@@ -539,7 +539,7 @@ func (m *SidecarManager) renderPaths(layout WorkspaceLayout, runtimeCtx RuntimeC
 	}
 }
 
-func (m *SidecarManager) defaultCreate(ctx context.Context, plan SidecarPlan, paths sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error) {
+func (m *SidecarManager) defaultCreate(ctx context.Context, runtimeCtx RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error) {
 	if err := copyFile(paths.versionConfigPath, filepath.Join(paths.liveRoot, "config.json"), 0o644); err != nil {
 		return SidecarActivation{}, SidecarHookResult{}, err
 	}
@@ -557,7 +557,8 @@ func (m *SidecarManager) defaultCreate(ctx context.Context, plan SidecarPlan, pa
 
 		if m.processManager != nil {
 			configPath := filepath.Join(serviceDir, "config.json")
-			if _, err := m.processManager.StartProcess(ctx, service.ServiceName, configPath); err != nil {
+			processName := sidecarProcessKey(runtimeCtx, service.ServiceName)
+			if _, err := m.processManager.StartProcess(ctx, processName, configPath); err != nil {
 				if m.logger != nil {
 					m.logger.Warn("sidecar process start failed",
 						"service", service.ServiceName,
@@ -591,7 +592,7 @@ func (m *SidecarManager) defaultCreate(ctx context.Context, plan SidecarPlan, pa
 	return activation, result, nil
 }
 
-func (m *SidecarManager) defaultReconcile(_ context.Context, plan SidecarPlan, paths sidecarRenderPaths, activation SidecarActivation) (SidecarHookResult, error) {
+func (m *SidecarManager) defaultReconcile(_ context.Context, _ RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths, activation SidecarActivation) (SidecarHookResult, error) {
 	if err := copyFile(paths.versionPlanPath, paths.livePlanPath, 0o644); err != nil {
 		return SidecarHookResult{}, err
 	}
@@ -608,14 +609,15 @@ func (m *SidecarManager) defaultReconcile(_ context.Context, plan SidecarPlan, p
 	return result, nil
 }
 
-func (m *SidecarManager) defaultRestart(ctx context.Context, plan SidecarPlan, paths sidecarRenderPaths, previous *SidecarActivation, activation SidecarActivation) (SidecarHookResult, error) {
+func (m *SidecarManager) defaultRestart(ctx context.Context, runtimeCtx RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths, previous *SidecarActivation, activation SidecarActivation) (SidecarHookResult, error) {
 	status := "skipped"
 	message := "sidecar restart not required"
 
 	if m.processManager != nil {
 		for _, service := range plan.Services {
 			configPath := filepath.Join(paths.liveConfigRoot, service.ServiceName, "config.json")
-			if _, err := m.processManager.RestartProcess(ctx, service.ServiceName, configPath); err != nil {
+			processName := sidecarProcessKey(runtimeCtx, service.ServiceName)
+			if _, err := m.processManager.RestartProcess(ctx, processName, configPath); err != nil {
 				if m.logger != nil {
 					m.logger.Warn("sidecar process restart failed",
 						"service", service.ServiceName,
@@ -644,15 +646,15 @@ func (m *SidecarManager) defaultRestart(ctx context.Context, plan SidecarPlan, p
 	return result, nil
 }
 
-func (m *SidecarManager) defaultRemove(ctx context.Context, plan SidecarPlan, paths sidecarRenderPaths) (SidecarHookResult, error) {
+func (m *SidecarManager) defaultRemove(ctx context.Context, runtimeCtx RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths) (SidecarHookResult, error) {
 	current := make(map[string]struct{}, len(plan.EnabledServices))
 	for _, serviceName := range plan.EnabledServices {
 		current[serviceName] = struct{}{}
 	}
 
 	if m.processManager != nil {
-		for entryName := range current {
-			_ = m.processManager.StopProcess(entryName)
+		for serviceName := range current {
+			_ = m.processManager.StopProcess(sidecarProcessKey(runtimeCtx, serviceName))
 		}
 	}
 
@@ -669,7 +671,7 @@ func (m *SidecarManager) defaultRemove(ctx context.Context, plan SidecarPlan, pa
 			continue
 		}
 		if m.processManager != nil {
-			_ = m.processManager.StopProcess(entry.Name())
+			_ = m.processManager.StopProcess(sidecarProcessKey(runtimeCtx, entry.Name()))
 		}
 		if err := os.RemoveAll(filepath.Join(paths.liveConfigRoot, entry.Name())); err != nil {
 			return SidecarHookResult{}, err

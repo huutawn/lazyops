@@ -71,6 +71,7 @@ func Migrate(db *gorm.DB) error {
 		&models.TraceSummary{},
 		&models.TopologyNode{},
 		&models.TopologyEdge{},
+		&models.MetricRollup{},
 		&models.LogStreamEntry{},
 		&models.RoutingPolicy{},
 	)

@@ -532,12 +532,56 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 		}
 	}
 
+	if s.nodeMetrics != nil {
+		snapshot := s.nodeMetrics.Collect()
+		s.nodeMetrics.FeedToAggregator(s.metricAggregator, snapshot)
+		if s.logger != nil {
+			s.logger.Info("node metrics snapshot collected",
+				"revision_id", runtimeCtx.Revision.RevisionID,
+				"binding_id", runtimeCtx.Binding.BindingID,
+				"cpu_usage_percent", snapshot.CPUUsagePercent,
+				"memory_used_bytes", snapshot.MemoryUsedBytes,
+				"memory_total_bytes", snapshot.MemoryTotalBytes,
+				"goroutines", snapshot.Goroutines,
+			)
+		}
+	}
+
 	report, err := s.driver.RunHealthGate(ctx, runtimeCtx)
 	if err != nil {
 		return dispatcher.Retryable("run_health_gate_failed", err.Error(), map[string]any{
 			"revision_id": runtimeCtx.Revision.RevisionID,
 			"binding_id":  runtimeCtx.Binding.BindingID,
 		})
+	}
+
+	if s.metricAggregator != nil {
+		for _, item := range report.Services {
+			if item.LatencyMS > 0 {
+				s.metricAggregator.Record("latency", item.LatencyMS)
+			}
+		}
+
+		serviceName := primaryMetricServiceName(runtimeCtx.Services)
+		if _, err := s.metricAggregator.HandleReportMetricRollup(ctx, s.logger, ReportMetricRollupPayload{
+			ProjectID:     runtimeCtx.Project.ProjectID,
+			BindingID:     runtimeCtx.Binding.BindingID,
+			RevisionID:    runtimeCtx.Revision.RevisionID,
+			RuntimeMode:   runtimeCtx.Binding.RuntimeMode,
+			TargetKind:    runtimeCtx.Binding.TargetKind,
+			TargetID:      runtimeCtx.Binding.TargetID,
+			ServiceName:   serviceName,
+			Force:         true,
+			WorkspaceRoot: "",
+			MetricSender:  s.metricSender,
+		}); err != nil && s.logger != nil {
+			s.logger.Warn("health gate metric rollup failed",
+				"project_id", runtimeCtx.Project.ProjectID,
+				"binding_id", runtimeCtx.Binding.BindingID,
+				"revision_id", runtimeCtx.Revision.RevisionID,
+				"error", err,
+			)
+		}
 	}
 
 	if s.store != nil {
@@ -591,6 +635,18 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 	}
 
 	return dispatcher.Done(report.Summary)
+}
+
+func primaryMetricServiceName(services []ServiceRuntimeContext) string {
+	if len(services) == 0 {
+		return ""
+	}
+	for _, service := range services {
+		if strings.EqualFold(strings.TrimSpace(service.Name), "app") {
+			return service.Name
+		}
+	}
+	return strings.TrimSpace(services[0].Name)
 }
 
 func (s *Service) handlePromoteRelease(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {

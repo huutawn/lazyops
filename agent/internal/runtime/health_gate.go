@@ -22,6 +22,8 @@ const (
 	appProbeTimeout           = 300 * time.Millisecond
 )
 
+var healthProbeOnce = probeServiceOnce
+
 func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext) (HealthGateResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
 
@@ -282,7 +284,42 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 		protocol = "http"
 	}
 
-	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+	ports := healthCheckPortCandidates(service, protocol)
+	if len(ports) == 0 {
+		return ServiceHealthResult{
+			ServiceName: service.Name,
+			Protocol:    protocol,
+			Path:        service.HealthCheck.Path,
+			CheckedAt:   checkedAt,
+			Failures:    1,
+			Message:     "healthcheck port must be greater than zero",
+		}
+	}
+
+	var lastResult ServiceHealthResult
+	for _, port := range ports {
+		lastResult = runServiceHealthCheckOnPort(ctx, service, checkedAt, protocol, port)
+		if lastResult.Passed {
+			if port != service.HealthCheck.Port && service.HealthCheck.Port > 0 {
+				lastResult.Message = fmt.Sprintf("%s; fallback port %d selected", lastResult.Message, port)
+			}
+			return lastResult
+		}
+	}
+	if len(ports) > 1 {
+		lastResult.Message = fmt.Sprintf("%s; tried ports [%s]", strings.TrimSpace(lastResult.Message), joinPorts(ports))
+	}
+	return lastResult
+}
+
+func runServiceHealthCheckOnPort(
+	ctx context.Context,
+	service ServiceRuntimeContext,
+	checkedAt time.Time,
+	protocol string,
+	port int,
+) ServiceHealthResult {
+	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	result := ServiceHealthResult{
 		ServiceName: service.Name,
 		Protocol:    protocol,
@@ -290,7 +327,7 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 		Path:        service.HealthCheck.Path,
 		CheckedAt:   checkedAt,
 	}
-	if service.HealthCheck.Port <= 0 {
+	if port <= 0 {
 		result.Failures = 1
 		result.Message = "healthcheck port must be greater than zero"
 		return result
@@ -322,7 +359,7 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 	consecutiveFailures := 0
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result.Attempts = attempt
-		passed, statusCode, latencyMS, message := probeServiceOnce(ctx, protocol, address, service.HealthCheck.Path, timeout)
+		passed, statusCode, latencyMS, message := healthProbeOnce(ctx, protocol, address, service.HealthCheck.Path, timeout)
 		result.StatusCode = statusCode
 		result.LatencyMS = latencyMS
 		result.Message = message
@@ -361,6 +398,44 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 
 	result.Message = "health gate exhausted attempts without reaching success threshold"
 	return result
+}
+
+func healthCheckPortCandidates(service ServiceRuntimeContext, protocol string) []int {
+	ports := make([]int, 0, 3)
+	seen := make(map[int]struct{}, 3)
+	addPort := func(port int) {
+		if port <= 0 {
+			return
+		}
+		if _, exists := seen[port]; exists {
+			return
+		}
+		seen[port] = struct{}{}
+		ports = append(ports, port)
+	}
+
+	addPort(service.HealthCheck.Port)
+
+	if strings.EqualFold(strings.TrimSpace(service.Name), "app") {
+		switch strings.ToLower(strings.TrimSpace(protocol)) {
+		case "http", "https":
+			addPort(3000)
+			addPort(5000)
+		}
+	}
+
+	return ports
+}
+
+func joinPorts(ports []int) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, fmt.Sprintf("%d", port))
+	}
+	return strings.Join(parts, ",")
 }
 
 func probeServiceOnce(ctx context.Context, protocol, address, path string, timeout time.Duration) (bool, int, float64, string) {

@@ -120,6 +120,8 @@ func (ctl *AgentControlController) runControlLoop(client *service.ControlClient,
 			ctl.handleCommandError(client.AgentID, message)
 		case "agent.log_batch":
 			ctl.handleLogBatch(client, message)
+		case "agent.metric_rollup":
+			ctl.handleMetricRollup(client, message)
 		case "agent.topology":
 			ctl.handleTopologyReport(client, message)
 		default:
@@ -374,6 +376,84 @@ func (ctl *AgentControlController) handleTopologyReport(client *service.ControlC
 			Protocol:  "http",
 			Metadata:  metadataJSON,
 		})
+	}
+}
+
+func (ctl *AgentControlController) handleMetricRollup(client *service.ControlClient, raw []byte) {
+	if ctl.observability == nil {
+		return
+	}
+
+	var envelope struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return
+	}
+
+	var payload struct {
+		ProjectID   string `json:"project_id"`
+		TargetKind  string `json:"target_kind"`
+		TargetID    string `json:"target_id"`
+		ServiceName string `json:"service_name"`
+		Window      string `json:"window"`
+		CPU         struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"cpu"`
+		RAM struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"ram"`
+		Latency struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"latency"`
+	}
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		writeControlJSON(client.Conn, gin.H{"type": "error", "message": "invalid metric rollup payload"})
+		return
+	}
+
+	if _, err := ctl.observability.IngestMetricRollup(context.Background(), service.IngestAgentMetricRollupCommand{
+		ProjectID:   payload.ProjectID,
+		TargetKind:  payload.TargetKind,
+		TargetID:    payload.TargetID,
+		ServiceName: payload.ServiceName,
+		Window:      payload.Window,
+		CPU: service.AgentMetricAggregate{
+			P95:   payload.CPU.P95,
+			Max:   payload.CPU.Max,
+			Min:   payload.CPU.Min,
+			Avg:   payload.CPU.Avg,
+			Count: payload.CPU.Count,
+		},
+		RAM: service.AgentMetricAggregate{
+			P95:   payload.RAM.P95,
+			Max:   payload.RAM.Max,
+			Min:   payload.RAM.Min,
+			Avg:   payload.RAM.Avg,
+			Count: payload.RAM.Count,
+		},
+		Latency: service.AgentMetricAggregate{
+			P95:   payload.Latency.P95,
+			Max:   payload.Latency.Max,
+			Min:   payload.Latency.Min,
+			Avg:   payload.Latency.Avg,
+			Count: payload.Latency.Count,
+		},
+	}); err != nil {
+		writeControlJSON(client.Conn, gin.H{"type": "error", "message": "failed to ingest metric rollup"})
 	}
 }
 

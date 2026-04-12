@@ -301,7 +301,8 @@ func (d *FilesystemDriver) StartReleaseCandidate(ctx context.Context, runtimeCtx
 				}
 				return CandidateRecord{}, fmt.Errorf("inspect runtime config for service %q: %w", service.Name, statErr)
 			}
-			if _, startErr := d.processManager.StartProcess(ctx, service.Name, configPath); startErr != nil {
+			processName := workloadProcessKey(runtimeCtx, service.Name)
+			if _, startErr := d.processManager.StartProcess(ctx, processName, configPath); startErr != nil {
 				startFailed = append(startFailed, service.Name)
 				if d.logger != nil {
 					d.logger.Warn("failed to start candidate workload service",
@@ -438,7 +439,8 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 
 func (d *FilesystemDriver) SleepService(ctx context.Context, runtimeCtx RuntimeContext, serviceName string) error {
 	if d.processManager != nil {
-		if err := d.processManager.StopProcess(serviceName); err != nil {
+		processName := workloadProcessKey(runtimeCtx, serviceName)
+		if err := d.processManager.StopProcess(processName); err != nil {
 			return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
 		}
 	}
@@ -460,7 +462,8 @@ func (d *FilesystemDriver) WakeService(ctx context.Context, runtimeCtx RuntimeCo
 	if d.processManager != nil {
 		configPath := filepath.Join(layout.Root, "services", serviceName, "runtime.json")
 		if _, err := os.Stat(configPath); err == nil {
-			if _, err := d.processManager.RestartProcess(ctx, serviceName, configPath); err != nil {
+			processName := workloadProcessKey(runtimeCtx, serviceName)
+			if _, err := d.processManager.RestartProcess(ctx, processName, configPath); err != nil {
 				return fmt.Errorf("failed to restart service %s: %w", serviceName, err)
 			}
 		}

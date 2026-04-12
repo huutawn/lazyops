@@ -271,7 +271,7 @@ func TestSidecarManagerRenderSidecarWithCustomHooks(t *testing.T) {
 	mgr := NewSidecarManager(nil, root)
 
 	createCalled := false
-	mgr.createHook = func(ctx context.Context, plan SidecarPlan, paths sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error) {
+	mgr.createHook = func(ctx context.Context, _ RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error) {
 		createCalled = true
 		return SidecarActivation{Version: plan.Version, AppliedAt: time.Now().UTC()}, SidecarHookResult{Name: "create", Status: "custom_created"}, nil
 	}
@@ -686,8 +686,12 @@ func TestSidecarManagerDefaultRemoveCleansUpStaleServices(t *testing.T) {
 	plan := SidecarPlan{
 		EnabledServices: []string{"new-service"},
 	}
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{ProjectID: "prj_1"},
+		Binding: contracts.DeploymentBindingPayload{BindingID: "bind_1"},
+	}
 
-	result, err := mgr.defaultRemove(context.Background(), plan, paths)
+	result, err := mgr.defaultRemove(context.Background(), runtimeCtx, plan, paths)
 	if err != nil {
 		t.Fatalf("default remove: %v", err)
 	}
@@ -718,8 +722,12 @@ func TestSidecarManagerDefaultRestartSkipsWhenSameVersion(t *testing.T) {
 	plan := SidecarPlan{Version: "sc_v1"}
 	previous := &SidecarActivation{Version: "sc_v1", AppliedAt: time.Now().UTC()}
 	activation := SidecarActivation{Version: "sc_v1", AppliedAt: time.Now().UTC()}
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{ProjectID: "prj_1"},
+		Binding: contracts.DeploymentBindingPayload{BindingID: "bind_1"},
+	}
 
-	result, err := mgr.defaultRestart(context.Background(), plan, paths, previous, activation)
+	result, err := mgr.defaultRestart(context.Background(), runtimeCtx, plan, paths, previous, activation)
 	if err != nil {
 		t.Fatalf("default restart: %v", err)
 	}
@@ -743,8 +751,12 @@ func TestSidecarManagerDefaultRestartWhenVersionChanges(t *testing.T) {
 	plan := SidecarPlan{Version: "sc_v2"}
 	previous := &SidecarActivation{Version: "sc_v1", AppliedAt: time.Now().UTC()}
 	activation := SidecarActivation{Version: "sc_v2", AppliedAt: time.Now().UTC()}
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{ProjectID: "prj_1"},
+		Binding: contracts.DeploymentBindingPayload{BindingID: "bind_1"},
+	}
 
-	result, err := mgr.defaultRestart(context.Background(), plan, paths, previous, activation)
+	result, err := mgr.defaultRestart(context.Background(), runtimeCtx, plan, paths, previous, activation)
 	if err != nil {
 		t.Fatalf("default restart: %v", err)
 	}

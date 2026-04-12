@@ -36,15 +36,16 @@ var (
 )
 
 type ObservabilityService struct {
-	traces    TraceSummaryStore
-	incidents RuntimeIncidentStore
-	logs      LogStreamStore
-	topoNodes TopologyNodeStore
-	topoEdges TopologyEdgeStore
-	instances InstanceStore
-	meshes    MeshNetworkStore
-	clusters  ClusterStore
-	bindings  DeploymentBindingStore
+	traces        TraceSummaryStore
+	incidents     RuntimeIncidentStore
+	logs          LogStreamStore
+	metricRollups MetricRollupStore
+	topoNodes     TopologyNodeStore
+	topoEdges     TopologyEdgeStore
+	instances     InstanceStore
+	meshes        MeshNetworkStore
+	clusters      ClusterStore
+	bindings      DeploymentBindingStore
 }
 
 type TraceSummaryStore interface {
@@ -89,6 +90,11 @@ func NewObservabilityService(
 
 func (s *ObservabilityService) WithBindingStore(bindings DeploymentBindingStore) *ObservabilityService {
 	s.bindings = bindings
+	return s
+}
+
+func (s *ObservabilityService) WithMetricRollupStore(metricRollups MetricRollupStore) *ObservabilityService {
+	s.metricRollups = metricRollups
 	return s
 }
 
@@ -298,6 +304,16 @@ type ServiceMetricSummary struct {
 }
 
 func (s *ObservabilityService) BuildServiceMetricSummary(ctx context.Context, projectID string, limit int) ([]ServiceMetricSummary, error) {
+	if s.metricRollups != nil {
+		metrics, err := s.buildServiceMetricSummaryFromRollups(projectID, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(metrics) > 0 {
+			return metrics, nil
+		}
+	}
+
 	traces, err := s.ListTracesByProject(ctx, projectID, limit)
 	if err != nil {
 		return nil, err
@@ -344,6 +360,221 @@ func (s *ObservabilityService) BuildServiceMetricSummary(ctx context.Context, pr
 			RamAvg:       ramStats.avg,
 			RequestCount: int64(len(values.cpu)),
 			Period:       "trace_recent",
+		})
+	}
+
+	sort.Slice(metrics, func(i, j int) bool {
+		if metrics[i].RequestCount == metrics[j].RequestCount {
+			return metrics[i].Service < metrics[j].Service
+		}
+		return metrics[i].RequestCount > metrics[j].RequestCount
+	})
+	return metrics, nil
+}
+
+type IngestAgentMetricRollupCommand struct {
+	ProjectID   string
+	TargetKind  string
+	TargetID    string
+	ServiceName string
+	Window      string
+	CPU         AgentMetricAggregate
+	RAM         AgentMetricAggregate
+	Latency     AgentMetricAggregate
+}
+
+type AgentMetricAggregate struct {
+	P95   float64
+	Max   float64
+	Min   float64
+	Avg   float64
+	Count int64
+}
+
+func (s *ObservabilityService) IngestMetricRollup(ctx context.Context, cmd IngestAgentMetricRollupCommand) (int, error) {
+	_ = ctx
+	if s.metricRollups == nil {
+		return 0, nil
+	}
+
+	projectID := strings.TrimSpace(cmd.ProjectID)
+	if projectID == "" {
+		return 0, ErrInvalidInput
+	}
+
+	serviceName := strings.TrimSpace(cmd.ServiceName)
+	if serviceName == "" {
+		serviceName = "app"
+	}
+
+	duration := metricWindowDuration(strings.TrimSpace(cmd.Window))
+	windowEnd := time.Now().UTC()
+	windowStart := windowEnd.Add(-duration)
+
+	baseMetadata := map[string]any{
+		"source":      "agent",
+		"target_kind": strings.TrimSpace(cmd.TargetKind),
+		"target_id":   strings.TrimSpace(cmd.TargetID),
+		"window":      strings.TrimSpace(cmd.Window),
+	}
+
+	inserted := 0
+	writeAggregate := func(kind string, aggregate AgentMetricAggregate, metadata map[string]any) error {
+		if aggregate.Count <= 0 {
+			return nil
+		}
+		raw, _ := json.Marshal(metadata)
+		rollup := &models.MetricRollup{
+			ID:           utils.NewPrefixedID("met"),
+			ProjectID:    projectID,
+			ServiceName:  serviceName,
+			MetricKind:   kind,
+			WindowStart:  windowStart,
+			WindowEnd:    windowEnd,
+			P95:          aggregate.P95,
+			Max:          aggregate.Max,
+			Min:          aggregate.Min,
+			Avg:          aggregate.Avg,
+			Count:        aggregate.Count,
+			MetadataJSON: string(raw),
+			CreatedAt:    time.Now().UTC(),
+		}
+		if err := s.metricRollups.Create(rollup); err != nil {
+			return err
+		}
+		inserted++
+		return nil
+	}
+
+	if err := writeAggregate(MetricKindCPU, cmd.CPU, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindCPU})); err != nil {
+		return 0, err
+	}
+	if err := writeAggregate(MetricKindMemory, cmd.RAM, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindMemory})); err != nil {
+		return 0, err
+	}
+	if err := writeAggregate(MetricKindRequestLatency, cmd.Latency, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindRequestLatency})); err != nil {
+		return 0, err
+	}
+
+	requestSamples := cmd.Latency.Count
+	if requestSamples <= 0 {
+		if cmd.CPU.Count > cmd.RAM.Count {
+			requestSamples = cmd.CPU.Count
+		} else {
+			requestSamples = cmd.RAM.Count
+		}
+	}
+	if requestSamples > 0 {
+		requestValue := float64(requestSamples)
+		if err := writeAggregate(
+			MetricKindRequestCount,
+			AgentMetricAggregate{
+				P95:   requestValue,
+				Max:   requestValue,
+				Min:   requestValue,
+				Avg:   requestValue,
+				Count: requestSamples,
+			},
+			mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindRequestCount}),
+		); err != nil {
+			return 0, err
+		}
+	}
+
+	return inserted, nil
+}
+
+func (s *ObservabilityService) buildServiceMetricSummaryFromRollups(projectID string, limit int) ([]ServiceMetricSummary, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	rollups, err := s.metricRollups.ListByProject(projectID, limit*6)
+	if err != nil {
+		return nil, err
+	}
+	if len(rollups) == 0 {
+		return nil, nil
+	}
+
+	type serviceAggregate struct {
+		cpu                metricSeriesAccumulator
+		ram                metricSeriesAccumulator
+		requestCountDirect int64
+		requestCountByLat  int64
+		period             string
+	}
+
+	perService := make(map[string]*serviceAggregate)
+	for _, rollup := range rollups {
+		serviceName := strings.TrimSpace(rollup.ServiceName)
+		if serviceName == "" {
+			serviceName = "unknown"
+		}
+
+		aggregate := perService[serviceName]
+		if aggregate == nil {
+			aggregate = &serviceAggregate{}
+			perService[serviceName] = aggregate
+		}
+
+		if aggregate.period == "" {
+			if parsed := metricWindowFromMetadata(rollup.MetadataJSON); parsed != "" {
+				aggregate.period = "agent_rollup_" + parsed
+			}
+		}
+
+		switch strings.TrimSpace(rollup.MetricKind) {
+		case MetricKindCPU:
+			aggregate.cpu.Add(rollup)
+		case MetricKindMemory:
+			aggregate.ram.Add(rollup)
+		case MetricKindRequestCount:
+			if rollup.Count > 0 {
+				aggregate.requestCountDirect += rollup.Count
+			} else if rollup.Avg > 0 {
+				aggregate.requestCountDirect += int64(math.Round(rollup.Avg))
+			}
+		case MetricKindRequestLatency:
+			if rollup.Count > 0 {
+				aggregate.requestCountByLat += rollup.Count
+			}
+		}
+	}
+
+	metrics := make([]ServiceMetricSummary, 0, len(perService))
+	for serviceName, aggregate := range perService {
+		if !aggregate.cpu.HasSamples() && !aggregate.ram.HasSamples() && aggregate.requestCountDirect == 0 && aggregate.requestCountByLat == 0 {
+			continue
+		}
+
+		cpuStats := aggregate.cpu.Summary()
+		ramStats := aggregate.ram.Summary()
+		requestCount := aggregate.requestCountDirect
+		if requestCount <= 0 {
+			requestCount = aggregate.requestCountByLat
+		}
+
+		period := aggregate.period
+		if period == "" {
+			period = "agent_rollup"
+		}
+
+		metrics = append(metrics, ServiceMetricSummary{
+			Service:      serviceName,
+			CpuP95:       cpuStats.p95,
+			CpuMax:       cpuStats.max,
+			CpuMin:       cpuStats.min,
+			CpuAvg:       cpuStats.avg,
+			RamP95:       bytesToMB(ramStats.p95),
+			RamMax:       bytesToMB(ramStats.max),
+			RamMin:       bytesToMB(ramStats.min),
+			RamAvg:       bytesToMB(ramStats.avg),
+			RequestCount: requestCount,
+			Period:       period,
 		})
 	}
 
@@ -1252,6 +1483,58 @@ type seriesSummary struct {
 	p95 float64
 }
 
+type metricSeriesAccumulator struct {
+	sampleWeight int64
+	weightedSum  float64
+	min          float64
+	max          float64
+	p95          float64
+	hasValues    bool
+}
+
+func (a *metricSeriesAccumulator) Add(rollup models.MetricRollup) {
+	weight := rollup.Count
+	if weight <= 0 {
+		weight = 1
+	}
+
+	if !a.hasValues {
+		a.min = rollup.Min
+		a.max = rollup.Max
+		a.p95 = rollup.P95
+		a.hasValues = true
+	} else {
+		if rollup.Min < a.min {
+			a.min = rollup.Min
+		}
+		if rollup.Max > a.max {
+			a.max = rollup.Max
+		}
+		if rollup.P95 > a.p95 {
+			a.p95 = rollup.P95
+		}
+	}
+
+	a.sampleWeight += weight
+	a.weightedSum += rollup.Avg * float64(weight)
+}
+
+func (a metricSeriesAccumulator) HasSamples() bool {
+	return a.hasValues
+}
+
+func (a metricSeriesAccumulator) Summary() seriesSummary {
+	if !a.hasValues || a.sampleWeight <= 0 {
+		return seriesSummary{}
+	}
+	return seriesSummary{
+		min: a.min,
+		max: a.max,
+		avg: a.weightedSum / float64(a.sampleWeight),
+		p95: a.p95,
+	}
+}
+
 func summarizeSeries(values []float64) seriesSummary {
 	if len(values) == 0 {
 		return seriesSummary{}
@@ -1280,6 +1563,53 @@ func summarizeSeries(values []float64) seriesSummary {
 		avg: total / float64(len(sorted)),
 		p95: sorted[index],
 	}
+}
+
+func metricWindowDuration(window string) time.Duration {
+	switch strings.TrimSpace(strings.ToLower(window)) {
+	case "5m":
+		return 5 * time.Minute
+	case "15m":
+		return 15 * time.Minute
+	case "1h":
+		return 1 * time.Hour
+	case "1m":
+		fallthrough
+	default:
+		return 1 * time.Minute
+	}
+}
+
+func mergeMetricMetadata(base, extra map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(extra))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	return merged
+}
+
+func metricWindowFromMetadata(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return ""
+	}
+	if value, ok := metadata["window"].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func bytesToMB(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	return value / (1024 * 1024)
 }
 
 func normalizeTopologyNodeStatus(raw string) string {

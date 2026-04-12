@@ -295,6 +295,34 @@ func TestMetricAggregatorHandleReportMetricRollupNoWindows(t *testing.T) {
 	}
 }
 
+func TestMetricAggregatorHandleReportMetricRollupForce(t *testing.T) {
+	a := testMetricAggregator()
+	a.Record("cpu", 65.0)
+	a.Record("ram", 4096.0)
+
+	sender := &fakeMetricSender{}
+	reported, err := a.HandleReportMetricRollup(context.Background(), nil, ReportMetricRollupPayload{
+		ProjectID:     "prj_123",
+		BindingID:     "bind_123",
+		RevisionID:    "rev_123",
+		RuntimeMode:   contracts.RuntimeModeStandalone,
+		TargetKind:    contracts.TargetKindInstance,
+		TargetID:      "inst_123",
+		WorkspaceRoot: filepath.Join(t.TempDir(), "runtime-root"),
+		MetricSender:  sender,
+		Force:         true,
+	})
+	if err != nil {
+		t.Fatalf("handle report metric rollup force: %v", err)
+	}
+	if reported != 1 {
+		t.Fatalf("expected 1 reported with force=true, got %d", reported)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 rollup sent with force=true, got %d", len(sender.sent))
+	}
+}
+
 type fakeMetricSender struct {
 	mu      sync.Mutex
 	sent    []contracts.MetricRollupPayload

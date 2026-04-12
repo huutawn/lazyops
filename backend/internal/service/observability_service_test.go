@@ -496,3 +496,75 @@ func TestObservabilityServicePreviewLogsRejectsInvalidLevel(t *testing.T) {
 		t.Fatal("expected invalid level error")
 	}
 }
+
+func TestObservabilityServiceIngestMetricRollupAndBuildSummary(t *testing.T) {
+	metricStore := newFakeMetricRollupStore()
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	).WithMetricRollupStore(metricStore)
+
+	inserted, err := svc.IngestMetricRollup(context.Background(), IngestAgentMetricRollupCommand{
+		ProjectID:   "prj_123",
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+		ServiceName: "app",
+		Window:      "1m",
+		CPU: AgentMetricAggregate{
+			P95:   78.5,
+			Max:   90,
+			Min:   31,
+			Avg:   55.4,
+			Count: 12,
+		},
+		RAM: AgentMetricAggregate{
+			P95:   512 * 1024 * 1024,
+			Max:   640 * 1024 * 1024,
+			Min:   256 * 1024 * 1024,
+			Avg:   420 * 1024 * 1024,
+			Count: 12,
+		},
+		Latency: AgentMetricAggregate{
+			P95:   180,
+			Max:   240,
+			Min:   75,
+			Avg:   120,
+			Count: 47,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ingest metric rollup: %v", err)
+	}
+	if inserted < 3 {
+		t.Fatalf("expected at least 3 metric records inserted, got %d", inserted)
+	}
+
+	items, err := svc.BuildServiceMetricSummary(context.Background(), "prj_123", 20)
+	if err != nil {
+		t.Fatalf("build metric summary: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected exactly 1 service summary, got %d", len(items))
+	}
+	if items[0].Service != "app" {
+		t.Fatalf("expected app service, got %q", items[0].Service)
+	}
+	if items[0].CpuP95 <= 0 {
+		t.Fatalf("expected cpu_p95 > 0, got %f", items[0].CpuP95)
+	}
+	if items[0].RamP95 <= 0 {
+		t.Fatalf("expected ram_p95 > 0, got %f", items[0].RamP95)
+	}
+	if items[0].RequestCount <= 0 {
+		t.Fatalf("expected request_count > 0, got %d", items[0].RequestCount)
+	}
+	if items[0].Period == "" {
+		t.Fatal("expected non-empty period")
+	}
+}

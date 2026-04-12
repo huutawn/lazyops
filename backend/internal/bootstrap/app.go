@@ -35,6 +35,7 @@ type Application struct {
 	ClusterRepo            *repository.ClusterRepository
 	TunnelSessionRepo      *repository.TunnelSessionRepository
 	TraceSummaryRepo       *repository.TraceSummaryRepository
+	MetricRollupRepo       *repository.MetricRollupRepository
 	LogStreamRepo          *repository.LogStreamRepository
 	TopologyStateRepo      *repository.TopologyStateRepository
 	TopologyNodeRepo       *repository.TopologyNodeRepository
@@ -110,6 +111,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	clusterRepo := repository.NewClusterRepository(db)
 	tunnelSessionRepo := repository.NewTunnelSessionRepository(db)
 	traceSummaryRepo := repository.NewTraceSummaryRepository(db)
+	metricRollupRepo := repository.NewMetricRollupRepository(db)
 	logStreamRepo := repository.NewLogStreamRepository(db)
 	topologyStateRepo := repository.NewTopologyStateRepository(db)
 	topologyNodeRepo := repository.NewTopologyNodeRepository(db)
@@ -176,7 +178,10 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
-	observabilitySvc := service.NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo).WithBindingStore(deploymentBindingRepo)
+	observabilitySvc := service.
+		NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo).
+		WithBindingStore(deploymentBindingRepo).
+		WithMetricRollupStore(metricRollupRepo)
 	agentEnrollmentSvc := service.NewAgentEnrollmentService(agentRepo, instanceRepo, bootstrapTokenRepo, agentTokenRepo, cfg.Enrollment)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
@@ -256,6 +261,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		ClusterRepo:            clusterRepo,
 		TunnelSessionRepo:      tunnelSessionRepo,
 		TraceSummaryRepo:       traceSummaryRepo,
+		MetricRollupRepo:       metricRollupRepo,
 		LogStreamRepo:          logStreamRepo,
 		TopologyStateRepo:      topologyStateRepo,
 		TopologyNodeRepo:       topologyNodeRepo,
