@@ -354,6 +354,7 @@ func TestStandaloneDriverPlanRollout(t *testing.T) {
 		CommandTypeRenderSidecars,
 		CommandTypeRenderGatewayConfig,
 		CommandTypeReconcileRevision,
+		CommandTypeProvisionInternalSvc,
 		CommandTypeStartReleaseCandidate,
 		CommandTypeRunHealthGate,
 		CommandTypePromoteRelease,

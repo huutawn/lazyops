@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"lazyops-agent/internal/contracts"
@@ -154,25 +155,73 @@ func (s *Service) Register(registry *dispatcher.Registry) {
 }
 
 func (s *Service) handleProvisionInternalServices(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
-	var payload contracts.ProvisionInternalServicesPayload
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+	// Try to parse as ProvisionInternalServicesPayload first (direct payload from backend)
+	var directPayload contracts.ProvisionInternalServicesPayload
+	if err := json.Unmarshal(envelope.Payload, &directPayload); err == nil && len(directPayload.Services) > 0 {
+		result, err := s.driver.ProvisionInternalServices(ctx, ProvisionInternalServicesRequest{
+			ProjectID: directPayload.ProjectID,
+			BindingID: directPayload.BindingID,
+			Services:  directPayload.Services,
+		})
+		if err != nil {
+			return dispatchOperationError(
+				err,
+				"provision_internal_services_failed",
+				map[string]any{
+					"project_id": directPayload.ProjectID,
+					"binding_id": directPayload.BindingID,
+				},
+			)
+		}
+		return dispatcher.Done(result.Summary)
+	}
+
+	// Fall back to extracting from PrepareReleaseWorkspacePayload (revision payload)
+	var preparePayload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(envelope.Payload, &preparePayload); err != nil {
 		return dispatcher.NonRetryable("invalid_provision_internal_services_payload", "command payload could not be decoded", map[string]any{
 			"error": err.Error(),
 		})
 	}
 
+	// Extract internal services from dependency bindings
+	// Internal services have target_service starting with "lazyops-internal-"
+	services := make([]contracts.InternalServiceProvisionSpec, 0)
+	for _, binding := range preparePayload.Revision.DependencyBindings {
+		if strings.HasPrefix(binding.TargetService, "lazyops-internal-") || binding.TargetService == "lazyops-internal-service" {
+			// Extract kind from target_service name (e.g., "lazyops-internal-postgres" -> "postgres")
+			kind := strings.TrimPrefix(binding.TargetService, "lazyops-internal-")
+			if kind == "lazyops-internal-service" {
+				// Fallback: use the alias as kind
+				kind = binding.Alias
+			}
+			services = append(services, contracts.InternalServiceProvisionSpec{
+				Kind:          kind,
+				Alias:         binding.Alias,
+				Protocol:      binding.Protocol,
+				Port:          0, // Port will be determined from the kind preset
+				LocalEndpoint: binding.LocalEndpoint,
+			})
+		}
+	}
+
+	if len(services) == 0 {
+		// No internal services to provision - this is OK, just return success
+		return dispatcher.Done("no internal services to provision")
+	}
+
 	result, err := s.driver.ProvisionInternalServices(ctx, ProvisionInternalServicesRequest{
-		ProjectID: payload.ProjectID,
-		BindingID: payload.BindingID,
-		Services:  payload.Services,
+		ProjectID: preparePayload.Revision.ProjectID,
+		BindingID: preparePayload.Binding.BindingID,
+		Services:  services,
 	})
 	if err != nil {
 		return dispatchOperationError(
 			err,
 			"provision_internal_services_failed",
 			map[string]any{
-				"project_id": payload.ProjectID,
-				"binding_id": payload.BindingID,
+				"project_id": preparePayload.Revision.ProjectID,
+				"binding_id": preparePayload.Binding.BindingID,
 			},
 		)
 	}

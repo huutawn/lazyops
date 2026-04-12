@@ -99,6 +99,15 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 				},
 			},
 			{
+				Kind: "provision_internal_services",
+				Command: AgentCommand{
+					Type:      "provision_internal_services",
+					ProjectID: req.ProjectID,
+					Source:    "standalone_driver",
+					Payload:   req.RevisionPayload,
+				},
+			},
+			{
 				Kind: "start_candidate",
 				Command: AgentCommand{
 					Type:      "start_release_candidate",
@@ -141,6 +150,7 @@ func (d *StandaloneDriver) ExecuteCommand(ctx context.Context, cmd AgentCommand)
 		"render_sidecars":           true,
 		"render_gateway_config":     true,
 		"reconcile_revision":        true,
+		"provision_internal_services": true,
 		"start_release_candidate":   true,
 		"run_health_gate":           true,
 		"promote_release":           true,

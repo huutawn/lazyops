@@ -85,6 +85,39 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  build-worker:
+    image: ${BACKEND_IMAGE:-tawn/lazyops-backend}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["/app/lazyops-build-worker"]
+    env_file:
+      - ./.env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      BUILD_WORKER_ENABLED: ${BUILD_WORKER_ENABLED:-false}
+      BUILD_WORKER_POLL_INTERVAL: ${BUILD_WORKER_POLL_INTERVAL:-5s}
+      BUILD_WORKER_MAX_CONCURRENCY: ${BUILD_WORKER_MAX_CONCURRENCY:-1}
+      BUILD_REGISTRY_HOST: ${BUILD_REGISTRY_HOST:-}
+      BUILD_REGISTRY_USER: ${BUILD_REGISTRY_USER:-}
+      BUILD_REGISTRY_PASS: ${BUILD_REGISTRY_PASS:-}
+      BUILD_NIXPACKS_BIN: ${BUILD_NIXPACKS_BIN:-nixpacks}
+      BUILD_DOCKER_BIN: ${BUILD_DOCKER_BIN:-docker}
+      BUILD_WORKSPACE_DIR: /tmp/lazyops-builds
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+    volumes:
+      - build_workspace:/tmp/lazyops-builds
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lazyops_net
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -140,6 +173,7 @@ services:
 volumes:
   postgres_data:
   agent_state:
+  build_workspace:
 
 networks:
   lazyops_net:
