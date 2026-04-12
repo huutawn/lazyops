@@ -18,6 +18,7 @@ const (
 	defaultHealthCheckTimeout = 2 * time.Second
 	defaultHealthRetryDelay   = 100 * time.Millisecond
 	defaultStartupGracePeriod = 45 * time.Second
+	defaultDBStartupGrace     = 75 * time.Second
 	defaultFailureThreshold   = 3
 	appProbeTimeout           = 300 * time.Millisecond
 )
@@ -49,6 +50,9 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 	}
 	if !hasExplicitGracePeriod {
 		startupGracePeriod = defaultStartupGracePeriod
+		if hasInternalPostgresDependency(runtimeCtx.Services) {
+			startupGracePeriod = defaultDBStartupGrace
+		}
 	}
 
 	if d.logger != nil {
@@ -564,4 +568,19 @@ func isOneClickAutogenRevision(revision contracts.DesiredRevisionPayload) bool {
 	}
 	artifactRef := strings.TrimSpace(revision.ArtifactRef)
 	return strings.Contains(artifactRef, "/autogen-")
+}
+
+func hasInternalPostgresDependency(services []ServiceRuntimeContext) bool {
+	for _, service := range services {
+		name := strings.ToLower(strings.TrimSpace(service.Name))
+		if strings.HasPrefix(name, "lazyops-internal-") {
+			continue
+		}
+		for _, dep := range service.Dependencies {
+			if strings.EqualFold(strings.TrimSpace(dep.TargetService), "lazyops-internal-postgres") {
+				return true
+			}
+		}
+	}
+	return false
 }
