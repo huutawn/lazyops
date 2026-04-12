@@ -10,9 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"lazyops-agent/internal/contracts"
 )
 
 type ProcessState string
@@ -30,6 +33,8 @@ type ProcessInfo struct {
 	State       ProcessState `json:"state"`
 	StartedAt   time.Time    `json:"started_at,omitempty"`
 	ConfigPath  string       `json:"config_path"`
+	Runner      string       `json:"runner,omitempty"`
+	Container   string       `json:"container,omitempty"`
 }
 
 type ProcessManager struct {
@@ -40,11 +45,18 @@ type ProcessManager struct {
 	healthCheckInterval time.Duration
 	now                 func() time.Time
 
-	mu             sync.Mutex
-	processes      map[string]*ProcessInfo
-	cmds           map[string]*exec.Cmd
-	sidecarProxy   *SidecarProxy
+	mu              sync.Mutex
+	processes       map[string]*ProcessInfo
+	cmds            map[string]*exec.Cmd
+	sidecarProxy    *SidecarProxy
 	iptablesManager *IPTablesManager
+}
+
+type runtimeWorkloadConfig struct {
+	Service       ServiceRuntimeContext `json:"service"`
+	ArtifactRef   string                `json:"artifact_ref"`
+	ImageRef      string                `json:"image_ref"`
+	WorkspaceRoot string                `json:"workspace_root"`
 }
 
 func NewProcessManager(logger *slog.Logger, runtimeRoot string) *ProcessManager {
@@ -79,6 +91,31 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 	}
 	m.processes[serviceName] = info
 
+	if workloadCfg, ok, err := loadRuntimeWorkloadConfig(configPath); err != nil {
+		info.State = ProcessStateStopped
+		return info, fmt.Errorf("failed to decode runtime workload config for %s: %w", serviceName, err)
+	} else if ok {
+		containerName, startErr := m.startContainerWorkload(ctx, workloadCfg)
+		if startErr != nil {
+			info.State = ProcessStateStopped
+			return info, fmt.Errorf("failed to start workload container for %s: %w", serviceName, startErr)
+		}
+		info.PID = 0
+		info.State = ProcessStateRunning
+		info.StartedAt = m.now()
+		info.Runner = "docker"
+		info.Container = containerName
+
+		if m.logger != nil {
+			m.logger.Info("service workload container started",
+				"service", serviceName,
+				"container", containerName,
+				"config", configPath,
+			)
+		}
+		return info, nil
+	}
+
 	cmd := exec.CommandContext(ctx, "sleep", "86400")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -91,6 +128,7 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 	info.PID = cmd.Process.Pid
 	info.State = ProcessStateRunning
 	info.StartedAt = m.now()
+	info.Runner = "process"
 
 	if m.logger != nil {
 		m.logger.Info("sidecar process started",
@@ -214,6 +252,24 @@ func (m *ProcessManager) StopProcess(serviceName string) error {
 	}
 
 	info.State = ProcessStateStopping
+
+	if strings.TrimSpace(info.Container) != "" {
+		if _, err := m.runDockerCommand(context.Background(), "rm", "-f", info.Container); err != nil {
+			lowered := strings.ToLower(err.Error())
+			if !strings.Contains(lowered, "no such container") {
+				return fmt.Errorf("failed to stop workload container for %s: %w", serviceName, err)
+			}
+		}
+		info.State = ProcessStateStopped
+		info.Container = ""
+		delete(m.cmds, serviceName)
+		if m.logger != nil {
+			m.logger.Info("service workload container stopped",
+				"service", serviceName,
+			)
+		}
+		return nil
+	}
 
 	cmd, cmdOk := m.cmds[serviceName]
 	if cmdOk && cmd.Process != nil {
@@ -394,4 +450,180 @@ func (m *ProcessManager) CleanupStoppedProcesses() int {
 		}
 	}
 	return cleaned
+}
+
+func loadRuntimeWorkloadConfig(configPath string) (runtimeWorkloadConfig, bool, error) {
+	payload, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return runtimeWorkloadConfig{}, false, nil
+		}
+		return runtimeWorkloadConfig{}, false, err
+	}
+
+	var cfg runtimeWorkloadConfig
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		// Sidecar configs and other files are not runtime workload configs.
+		return runtimeWorkloadConfig{}, false, nil
+	}
+	if strings.TrimSpace(cfg.ImageRef) == "" {
+		return runtimeWorkloadConfig{}, false, nil
+	}
+	if strings.TrimSpace(cfg.Service.Name) == "" {
+		return runtimeWorkloadConfig{}, false, fmt.Errorf("runtime workload config missing service.name")
+	}
+	return cfg, true, nil
+}
+
+func (m *ProcessManager) startContainerWorkload(ctx context.Context, cfg runtimeWorkloadConfig) (string, error) {
+	projectID, bindingID, revisionID := parseWorkspaceIdentity(cfg.WorkspaceRoot)
+	containerName := workloadContainerName(projectID, bindingID, cfg.Service.Name)
+
+	// Replace in-place to avoid stale candidate containers hanging around.
+	if _, err := m.runDockerCommand(ctx, "rm", "-f", containerName); err != nil {
+		lowered := strings.ToLower(err.Error())
+		if !strings.Contains(lowered, "no such container") {
+			return "", err
+		}
+	}
+
+	port := cfg.Service.HealthCheck.Port
+	if port <= 0 {
+		port = 8080
+	}
+
+	args := []string{
+		"run", "-d",
+		"--name", containerName,
+		"--restart", "unless-stopped",
+		"--network", "host",
+		"--label", "lazyops.managed=app-service",
+		"--label", "lazyops.service=" + cfg.Service.Name,
+	}
+	if projectID != "" {
+		args = append(args, "--label", "lazyops.project_id="+projectID)
+	}
+	if bindingID != "" {
+		args = append(args, "--label", "lazyops.binding_id="+bindingID)
+	}
+	if revisionID != "" {
+		args = append(args, "--label", "lazyops.revision_id="+revisionID)
+	}
+
+	args = append(args, "-e", "PORT="+strconv.Itoa(port))
+	for _, envVar := range dependencyEnvVars(cfg.Service.Dependencies) {
+		args = append(args, "-e", envVar)
+	}
+
+	args = append(args, cfg.ImageRef)
+	if _, err := m.runDockerCommand(ctx, args...); err != nil {
+		return "", err
+	}
+	return containerName, nil
+}
+
+func dependencyEnvVars(deps []contracts.DependencyBindingPayload) []string {
+	if len(deps) == 0 {
+		return nil
+	}
+
+	env := make(map[string]string, len(deps)*4)
+	for _, dep := range deps {
+		alias := strings.TrimSpace(dep.Alias)
+		if alias == "" {
+			continue
+		}
+		host, port := splitHostPort(dep.LocalEndpoint)
+		if host == "" || port == "" {
+			continue
+		}
+
+		key := strings.ToUpper(strings.ReplaceAll(alias, "-", "_"))
+		env[key+"_HOST"] = host
+		env[key+"_PORT"] = port
+		env[key+"_URL"] = dependencyURL(dep.Protocol, host, port)
+
+		if strings.EqualFold(alias, "postgres") {
+			env["DB_HOST"] = host
+			env["DB_PORT"] = port
+			if _, ok := env["DB_USER"]; !ok {
+				env["DB_USER"] = "lazyops"
+			}
+			if _, ok := env["DB_PASSWORD"]; !ok {
+				env["DB_PASSWORD"] = "lazyops"
+			}
+			if _, ok := env["DB_NAME"]; !ok {
+				env["DB_NAME"] = "app"
+			}
+		}
+	}
+
+	out := make([]string, 0, len(env))
+	for key, value := range env {
+		out = append(out, key+"="+value)
+	}
+	return out
+}
+
+func splitHostPort(endpoint string) (string, string) {
+	value := strings.TrimSpace(endpoint)
+	if value == "" {
+		return "", ""
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil {
+		parts := strings.Split(value, ":")
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		}
+		return "", ""
+	}
+	if strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
+	}
+	return strings.TrimSpace(host), strings.TrimSpace(port)
+}
+
+func dependencyURL(protocol, host, port string) string {
+	scheme := strings.ToLower(strings.TrimSpace(protocol))
+	if scheme == "" {
+		scheme = "tcp"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
+func parseWorkspaceIdentity(workspaceRoot string) (string, string, string) {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(workspaceRoot)))
+	if cleaned == "." || cleaned == "" {
+		return "", "", ""
+	}
+	parts := strings.Split(cleaned, "/")
+	for i := 0; i+5 < len(parts); i++ {
+		if parts[i] == "projects" && parts[i+2] == "bindings" && parts[i+4] == "revisions" {
+			return parts[i+1], parts[i+3], parts[i+5]
+		}
+	}
+	return "", "", ""
+}
+
+func workloadContainerName(projectID, bindingID, serviceName string) string {
+	name := fmt.Sprintf("lazyops-app-%s-%s-%s",
+		normalizeContainerToken(projectID),
+		normalizeContainerToken(bindingID),
+		normalizeContainerToken(serviceName),
+	)
+	if len(name) > 63 {
+		return name[:63]
+	}
+	return name
+}
+
+func (m *ProcessManager) runDockerCommand(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	output, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(output))
+	if err != nil {
+		return text, fmt.Errorf("docker %s failed: %s: %w", strings.Join(args, " "), text, err)
+	}
+	return text, nil
 }

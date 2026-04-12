@@ -280,11 +280,40 @@ func (d *FilesystemDriver) ReconcileRevision(ctx context.Context, runtimeCtx Run
 	}, nil
 }
 
-func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx RuntimeContext) (CandidateRecord, error) {
+func (d *FilesystemDriver) StartReleaseCandidate(ctx context.Context, runtimeCtx RuntimeContext) (CandidateRecord, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
 	manifest, err := loadWorkspaceManifest(layout)
 	if err != nil {
 		return CandidateRecord{}, fmt.Errorf("workspace manifest is missing for revision %q: %w", runtimeCtx.Revision.RevisionID, err)
+	}
+
+	startedServices := make([]string, 0, len(runtimeCtx.Services))
+	startFailed := make([]string, 0)
+	if d.processManager != nil {
+		for _, service := range runtimeCtx.Services {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(service.Name)), "lazyops-internal-") {
+				continue
+			}
+			configPath := filepath.Join(layout.Services, service.Name, "runtime.json")
+			if _, statErr := os.Stat(configPath); statErr != nil {
+				if os.IsNotExist(statErr) {
+					continue
+				}
+				return CandidateRecord{}, fmt.Errorf("inspect runtime config for service %q: %w", service.Name, statErr)
+			}
+			if _, startErr := d.processManager.StartProcess(ctx, service.Name, configPath); startErr != nil {
+				startFailed = append(startFailed, service.Name)
+				if d.logger != nil {
+					d.logger.Warn("failed to start candidate workload service",
+						"service", service.Name,
+						"revision_id", runtimeCtx.Revision.RevisionID,
+						"error", startErr.Error(),
+					)
+				}
+				continue
+			}
+			startedServices = append(startedServices, service.Name)
+		}
 	}
 
 	candidatePath := candidateManifestPath(layout)
@@ -317,6 +346,8 @@ func (d *FilesystemDriver) StartReleaseCandidate(_ context.Context, runtimeCtx R
 			"revision_id", candidate.RevisionID,
 			"workspace_root", candidate.WorkspaceRoot,
 			"state", candidate.State,
+			"started_services", len(startedServices),
+			"failed_services", len(startFailed),
 		)
 	}
 	return candidate, nil

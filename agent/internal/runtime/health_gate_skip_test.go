@@ -8,6 +8,12 @@ import (
 )
 
 func TestShouldSkipServiceHealthCheckSkipsAppWhenListenerMissing(t *testing.T) {
+	runtimeCtx := RuntimeContext{
+		Revision: contracts.DesiredRevisionPayload{
+			TriggerKind: "one_click_deploy",
+			CommitSHA:   "autogen-20260412T041534Z",
+		},
+	}
 	svc := ServiceRuntimeContext{
 		Name: "app",
 		HealthCheck: contracts.HealthCheckPayload{
@@ -17,7 +23,7 @@ func TestShouldSkipServiceHealthCheckSkipsAppWhenListenerMissing(t *testing.T) {
 		},
 	}
 
-	skip, reason := shouldSkipServiceHealthCheck(svc)
+	skip, reason := shouldSkipServiceHealthCheck(runtimeCtx, svc)
 	if !skip {
 		t.Fatal("expected app health check to be skipped when listener is missing")
 	}
@@ -34,6 +40,12 @@ func TestShouldSkipServiceHealthCheckDoesNotSkipAppWhenListenerExists(t *testing
 	defer ln.Close()
 
 	port := ln.Addr().(*net.TCPAddr).Port
+	runtimeCtx := RuntimeContext{
+		Revision: contracts.DesiredRevisionPayload{
+			TriggerKind: "one_click_deploy",
+			CommitSHA:   "autogen-20260412T041534Z",
+		},
+	}
 	svc := ServiceRuntimeContext{
 		Name: "app",
 		HealthCheck: contracts.HealthCheckPayload{
@@ -43,13 +55,19 @@ func TestShouldSkipServiceHealthCheckDoesNotSkipAppWhenListenerExists(t *testing
 		},
 	}
 
-	skip, reason := shouldSkipServiceHealthCheck(svc)
+	skip, reason := shouldSkipServiceHealthCheck(runtimeCtx, svc)
 	if skip {
 		t.Fatalf("expected app health check not to be skipped, reason=%q", reason)
 	}
 }
 
 func TestShouldSkipServiceHealthCheckNeverSkipsNonAppServices(t *testing.T) {
+	runtimeCtx := RuntimeContext{
+		Revision: contracts.DesiredRevisionPayload{
+			TriggerKind: "one_click_deploy",
+			CommitSHA:   "autogen-20260412T041534Z",
+		},
+	}
 	svc := ServiceRuntimeContext{
 		Name: "api",
 		HealthCheck: contracts.HealthCheckPayload{
@@ -59,9 +77,31 @@ func TestShouldSkipServiceHealthCheckNeverSkipsNonAppServices(t *testing.T) {
 		},
 	}
 
-	skip, _ := shouldSkipServiceHealthCheck(svc)
+	skip, _ := shouldSkipServiceHealthCheck(runtimeCtx, svc)
 	if skip {
 		t.Fatal("expected non-app service health check not to be skipped")
+	}
+}
+
+func TestShouldSkipServiceHealthCheckNeverSkipsPushDeployments(t *testing.T) {
+	runtimeCtx := RuntimeContext{
+		Revision: contracts.DesiredRevisionPayload{
+			TriggerKind: "push",
+			CommitSHA:   "68ff3d250031bd89819d73c005c957c3ee860c95",
+		},
+	}
+	svc := ServiceRuntimeContext{
+		Name: "app",
+		HealthCheck: contracts.HealthCheckPayload{
+			Port:     65530,
+			Protocol: "http",
+			Path:     "/",
+		},
+	}
+
+	skip, _ := shouldSkipServiceHealthCheck(runtimeCtx, svc)
+	if skip {
+		t.Fatal("expected push deployment app health check not to be skipped")
 	}
 }
 

@@ -87,7 +87,7 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 			continue
 		}
 
-		if skip, reason := shouldSkipServiceHealthCheck(service); skip {
+		if skip, reason := shouldSkipServiceHealthCheck(runtimeCtx, service); skip {
 			protocol := strings.ToLower(strings.TrimSpace(service.HealthCheck.Protocol))
 			if protocol == "" {
 				protocol = "http"
@@ -416,10 +416,13 @@ func healthIncidentKey(action HealthGatePolicyAction, failingServices []string) 
 	return hex.EncodeToString(sum[:8])
 }
 
-func shouldSkipServiceHealthCheck(service ServiceRuntimeContext) (bool, string) {
+func shouldSkipServiceHealthCheck(runtimeCtx RuntimeContext, service ServiceRuntimeContext) (bool, string) {
 	// In one-click flows, "app" may be a placeholder service before users
 	// actually ship a runnable app process. Skip health gate for that case.
 	if strings.ToLower(strings.TrimSpace(service.Name)) != "app" {
+		return false, ""
+	}
+	if !isOneClickAutogenRevision(runtimeCtx.Revision) {
 		return false, ""
 	}
 	if service.HealthCheck.Port <= 0 {
