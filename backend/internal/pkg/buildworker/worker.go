@@ -259,6 +259,7 @@ func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) erro
 	if _, err := exec.LookPath(w.cfg.BuildWorker.NixpacksBin); err == nil {
 		slog.Info("running nixpacks build", "dir", repoDir, "image", imageName)
 		cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.NixpacksBin, "build", repoDir, "-t", imageName)
+		cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=0")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if runErr := cmd.Run(); runErr != nil {
@@ -271,6 +272,7 @@ func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) erro
 	if _, err := os.Stat(dockerfilePath); err == nil {
 		slog.Warn("nixpacks not found; falling back to docker build", "image", imageName)
 		cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "build", "-t", imageName, repoDir)
+		cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=0")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if runErr := cmd.Run(); runErr != nil {
