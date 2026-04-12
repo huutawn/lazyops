@@ -17,10 +17,20 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata git docker-cli curl \
-    && curl -fsSL https://github.com/railwayapp/nixpacks/releases/download/v1.34.1/nixpacks-v1.34.1-x86_64-unknown-linux-musl.tar.gz | tar xzf - -C /usr/local/bin --strip-components=1 nixpacks \
-    && addgroup -S lazyops \
-    && adduser -S -D -H -h /app -G lazyops lazyops
+ARG TARGETARCH
+
+RUN set -eux; \
+    apk add --no-cache ca-certificates tzdata git docker-cli curl; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) NIXPACKS_ARCH="x86_64" ;; \
+      arm64) NIXPACKS_ARCH="aarch64" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v1.34.1/nixpacks-v1.34.1-${NIXPACKS_ARCH}-unknown-linux-musl.tar.gz" \
+      | tar xzf - -C /usr/local/bin --strip-components=1 nixpacks; \
+    chmod +x /usr/local/bin/nixpacks; \
+    addgroup -S lazyops; \
+    adduser -S -D -H -h /app -G lazyops lazyops
 
 WORKDIR /app
 
