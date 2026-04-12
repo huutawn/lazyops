@@ -402,6 +402,19 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 			continue
 		}
 
+		if exists {
+			running, err := d.internalServiceContainerRunning(ctx, containerName)
+			if err != nil {
+				return ProvisionInternalServicesResult{}, err
+			}
+			// Keep internal services warm across rollouts to avoid restarting
+			// stateful dependencies (e.g., postgres) on every deploy.
+			if running {
+				updated = append(updated, kind)
+				continue
+			}
+		}
+
 		if err := d.recreateInternalServiceContainer(ctx, projectID, containerName, definition, spec.Port); err != nil {
 			return ProvisionInternalServicesResult{}, err
 		}
@@ -586,6 +599,14 @@ func normalizeContainerToken(input string) string {
 
 func (d *FilesystemDriver) internalServiceContainerExists(ctx context.Context, name string) (bool, error) {
 	output, err := d.runDockerCommand(ctx, "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
+}
+
+func (d *FilesystemDriver) internalServiceContainerRunning(ctx context.Context, name string) (bool, error) {
+	output, err := d.runDockerCommand(ctx, "ps", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
 	if err != nil {
 		return false, err
 	}
