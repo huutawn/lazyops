@@ -102,6 +102,15 @@ export default function DeploymentDetailPage() {
   const dep = data;
   const isTerminal = ['promoted', 'failed', 'rolled_back', 'canceled'].includes(dep.rollout_state);
   const incident = dep.incident_summary;
+  const services = Array.isArray(dep.services) ? dep.services : [];
+  const placementAssignments = Array.isArray(dep.placement_assignments) ? dep.placement_assignments : [];
+  const safetyPolicy = dep.safety_policy ?? {
+    auto_rollback_enabled: false,
+    triggers: [] as string[],
+    description: 'Chính sách an toàn chưa được cung cấp.',
+  };
+  const safetyTriggers = Array.isArray(safetyPolicy.triggers) ? safetyPolicy.triggers : [];
+  const timeline = Array.isArray(dep.timeline) ? dep.timeline : [];
 
   return (
     <div className="relative flex flex-col gap-8 max-w-[1400px] mx-auto py-10 lg:px-8">
@@ -226,7 +235,7 @@ export default function DeploymentDetailPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <SectionCard title={<div className="flex items-center gap-2"><Layers className="size-5 text-[#38BDF8]" /> Dịch vụ</div>}>
               <div className="flex flex-col gap-3">
-                {dep.services.map((svc) => (
+                {services.map((svc) => (
                   <div key={svc.name} className="flex items-center justify-between rounded-xl bg-[#131c31] border border-[#1e293b] px-4 py-3">
                     <div className="flex flex-col">
                       <span className="text-[15px] font-bold text-white">{svc.name}</span>
@@ -240,7 +249,7 @@ export default function DeploymentDetailPage() {
 
             <SectionCard title={<div className="flex items-center gap-2"><Cpu className="size-5 text-[#38BDF8]" /> Phân bổ</div>}>
               <div className="flex flex-col gap-3">
-                {dep.placement_assignments.map((pa) => (
+                {placementAssignments.map((pa) => (
                   <div key={pa.service_name} className="flex flex-col gap-1 rounded-xl bg-[#131c31] border border-[#1e293b] px-4 py-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-bold text-white">{pa.service_name}</span>
@@ -249,7 +258,7 @@ export default function DeploymentDetailPage() {
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest">{pa.target_kind}</span>
                       <div className="flex gap-1">
-                        {Object.entries(pa.labels).slice(0, 2).map(([k, v]) => (
+                        {Object.entries(pa.labels ?? {}).slice(0, 2).map(([k, v]) => (
                           <span key={k} className="text-[10px] text-[#94a3b8] bg-[#1e293b] px-1.5 py-0.5 rounded border border-[#334155]/30">
                             {k}: {v}
                           </span>
@@ -272,20 +281,20 @@ export default function DeploymentDetailPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-[#94a3b8]">Tự động Rollback</span>
                 <StatusBadge 
-                  label={dep.safety_policy.auto_rollback_enabled ? 'Bật' : 'Tắt'} 
-                  variant={dep.safety_policy.auto_rollback_enabled ? 'success' : 'warning'}
+                  label={safetyPolicy.auto_rollback_enabled ? 'Bật' : 'Tắt'} 
+                  variant={safetyPolicy.auto_rollback_enabled ? 'success' : 'warning'}
                   dot={false}
                 />
               </div>
               <div className="flex flex-col gap-2">
                 <span className="text-sm text-[#94a3b8]">Trình kích hoạt Rollback:</span>
                 <div className="flex flex-wrap gap-2">
-                  {dep.safety_policy.triggers.map((trigger) => (
+                  {safetyTriggers.map((trigger) => (
                     <span key={trigger} className="text-[11px] text-white bg-[#1e293b] px-2 py-1 rounded-lg border border-[#334155]">{formatState(trigger)}</span>
                   ))}
                 </div>
               </div>
-              <p className="text-xs text-[#64748b] leading-relaxed italic">{dep.safety_policy.description}</p>
+              <p className="text-xs text-[#64748b] leading-relaxed italic">{safetyPolicy.description}</p>
             </div>
 
             {incident && (
@@ -314,7 +323,7 @@ export default function DeploymentDetailPage() {
             <div className="relative pl-6">
               <div className="absolute left-2 top-0 bottom-0 w-px bg-gradient-to-b from-[#334155] via-[#334155] to-transparent" />
               <div className="flex flex-col gap-8">
-                {dep.timeline.map((event, i) => (
+                {timeline.map((event, i) => (
                   <div key={i} className="relative">
                     <div className={cn(
                       "absolute -left-[22px] top-1 size-3 rounded-full border-2 bg-[#0B1120] z-10",

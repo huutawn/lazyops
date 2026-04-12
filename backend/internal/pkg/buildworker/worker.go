@@ -160,6 +160,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	// Callback
 	if err := w.callback(ctx, input, status, imageRef, imageDigest, services); err != nil {
 		slog.Error("build callback failed", "job_id", job.ID, "error", err)
+		w.failJob(job.ID, fmt.Sprintf("callback failed: %v", err))
 		return
 	}
 
@@ -362,13 +363,9 @@ func (w *Worker) callback(ctx context.Context, input BuildWorkerInput, status, i
 
 	payload, _ := json.Marshal(body)
 
-	// Call the callback endpoint
-	callbackURL := w.cfg.ServerAddress()
-	scheme := "http"
-	if w.cfg.App.Environment == "production" {
-		scheme = "https"
-	}
-	url := fmt.Sprintf("%s://%s/api/v1/builds/callback", scheme, callbackURL)
+	// Call the callback endpoint.
+	// Prefer explicit BUILD_WORKER_CALLBACK_BASE_URL; otherwise use an internal-safe default.
+	url := w.callbackURL()
 
 	slog.Info("sending build callback", "url", url, "status", status, "image", imageRef)
 
@@ -391,6 +388,23 @@ func (w *Worker) callback(ctx context.Context, input BuildWorkerInput, status, i
 	}
 
 	return nil
+}
+
+func (w *Worker) callbackURL() string {
+	base := strings.TrimSpace(w.cfg.BuildWorker.CallbackBaseURL)
+	if base != "" {
+		return strings.TrimRight(base, "/") + "/api/v1/builds/callback"
+	}
+
+	host := strings.TrimSpace(w.cfg.Server.Host)
+	port := strings.TrimSpace(w.cfg.Server.Port)
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "127.0.0.1" || host == "localhost" {
+		host = "backend"
+	}
+	if port == "" {
+		port = "8080"
+	}
+	return fmt.Sprintf("http://%s:%s/api/v1/builds/callback", host, port)
 }
 
 func (w *Worker) failJob(jobID string, reason string) {

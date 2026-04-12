@@ -119,15 +119,16 @@ type WebSocketConfig struct {
 }
 
 type BuildWorkerConfig struct {
-	Enabled        bool
-	PollInterval   time.Duration
-	MaxConcurrency int
-	RegistryHost   string
-	RegistryUser   string
-	RegistryPass   string
-	NixpacksBin    string
-	DockerBin      string
-	WorkspaceDir   string
+	Enabled         bool
+	PollInterval    time.Duration
+	MaxConcurrency  int
+	RegistryHost    string
+	RegistryUser    string
+	RegistryPass    string
+	NixpacksBin     string
+	DockerBin       string
+	WorkspaceDir    string
+	CallbackBaseURL string
 }
 
 func Load() Config {
@@ -216,15 +217,16 @@ func Load() Config {
 			PongWait:        getEnvAsDuration("WS_PONG_WAIT", 60*time.Second),
 		},
 		BuildWorker: BuildWorkerConfig{
-			Enabled:        getEnvAsBool("BUILD_WORKER_ENABLED", false),
-			PollInterval:   getEnvAsDuration("BUILD_WORKER_POLL_INTERVAL", 5*time.Second),
-			MaxConcurrency: getEnvAsInt("BUILD_WORKER_MAX_CONCURRENCY", 2),
-			RegistryHost:   getEnv("BUILD_REGISTRY_HOST", ""),
-			RegistryUser:   getEnv("BUILD_REGISTRY_USER", ""),
-			RegistryPass:   getEnv("BUILD_REGISTRY_PASS", ""),
-			NixpacksBin:    getEnv("BUILD_NIXPACKS_BIN", "nixpacks"),
-			DockerBin:      getEnv("BUILD_DOCKER_BIN", "docker"),
-			WorkspaceDir:   getEnv("BUILD_WORKSPACE_DIR", "/tmp/lazyops-builds"),
+			Enabled:         getEnvAsBool("BUILD_WORKER_ENABLED", false),
+			PollInterval:    getEnvAsDuration("BUILD_WORKER_POLL_INTERVAL", 5*time.Second),
+			MaxConcurrency:  getEnvAsInt("BUILD_WORKER_MAX_CONCURRENCY", 2),
+			RegistryHost:    getEnv("BUILD_REGISTRY_HOST", ""),
+			RegistryUser:    getEnv("BUILD_REGISTRY_USER", ""),
+			RegistryPass:    getEnv("BUILD_REGISTRY_PASS", ""),
+			NixpacksBin:     getEnv("BUILD_NIXPACKS_BIN", "nixpacks"),
+			DockerBin:       getEnv("BUILD_DOCKER_BIN", "docker"),
+			WorkspaceDir:    getEnv("BUILD_WORKSPACE_DIR", "/tmp/lazyops-builds"),
+			CallbackBaseURL: getEnv("BUILD_WORKER_CALLBACK_BASE_URL", ""),
 		},
 	}
 }

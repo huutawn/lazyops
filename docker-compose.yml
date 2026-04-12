@@ -51,6 +51,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: ["/app/lazyops-build-worker"]
+    user: "0:0"
     env_file:
       - ./.env
     environment:
@@ -64,6 +65,7 @@ services:
       BUILD_NIXPACKS_BIN: ${BUILD_NIXPACKS_BIN:-nixpacks}
       BUILD_DOCKER_BIN: ${BUILD_DOCKER_BIN:-docker}
       BUILD_WORKSPACE_DIR: /tmp/lazyops-builds
+      BUILD_WORKER_CALLBACK_BASE_URL: ${BUILD_WORKER_CALLBACK_BASE_URL:-http://backend:8080}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_SSLMODE: disable
@@ -73,6 +75,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      disable: true
     networks:
       - lazyops_net
 

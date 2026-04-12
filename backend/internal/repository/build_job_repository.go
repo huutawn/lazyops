@@ -1,12 +1,11 @@
 package repository
 
 import (
-	"errors"
 	"time"
 
-	"gorm.io/gorm"
-
 	"lazyops-server/internal/models"
+
+	"gorm.io/gorm"
 )
 
 type BuildJobRepository struct {
@@ -23,11 +22,12 @@ func (r *BuildJobRepository) Create(job *models.BuildJob) error {
 
 func (r *BuildJobRepository) GetByDeliveryID(deliveryID string) (*models.BuildJob, error) {
 	var job models.BuildJob
-	if err := r.db.Where("github_delivery_id = ?", deliveryID).Order("created_at ASC").First(&job).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+	tx := r.db.Where("github_delivery_id = ?", deliveryID).Order("created_at ASC").Limit(1).Find(&job)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, nil
 	}
 
 	return &job, nil
@@ -35,11 +35,12 @@ func (r *BuildJobRepository) GetByDeliveryID(deliveryID string) (*models.BuildJo
 
 func (r *BuildJobRepository) GetByIDForProject(projectID, buildJobID string) (*models.BuildJob, error) {
 	var job models.BuildJob
-	if err := r.db.Where("project_id = ? AND id = ?", projectID, buildJobID).First(&job).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+	tx := r.db.Where("project_id = ? AND id = ?", projectID, buildJobID).Limit(1).Find(&job)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, nil
 	}
 
 	return &job, nil
