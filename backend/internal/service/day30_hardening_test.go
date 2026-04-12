@@ -388,7 +388,7 @@ func TestDay30AcceptanceMatrixBuildCallbackSuccess(t *testing.T) {
 		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
 	})
 
-	svc := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, buildStore, nil)
+	svc := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, newFakeDeploymentStore(), buildStore, nil)
 
 	result, err := svc.Handle(BuildCallbackCommand{
 		BuildJobID:       "bld_123",
@@ -445,7 +445,7 @@ func TestDay30AcceptanceMatrixGatewayMagicDomainRejectsPrivateIP(t *testing.T) {
 		newFakePublicRouteStore(),
 		newFakeGatewayConfigIntentStore(),
 		newFakeReleaseHistoryStore(),
- nil,
+		nil,
 	)
 
 	privateIPs := []string{"192.168.1.1", "10.0.0.1", "172.16.0.1", "127.0.0.1"}

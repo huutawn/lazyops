@@ -84,8 +84,9 @@ type BuildCallbackCommand struct {
 }
 
 type BuildCallbackResult struct {
-	BuildJob BuildJobRecord
-	Revision *DesiredStateRevisionRecord
+	BuildJob   BuildJobRecord
+	Revision   *DesiredStateRevisionRecord
+	Deployment *DeploymentRecord
 }
 
 type BuildRealtimeEvent struct {

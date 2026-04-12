@@ -20,26 +20,29 @@ type UserBroadcaster interface {
 }
 
 type BuildCallbackService struct {
-	projects   ProjectStore
-	blueprints BlueprintStore
-	revisions  DesiredStateRevisionStore
-	buildJobs  BuildJobStore
-	events     UserBroadcaster
+	projects    ProjectStore
+	blueprints  BlueprintStore
+	revisions   DesiredStateRevisionStore
+	deployments DeploymentStore
+	buildJobs   BuildJobStore
+	events      UserBroadcaster
 }
 
 func NewBuildCallbackService(
 	projects ProjectStore,
 	blueprints BlueprintStore,
 	revisions DesiredStateRevisionStore,
+	deployments DeploymentStore,
 	buildJobs BuildJobStore,
 	events UserBroadcaster,
 ) *BuildCallbackService {
 	return &BuildCallbackService{
-		projects:   projects,
-		blueprints: blueprints,
-		revisions:  revisions,
-		buildJobs:  buildJobs,
-		events:     events,
+		projects:    projects,
+		blueprints:  blueprints,
+		revisions:   revisions,
+		deployments: deployments,
+		buildJobs:   buildJobs,
+		events:      events,
 	}
 }
 
@@ -104,6 +107,11 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 			return nil, err
 		}
 		result.Revision = revision
+		deployment, err := s.createQueuedDeployment(job.ProjectID, revision)
+		if err != nil {
+			return nil, err
+		}
+		result.Deployment = deployment
 	}
 	if status == BuildJobStatusFailed || status == BuildJobStatusCanceled {
 		if err := s.broadcastFailureEvent(projectID, buildJobRecord); err != nil {
@@ -162,6 +170,23 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 	if err != nil {
 		return nil, err
 	}
+	return &record, nil
+}
+
+func (s *BuildCallbackService) createQueuedDeployment(projectID string, revision *DesiredStateRevisionRecord) (*DeploymentRecord, error) {
+	if s.deployments == nil || revision == nil {
+		return nil, nil
+	}
+	deployment := &models.Deployment{
+		ID:         utils.NewPrefixedID("dep"),
+		ProjectID:  projectID,
+		RevisionID: revision.ID,
+		Status:     DeploymentStatusQueued,
+	}
+	if err := s.deployments.Create(deployment); err != nil {
+		return nil, err
+	}
+	record := ToDeploymentRecord(*deployment)
 	return &record, nil
 }
 

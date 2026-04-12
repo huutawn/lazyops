@@ -182,7 +182,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
 	wsHub.Start()
-	buildCallbackSvc := service.NewBuildCallbackService(projectRepo, blueprintRepo, revisionRepo, buildJobRepo, wsHub)
+	buildCallbackSvc := service.NewBuildCallbackService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo, buildJobRepo, wsHub)
 	controlHub := service.NewControlHub()
 	controlHub.Start()
 	operatorStreamHub := service.NewOperatorStreamHub()
