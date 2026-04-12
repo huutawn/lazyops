@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	defaultTransportMode = "mock"
-	defaultAPIBaseURL    = "http://127.0.0.1:8080"
+	defaultTransportMode = "http"
+	defaultAPIBaseURL    = "https://lazyops.cloud"
 	defaultServiceName   = "lazyops-cli"
 	defaultAccountName   = "default"
 )

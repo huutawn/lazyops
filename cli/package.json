@@ -1,6 +1,6 @@
 {
   "name": "@tawn/lazyops-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "LazyOps CLI distributed through npm",
   "keywords": [
     "lazyops"
@@ -29,5 +29,8 @@
   ],
   "bin": {
     "lazyops": "bin/lazyops.js"
+  },
+  "dependencies": {
+    "@tawn/lazyops-cli": "^0.1.2"
   }
 }
