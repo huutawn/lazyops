@@ -63,7 +63,7 @@ func (d *DistributedK3sDriver) PlanRollout(ctx context.Context, req RolloutReque
 					Type:      "run_health_gate",
 					ProjectID: req.ProjectID,
 					Source:    "distributed_k3s_driver",
-					Payload:   map[string]any{"revision_id": req.RevisionID},
+					Payload:   req.RevisionPayload,
 				},
 			},
 			{
@@ -72,7 +72,7 @@ func (d *DistributedK3sDriver) PlanRollout(ctx context.Context, req RolloutReque
 					Type:      "promote_release",
 					ProjectID: req.ProjectID,
 					Source:    "distributed_k3s_driver",
-					Payload:   map[string]any{"revision_id": req.RevisionID},
+					Payload:   req.RevisionPayload,
 				},
 			},
 		},

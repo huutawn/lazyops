@@ -427,7 +427,7 @@ func TestInstanceServiceIssueBootstrapTokenRejectsUnknownInstance(t *testing.T) 
 	}
 }
 
-func TestInstanceServiceIssueBootstrapTokenRejectsEnrolledInstance(t *testing.T) {
+func TestInstanceServiceIssueBootstrapTokenAllowsEnrolledInstance(t *testing.T) {
 	instanceStore := newFakeInstanceStore(&models.Instance{
 		ID:                      "inst_123",
 		UserID:                  "usr_123",
@@ -440,9 +440,12 @@ func TestInstanceServiceIssueBootstrapTokenRejectsEnrolledInstance(t *testing.T)
 	tokenStore := newFakeBootstrapTokenStore()
 	service := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
 
-	_, err := service.IssueBootstrapToken("usr_123", "inst_123")
-	if !errors.Is(err, ErrInstanceBootstrapNotAllowed) {
-		t.Fatalf("expected ErrInstanceBootstrapNotAllowed, got %v", err)
+	issue, err := service.IssueBootstrapToken("usr_123", "inst_123")
+	if err != nil {
+		t.Fatalf("expected online instance to allow bootstrap token issue, got %v", err)
+	}
+	if issue == nil || !strings.HasPrefix(issue.Token, "lop_boot_") {
+		t.Fatalf("expected issued bootstrap token, got %#v", issue)
 	}
 }
 

@@ -91,7 +91,7 @@ func (d *DistributedMeshDriver) PlanRollout(ctx context.Context, req RolloutRequ
 					Type:      "run_health_gate",
 					ProjectID: req.ProjectID,
 					Source:    "distributed_mesh_driver",
-					Payload:   map[string]any{"revision_id": req.RevisionID},
+					Payload:   req.RevisionPayload,
 				},
 			},
 			{
@@ -100,7 +100,7 @@ func (d *DistributedMeshDriver) PlanRollout(ctx context.Context, req RolloutRequ
 					Type:      "promote_release",
 					ProjectID: req.ProjectID,
 					Source:    "distributed_mesh_driver",
-					Payload:   map[string]any{"revision_id": req.RevisionID},
+					Payload:   req.RevisionPayload,
 				},
 			},
 		},

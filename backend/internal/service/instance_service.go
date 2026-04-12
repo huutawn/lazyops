@@ -320,7 +320,7 @@ func normalizeInstanceStatus(status string) string {
 func instanceBootstrapAllowed(instance models.Instance) bool {
 	status := normalizeInstanceStatus(instance.Status)
 	switch status {
-	case "pending_enrollment", "offline", "degraded", "revoked":
+	case "pending_enrollment", "online", "offline", "degraded", "revoked":
 		return true
 	default:
 		return false

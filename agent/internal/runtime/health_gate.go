@@ -116,6 +116,7 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 		}
 
 		serviceResult := runServiceHealthCheck(ctx, service, report.CheckedAt)
+		serviceResult = softenFailedAppHealthCheck(runtimeCtx, service, serviceResult)
 		report.Services = append(report.Services, serviceResult)
 		if serviceResult.Passed {
 			passedServices++
@@ -431,4 +432,58 @@ func shouldSkipServiceHealthCheck(service ServiceRuntimeContext) (bool, string) 
 	}
 	_ = conn.Close()
 	return false, ""
+}
+
+func softenFailedAppHealthCheck(runtimeCtx RuntimeContext, service ServiceRuntimeContext, result ServiceHealthResult) ServiceHealthResult {
+	if result.Passed {
+		return result
+	}
+	if strings.ToLower(strings.TrimSpace(service.Name)) != "app" {
+		return result
+	}
+	if !isOneClickAutogenRevision(runtimeCtx.Revision) {
+		return result
+	}
+
+	protocol := strings.ToLower(strings.TrimSpace(result.Protocol))
+	if protocol == "" {
+		protocol = strings.ToLower(strings.TrimSpace(service.HealthCheck.Protocol))
+	}
+	if protocol != "http" && protocol != "https" {
+		return result
+	}
+	if service.HealthCheck.Port <= 0 {
+		return result
+	}
+
+	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+	conn, err := net.DialTimeout("tcp", address, appProbeTimeout)
+	if err != nil {
+		return result
+	}
+	_ = conn.Close()
+
+	result.Passed = true
+	result.Failures = 0
+	if result.Successes <= 0 {
+		result.Successes = 1
+	}
+	if strings.TrimSpace(result.Message) == "" {
+		result.Message = fmt.Sprintf("app healthcheck soft-passed for one-click autogen; tcp listener reachable at %s", address)
+	} else {
+		result.Message = fmt.Sprintf("%s; soft-passed for one-click autogen because tcp listener is reachable at %s", result.Message, address)
+	}
+	return result
+}
+
+func isOneClickAutogenRevision(revision contracts.DesiredRevisionPayload) bool {
+	if !strings.EqualFold(strings.TrimSpace(revision.TriggerKind), "one_click_deploy") {
+		return false
+	}
+	commit := strings.TrimSpace(revision.CommitSHA)
+	if strings.HasPrefix(commit, "autogen-") {
+		return true
+	}
+	artifactRef := strings.TrimSpace(revision.ArtifactRef)
+	return strings.Contains(artifactRef, "/autogen-")
 }

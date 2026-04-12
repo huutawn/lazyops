@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import {
@@ -25,6 +25,22 @@ import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
+
+function normalizeControlPlaneURL(value: string): string {
+  return value.replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+}
+
+function shouldAutoReplaceControlPlaneURL(value: string): boolean {
+  const lower = value.trim().toLowerCase();
+  if (!lower) {
+    return true;
+  }
+  return (
+    lower.includes("localhost") ||
+    lower.includes("127.0.0.1") ||
+    lower.includes("0.0.0.0")
+  );
+}
 
 export default function InstancesPage() {
   const { data, isLoading, isError } = useInstances();
@@ -358,15 +374,29 @@ function BootstrapModal({
   const [sshPassword, setSSHPassword] = useState('');
   const [sshPrivateKey, setSSHPrivateKey] = useState('');
   const [sshHostKeyFingerprint, setSSHHostKeyFingerprint] = useState('');
-  const [controlPlaneURL, setControlPlaneURL] = useState(
-    (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, ''),
+  const [controlPlaneURL, setControlPlaneURL] = useState(() =>
+    normalizeControlPlaneURL(process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'),
   );
   const [agentImage, setAgentImage] = useState(
     process.env.NEXT_PUBLIC_AGENT_IMAGE_DEFAULT ?? 'tawn/lazyops-agent:latest',
   );
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (!shouldAutoReplaceControlPlaneURL(controlPlaneURL)) {
+      return;
+    }
+    setControlPlaneURL(normalizeControlPlaneURL(window.location.origin));
+  }, [controlPlaneURL]);
+
+  const resolvedControlPlaneURL =
+    controlPlaneURL.trim() ||
+    (typeof window !== 'undefined' ? normalizeControlPlaneURL(window.location.origin) : '');
+
   const command = token
-    ? `AGENT_BOOTSTRAP_TOKEN='${token.token}' AGENT_STATE_ENCRYPTION_KEY="$(openssl rand -hex 32)" AGENT_CONTROL_PLANE_URL='http://<your-backend-host>:8080' go run ./cmd/server`
+    ? `AGENT_BOOTSTRAP_TOKEN='${token.token}' AGENT_STATE_ENCRYPTION_KEY="$(openssl rand -hex 32)" AGENT_CONTROL_PLANE_URL='${resolvedControlPlaneURL || 'http://<your-backend-host>'}' go run ./cmd/server`
     : 'Click "Regenerate token" to issue a fresh bootstrap token for this instance.';
 
   const handleCopy = async () => {
@@ -490,7 +520,7 @@ function BootstrapModal({
                     password: sshPassword,
                     private_key: sshPrivateKey,
                     host_key_fingerprint: sshHostKeyFingerprint.trim() || undefined,
-                    control_plane_url: controlPlaneURL.trim(),
+                    control_plane_url: resolvedControlPlaneURL,
                     runtime_mode: 'standalone',
                     agent_kind: 'instance_agent',
                     agent_image: agentImage.trim() || undefined,

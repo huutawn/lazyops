@@ -227,3 +227,13 @@ func TestBuildInstallAgentCommandRespectsConfiguredDefaultAgentImage(t *testing.
 		t.Fatalf("expected configured default image in command, got %q", command)
 	}
 }
+
+func TestBuildInstallAgentCommandResetsStateBeforeRun(t *testing.T) {
+	command := buildInstallAgentCommand(InstallInstanceAgentSSHCommand{
+		InstanceID: "inst_1",
+	}, "lop_boot_123", "enc_key_123", "http://control.example:8080")
+
+	if !strings.Contains(command, "agent-state.json") {
+		t.Fatalf("expected command to reset agent state file before run, got %q", command)
+	}
+}

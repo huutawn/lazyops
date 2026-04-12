@@ -295,6 +295,7 @@ func buildInstallAgentCommand(cmd InstallInstanceAgentSSHCommand, bootstrapToken
 			"docker_exec rm -f %s >/dev/null 2>&1 || true; "+
 			"docker_exec pull %s >/dev/null 2>&1 || true; "+
 			"if [ -n \"$SUDO\" ]; then $SUDO mkdir -p \"$STATE_DIR\" \"$RUNTIME_ROOT\"; $SUDO chmod 0777 \"$STATE_DIR\" \"$RUNTIME_ROOT\"; else mkdir -p \"$STATE_DIR\" \"$RUNTIME_ROOT\"; chmod 0777 \"$STATE_DIR\" \"$RUNTIME_ROOT\"; fi; "+
+			"if [ -n \"$SUDO\" ]; then $SUDO rm -f \"$STATE_DIR\"/agent-state.json \"$STATE_DIR\"/agent-state.json.tmp; else rm -f \"$STATE_DIR\"/agent-state.json \"$STATE_DIR\"/agent-state.json.tmp; fi; "+
 			"docker_exec run -d --name %s --restart unless-stopped --network host --privileged "+
 			"--user root "+
 			"-v /var/run/docker.sock:/var/run/docker.sock "+

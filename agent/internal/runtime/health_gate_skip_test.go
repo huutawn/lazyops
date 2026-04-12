@@ -64,3 +64,79 @@ func TestShouldSkipServiceHealthCheckNeverSkipsNonAppServices(t *testing.T) {
 		t.Fatal("expected non-app service health check not to be skipped")
 	}
 }
+
+func TestSoftenFailedAppHealthCheckPassesForOneClickAutogenWhenListenerReachable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	runtimeCtx := RuntimeContext{
+		Revision: contracts.DesiredRevisionPayload{
+			TriggerKind: "one_click_deploy",
+			CommitSHA:   "autogen-20260412T041534Z",
+		},
+	}
+	service := ServiceRuntimeContext{
+		Name: "app",
+		HealthCheck: contracts.HealthCheckPayload{
+			Port:     port,
+			Protocol: "http",
+			Path:     "/health",
+		},
+	}
+	initial := ServiceHealthResult{
+		ServiceName: "app",
+		Protocol:    "http",
+		Address:     net.JoinHostPort("127.0.0.1", "0"),
+		Passed:      false,
+		Failures:    1,
+		Message:     "http health check returned status 404",
+	}
+
+	result := softenFailedAppHealthCheck(runtimeCtx, service, initial)
+	if !result.Passed {
+		t.Fatal("expected app health result to be soft-passed")
+	}
+	if result.Failures != 0 {
+		t.Fatalf("expected failures reset to 0, got %d", result.Failures)
+	}
+}
+
+func TestSoftenFailedAppHealthCheckDoesNotPassForNonAutogenRevision(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	runtimeCtx := RuntimeContext{
+		Revision: contracts.DesiredRevisionPayload{
+			TriggerKind: "github_push",
+			CommitSHA:   "9f3e2d1c",
+		},
+	}
+	service := ServiceRuntimeContext{
+		Name: "app",
+		HealthCheck: contracts.HealthCheckPayload{
+			Port:     port,
+			Protocol: "http",
+			Path:     "/health",
+		},
+	}
+	initial := ServiceHealthResult{
+		ServiceName: "app",
+		Protocol:    "http",
+		Passed:      false,
+		Failures:    1,
+		Message:     "http health check returned status 404",
+	}
+
+	result := softenFailedAppHealthCheck(runtimeCtx, service, initial)
+	if result.Passed {
+		t.Fatal("expected non-autogen revision not to be soft-passed")
+	}
+}

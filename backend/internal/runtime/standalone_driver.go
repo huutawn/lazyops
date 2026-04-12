@@ -131,7 +131,7 @@ func (d *StandaloneDriver) PlanRollout(ctx context.Context, req RolloutRequest) 
 					Type:      "promote_release",
 					ProjectID: req.ProjectID,
 					Source:    "standalone_driver",
-					Payload:   map[string]any{"revision_id": req.RevisionID},
+					Payload:   req.RevisionPayload,
 				},
 			},
 		},
@@ -146,16 +146,16 @@ func (d *StandaloneDriver) ExecuteCommand(ctx context.Context, cmd AgentCommand)
 	}
 
 	validTypes := map[string]bool{
-		"prepare_release_workspace": true,
-		"render_sidecars":           true,
-		"render_gateway_config":     true,
-		"reconcile_revision":        true,
+		"prepare_release_workspace":   true,
+		"render_sidecars":             true,
+		"render_gateway_config":       true,
+		"reconcile_revision":          true,
 		"provision_internal_services": true,
-		"start_release_candidate":   true,
-		"run_health_gate":           true,
-		"promote_release":           true,
-		"rollback_release":          true,
-		"garbage_collect_runtime":   true,
+		"start_release_candidate":     true,
+		"run_health_gate":             true,
+		"promote_release":             true,
+		"rollback_release":            true,
+		"garbage_collect_runtime":     true,
 	}
 
 	if !validTypes[cmd.Type] {
