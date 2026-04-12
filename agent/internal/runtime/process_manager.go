@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -81,7 +82,20 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 	defer m.mu.Unlock()
 
 	if existing, ok := m.processes[serviceName]; ok && existing.State == ProcessStateRunning {
-		return existing, nil
+		reuse, err := m.canReuseRunningProcess(ctx, existing, configPath)
+		if err != nil {
+			return nil, err
+		}
+		if reuse {
+			return existing, nil
+		}
+		if m.logger != nil {
+			m.logger.Info("restarting service process for updated or stale runtime config",
+				"service", serviceName,
+				"previous_config", existing.ConfigPath,
+				"next_config", configPath,
+			)
+		}
 	}
 
 	info := &ProcessInfo{
@@ -139,6 +153,37 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 	}
 
 	return info, nil
+}
+
+func (m *ProcessManager) canReuseRunningProcess(ctx context.Context, existing *ProcessInfo, configPath string) (bool, error) {
+	if existing == nil {
+		return false, nil
+	}
+	if strings.TrimSpace(existing.ConfigPath) != strings.TrimSpace(configPath) {
+		return false, nil
+	}
+
+	container := strings.TrimSpace(existing.Container)
+	if container != "" {
+		running, err := m.isContainerRunning(ctx, container)
+		if err != nil {
+			return false, fmt.Errorf("failed to inspect running state for container %s: %w", container, err)
+		}
+		return running, nil
+	}
+
+	if existing.PID <= 0 {
+		return true, nil
+	}
+
+	err := syscall.Kill(existing.PID, 0)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to inspect running state for process %d: %w", existing.PID, err)
 }
 
 // StartProxyProcess starts a real sidecar proxy for the given route.
@@ -616,6 +661,14 @@ func workloadContainerName(projectID, bindingID, serviceName string) string {
 		return name[:63]
 	}
 	return name
+}
+
+func (m *ProcessManager) isContainerRunning(ctx context.Context, name string) (bool, error) {
+	output, err := m.runDockerCommand(ctx, "ps", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
 }
 
 func (m *ProcessManager) runDockerCommand(ctx context.Context, args ...string) (string, error) {
