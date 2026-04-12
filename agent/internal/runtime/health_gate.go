@@ -19,6 +19,7 @@ const (
 	defaultHealthRetryDelay   = 100 * time.Millisecond
 	defaultStartupGracePeriod = 45 * time.Second
 	defaultFailureThreshold   = 3
+	appProbeTimeout           = 300 * time.Millisecond
 )
 
 func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext) (HealthGateResult, error) {
@@ -81,6 +82,34 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 				ServiceName: service.Name,
 				Passed:      true,
 				Message:     "internal service managed by lazyops - skipped",
+			})
+			passedServices++
+			continue
+		}
+
+		if skip, reason := shouldSkipServiceHealthCheck(service); skip {
+			protocol := strings.ToLower(strings.TrimSpace(service.HealthCheck.Protocol))
+			if protocol == "" {
+				protocol = "http"
+			}
+			address := ""
+			if service.HealthCheck.Port > 0 {
+				address = net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+			}
+			if d.logger != nil {
+				d.logger.Info("health_gate_skipping_service",
+					"service", service.Name,
+					"reason", reason,
+				)
+			}
+			report.Services = append(report.Services, ServiceHealthResult{
+				ServiceName: service.Name,
+				Protocol:    protocol,
+				Address:     address,
+				Path:        service.HealthCheck.Path,
+				Passed:      true,
+				Message:     reason,
+				CheckedAt:   report.CheckedAt,
 			})
 			passedServices++
 			continue
@@ -384,4 +413,22 @@ func retryDelay(timeout time.Duration) time.Duration {
 func healthIncidentKey(action HealthGatePolicyAction, failingServices []string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s", action, strings.Join(failingServices, ","))))
 	return hex.EncodeToString(sum[:8])
+}
+
+func shouldSkipServiceHealthCheck(service ServiceRuntimeContext) (bool, string) {
+	// In one-click flows, "app" may be a placeholder service before users
+	// actually ship a runnable app process. Skip health gate for that case.
+	if strings.ToLower(strings.TrimSpace(service.Name)) != "app" {
+		return false, ""
+	}
+	if service.HealthCheck.Port <= 0 {
+		return true, "app has no healthcheck port configured; skipped"
+	}
+	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+	conn, err := net.DialTimeout("tcp", address, appProbeTimeout)
+	if err != nil {
+		return true, fmt.Sprintf("app listener not detected on %s; skipped", address)
+	}
+	_ = conn.Close()
+	return false, ""
 }
