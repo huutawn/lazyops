@@ -22,10 +22,16 @@ ARG TARGETARCH
 RUN set -eux; \
     apk add --no-cache ca-certificates tzdata git docker-cli curl; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) NIXPACKS_ARCH="x86_64" ;; \
-      arm64) NIXPACKS_ARCH="aarch64" ;; \
+      amd64) NIXPACKS_ARCH="x86_64"; BUILDX_ARCH="amd64" ;; \
+      arm64) NIXPACKS_ARCH="aarch64"; BUILDX_ARCH="arm64" ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
+    if ! docker buildx version >/dev/null 2>&1; then \
+      mkdir -p /usr/libexec/docker/cli-plugins; \
+      curl -fsSL "https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-${BUILDX_ARCH}" \
+        -o /usr/libexec/docker/cli-plugins/docker-buildx; \
+      chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
+    fi; \
     TMP_DIR="$(mktemp -d)"; \
     curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v1.34.1/nixpacks-v1.34.1-${NIXPACKS_ARCH}-unknown-linux-musl.tar.gz" -o /tmp/nixpacks.tgz; \
     tar xzf /tmp/nixpacks.tgz -C "${TMP_DIR}"; \
