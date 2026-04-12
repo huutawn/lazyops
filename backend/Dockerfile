@@ -26,9 +26,13 @@ RUN set -eux; \
       arm64) NIXPACKS_ARCH="aarch64" ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v1.34.1/nixpacks-v1.34.1-${NIXPACKS_ARCH}-unknown-linux-musl.tar.gz" \
-      | tar xzf - -C /usr/local/bin --strip-components=1 nixpacks; \
-    chmod +x /usr/local/bin/nixpacks; \
+    TMP_DIR="$(mktemp -d)"; \
+    curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v1.34.1/nixpacks-v1.34.1-${NIXPACKS_ARCH}-unknown-linux-musl.tar.gz" -o /tmp/nixpacks.tgz; \
+    tar xzf /tmp/nixpacks.tgz -C "${TMP_DIR}"; \
+    NIXPACKS_BIN="$(find "${TMP_DIR}" -type f -name nixpacks | head -n1)"; \
+    test -n "${NIXPACKS_BIN}"; \
+    install -m 0755 "${NIXPACKS_BIN}" /usr/local/bin/nixpacks; \
+    rm -rf "${TMP_DIR}" /tmp/nixpacks.tgz; \
     addgroup -S lazyops; \
     adduser -S -D -H -h /app -G lazyops lazyops
 
