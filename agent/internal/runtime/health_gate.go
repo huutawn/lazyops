@@ -70,6 +70,21 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 	passedServices := 0
 	failingServices := make([]string, 0)
 	for _, service := range runtimeCtx.Services {
+		// Skip internal services (lazyops-internal-*) - they're managed infrastructure
+		// and already verified during provision_internal_services
+		if strings.HasPrefix(service.Name, "lazyops-internal-") || service.Name == "lazyops-internal-service" {
+			if d.logger != nil {
+				d.logger.Info("health_gate_skipping_internal_service", "service", service.Name)
+			}
+			report.Services = append(report.Services, ServiceHealthResult{
+				ServiceName: service.Name,
+				Passed:      true,
+				Message:     "internal service managed by lazyops - skipped",
+			})
+			passedServices++
+			continue
+		}
+
 		serviceResult := runServiceHealthCheck(ctx, service, report.CheckedAt)
 		report.Services = append(report.Services, serviceResult)
 		if serviceResult.Passed {
@@ -87,6 +102,9 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 		report.CandidateState = candidate.State
 		report.PolicyAction = HealthGatePolicyPromoteCandidate
 		report.Summary = fmt.Sprintf("health gate passed for %d/%d services; candidate is promotable", passedServices, len(runtimeCtx.Services))
+		if d.logger != nil {
+			d.logger.Info("health_gate_passed", "passed", passedServices, "total", len(runtimeCtx.Services))
+		}
 	} else {
 		if err := moveCandidateToFailed(&candidate, report.CheckedAt); err != nil {
 			return HealthGateResult{}, err
@@ -97,6 +115,9 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 			report.PolicyAction = HealthGatePolicyRollbackRelease
 		}
 		report.Summary = fmt.Sprintf("health gate failed for %d/%d services: %s", len(failingServices), len(runtimeCtx.Services), strings.Join(failingServices, ", "))
+		if d.logger != nil {
+			d.logger.Error("health_gate_failed", "failing", len(failingServices), "total", len(runtimeCtx.Services), "services", strings.Join(failingServices, ", "))
+		}
 
 		incident := contracts.IncidentPayload{
 			ProjectID:  runtimeCtx.Project.ProjectID,
