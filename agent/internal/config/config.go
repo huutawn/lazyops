@@ -22,6 +22,7 @@ type Config struct {
 	StateDir            string
 	RuntimeRootDir      string
 	StateEncryptionKey  string
+	AgentImageRef       string
 	ShutdownTimeout     time.Duration
 	HeartbeatInterval   time.Duration
 	HandshakeVersion    string
@@ -47,6 +48,7 @@ func Load() (Config, error) {
 		StateDir:            envOrDefault("AGENT_STATE_DIR", ".agent-state"),
 		RuntimeRootDir:      strings.TrimSpace(os.Getenv("AGENT_RUNTIME_ROOT_DIR")),
 		StateEncryptionKey:  strings.TrimSpace(os.Getenv("AGENT_STATE_ENCRYPTION_KEY")),
+		AgentImageRef:       envOrDefault("AGENT_DEFAULT_IMAGE", envOrDefault("AGENT_IMAGE_REF", "tawn/lazyops-agent:latest")),
 		ShutdownTimeout:     durationOrDefault("AGENT_SHUTDOWN_TIMEOUT", 10*time.Second),
 		HeartbeatInterval:   durationOrDefault("AGENT_HEARTBEAT_INTERVAL", 30*time.Second),
 		HandshakeVersion:    envOrDefault("AGENT_HANDSHAKE_VERSION", "v0"),

@@ -1,7 +1,14 @@
 package request
 
 type BuildCallbackMetadataRequest struct {
-	DetectedServices []string `json:"detected_services"`
+	DetectedServices     []string                          `json:"detected_services"`
+	DetectedFramework    string                            `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck *BuildSuggestedHealthcheckRequest `json:"suggested_healthcheck,omitempty"`
+}
+
+type BuildSuggestedHealthcheckRequest struct {
+	Path string `json:"path"`
+	Port int    `json:"port"`
 }
 
 type BuildCallbackRequest struct {

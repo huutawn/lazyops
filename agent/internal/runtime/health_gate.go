@@ -27,6 +27,7 @@ var healthProbeOnce = probeServiceOnce
 
 func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext) (HealthGateResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 
 	candidate, err := loadCandidateRecord(layout)
 	if err != nil {
@@ -99,8 +100,9 @@ func (d *FilesystemDriver) RunHealthGate(ctx context.Context, runtimeCtx Runtime
 				protocol = "http"
 			}
 			address := ""
-			if service.HealthCheck.Port > 0 {
-				address = net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+			port := effectiveRuntimePort(service)
+			if port > 0 {
+				address = net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 			}
 			if d.logger != nil {
 				d.logger.Info("health_gate_skipping_service",
@@ -300,11 +302,14 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 		}
 	}
 
+	runtimePort := service.RuntimePort
+	declaredPort := declaredHealthcheckPort(service)
+
 	var lastResult ServiceHealthResult
 	for _, port := range ports {
 		lastResult = runServiceHealthCheckOnPort(ctx, service, checkedAt, protocol, port)
 		if lastResult.Passed {
-			if port != service.HealthCheck.Port && service.HealthCheck.Port > 0 {
+			if port != declaredPort && declaredPort > 0 {
 				lastResult.Message = fmt.Sprintf("%s; fallback port %d selected", lastResult.Message, port)
 			}
 			return lastResult
@@ -312,6 +317,9 @@ func runServiceHealthCheck(ctx context.Context, service ServiceRuntimeContext, c
 	}
 	if len(ports) > 1 {
 		lastResult.Message = fmt.Sprintf("%s; tried ports [%s]", strings.TrimSpace(lastResult.Message), joinPorts(ports))
+	}
+	if runtimePort > 0 && declaredPort > 0 && runtimePort != declaredPort {
+		lastResult.Message = fmt.Sprintf("%s; declared healthcheck port %d differs from runtime port %d", strings.TrimSpace(lastResult.Message), declaredPort, runtimePort)
 	}
 	return lastResult
 }
@@ -418,6 +426,7 @@ func healthCheckPortCandidates(service ServiceRuntimeContext, protocol string) [
 		ports = append(ports, port)
 	}
 
+	addPort(service.RuntimePort)
 	addPort(service.HealthCheck.Port)
 
 	if strings.EqualFold(strings.TrimSpace(service.Name), "app") {
@@ -504,10 +513,11 @@ func shouldSkipServiceHealthCheck(runtimeCtx RuntimeContext, service ServiceRunt
 	if !isOneClickAutogenRevision(runtimeCtx.Revision) {
 		return false, ""
 	}
-	if service.HealthCheck.Port <= 0 {
+	port := effectiveRuntimePort(service)
+	if port <= 0 {
 		return true, "app has no healthcheck port configured; skipped"
 	}
-	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, appProbeTimeout)
 	if err != nil {
 		return true, fmt.Sprintf("app listener not detected on %s; skipped", address)
@@ -534,11 +544,12 @@ func softenFailedAppHealthCheck(runtimeCtx RuntimeContext, service ServiceRuntim
 	if protocol != "http" && protocol != "https" {
 		return result
 	}
-	if service.HealthCheck.Port <= 0 {
+	port := effectiveRuntimePort(service)
+	if port <= 0 {
 		return result
 	}
 
-	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", service.HealthCheck.Port))
+	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, appProbeTimeout)
 	if err != nil {
 		return result

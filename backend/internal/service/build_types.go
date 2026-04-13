@@ -23,11 +23,18 @@ type BuildCallbackExpectationRecord struct {
 }
 
 type BuildArtifactMetadataStageRecord struct {
-	CommitSHA        string   `json:"commit_sha"`
-	ArtifactRef      string   `json:"artifact_ref,omitempty"`
-	ImageRef         string   `json:"image_ref,omitempty"`
-	ImageDigest      string   `json:"image_digest,omitempty"`
-	DetectedServices []string `json:"detected_services,omitempty"`
+	CommitSHA            string                           `json:"commit_sha"`
+	ArtifactRef          string                           `json:"artifact_ref,omitempty"`
+	ImageRef             string                           `json:"image_ref,omitempty"`
+	ImageDigest          string                           `json:"image_digest,omitempty"`
+	DetectedServices     []string                         `json:"detected_services,omitempty"`
+	DetectedFramework    string                           `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck *BuildSuggestedHealthcheckRecord `json:"suggested_healthcheck,omitempty"`
+}
+
+type BuildSuggestedHealthcheckRecord struct {
+	Path string `json:"path"`
+	Port int    `json:"port"`
 }
 
 type BuildWorkerInputRecord struct {
@@ -74,13 +81,15 @@ type BuildJobRecord struct {
 }
 
 type BuildCallbackCommand struct {
-	BuildJobID       string
-	ProjectID        string
-	CommitSHA        string
-	Status           string
-	ImageRef         string
-	ImageDigest      string
-	DetectedServices []string
+	BuildJobID           string
+	ProjectID            string
+	CommitSHA            string
+	Status               string
+	ImageRef             string
+	ImageDigest          string
+	DetectedServices     []string
+	DetectedFramework    string
+	SuggestedHealthcheck *BuildSuggestedHealthcheckRecord
 }
 
 type BuildCallbackResult struct {

@@ -21,15 +21,16 @@ import (
 )
 
 type SidecarManager struct {
-	logger         *slog.Logger
-	runtimeRoot    string
-	now            func() time.Time
-	processManager *ProcessManager
-	dnsServer      *DNSServer
-	createHook     func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error)
-	reconcileHook  func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths, SidecarActivation) (SidecarHookResult, error)
-	restartHook    func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths, *SidecarActivation, SidecarActivation) (SidecarHookResult, error)
-	removeHook     func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths) (SidecarHookResult, error)
+	logger            *slog.Logger
+	runtimeRoot       string
+	companionImageRef string
+	now               func() time.Time
+	processManager    *ProcessManager
+	dnsServer         *DNSServer
+	createHook        func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error)
+	reconcileHook     func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths, SidecarActivation) (SidecarHookResult, error)
+	restartHook       func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths, *SidecarActivation, SidecarActivation) (SidecarHookResult, error)
+	removeHook        func(context.Context, RuntimeContext, SidecarPlan, sidecarRenderPaths) (SidecarHookResult, error)
 }
 
 type sidecarRenderPaths struct {
@@ -65,6 +66,14 @@ func NewSidecarManager(logger *slog.Logger, runtimeRoot string) *SidecarManager 
 
 func (m *SidecarManager) WithProcessManager(pm *ProcessManager) *SidecarManager {
 	m.processManager = pm
+	return m
+}
+
+func (m *SidecarManager) WithCompanionImageRef(imageRef string) *SidecarManager {
+	if m == nil {
+		return m
+	}
+	m.companionImageRef = strings.TrimSpace(imageRef)
 	return m
 }
 
@@ -256,6 +265,13 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 		}
 
 		config := SidecarServiceConfig{
+			ProjectID:              runtimeCtx.Project.ProjectID,
+			BindingID:              runtimeCtx.Binding.BindingID,
+			RevisionID:             runtimeCtx.Revision.RevisionID,
+			BindingNetworkName:     bindingNetworkName(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID),
+			AppContainerName:       workloadContainerName(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, service.Name),
+			SidecarContainerName:   sidecarContainerName(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, service.Name),
+			SidecarImageRef:        m.companionImageRef,
 			ServiceName:            service.Name,
 			SelectedMode:           selectedMode,
 			Env:                    make(map[string]string),
@@ -300,9 +316,11 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 			config.DependencyAliases = append(config.DependencyAliases, dependency.Alias)
 			protocols = append(protocols, dependency.Protocol)
 			config.Resolutions = append(config.Resolutions, resolution)
+			strategy := selectSidecarDependencyStrategy(runtimeCtx, dependency, resolution, selectedMode)
+			config.DependencyStrategies = append(config.DependencyStrategies, strategy)
 
 			envKeyPrefix := "LAZYOPS_DEP_" + sanitizeEnvKey(nonEmptyAlias(dependency.Alias, dependency.TargetService))
-			switch selectedMode {
+			switch strategy.Strategy {
 			case "env_injection":
 				envContract := buildSidecarEnvContract(envKeyPrefix, dependency, resolution)
 				if err := validateSidecarEnvContract(service.Name, envContract, serviceIndex); err != nil {
@@ -321,7 +339,16 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 				for key, value := range contract.Values {
 					config.ManagedCredentials[key] = value
 				}
-			case "localhost_rescue":
+			case "managed_db_adapter":
+				contract, err := m.buildManagedDBAdapterContract(runtimeCtx, service.Name, dependency, resolution)
+				if err != nil {
+					return SidecarPlan{}, SidecarMetadataCache{}, err
+				}
+				if err := validateManagedDBAdapterContract(service.Name, contract, serviceIndex); err != nil {
+					return SidecarPlan{}, SidecarMetadataCache{}, err
+				}
+				config.ManagedDBAdapters = append(config.ManagedDBAdapters, contract)
+			case "localhost_proxy":
 				contract, route, err := buildLocalhostRescueContract(service.Name, dependency, resolution)
 				if err != nil {
 					return SidecarPlan{}, SidecarMetadataCache{}, err
@@ -352,6 +379,18 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 				return config.ManagedCredentialContracts[i].TargetService < config.ManagedCredentialContracts[j].TargetService
 			}
 			return config.ManagedCredentialContracts[i].Alias < config.ManagedCredentialContracts[j].Alias
+		})
+		sort.Slice(config.ManagedDBAdapters, func(i, j int) bool {
+			if config.ManagedDBAdapters[i].Alias == config.ManagedDBAdapters[j].Alias {
+				return config.ManagedDBAdapters[i].TargetService < config.ManagedDBAdapters[j].TargetService
+			}
+			return config.ManagedDBAdapters[i].Alias < config.ManagedDBAdapters[j].Alias
+		})
+		sort.Slice(config.DependencyStrategies, func(i, j int) bool {
+			if config.DependencyStrategies[i].Alias == config.DependencyStrategies[j].Alias {
+				return config.DependencyStrategies[i].TargetService < config.DependencyStrategies[j].TargetService
+			}
+			return config.DependencyStrategies[i].Alias < config.DependencyStrategies[j].Alias
 		})
 		sort.Slice(config.LocalhostRescueContracts, func(i, j int) bool {
 			if config.LocalhostRescueContracts[i].Alias == config.LocalhostRescueContracts[j].Alias {
@@ -385,23 +424,29 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 			// Resolve target service info
 			targetSvc, targetOK := serviceIndex[dep.TargetService]
 			if targetOK {
+				targetPort := effectiveRuntimePort(targetSvc)
+				targetHost := fmt.Sprintf("%s.%s.%s", dep.TargetService, runtimeCtx.Project.ProjectID, "lazyops.internal")
+				targetURLHost := targetHost
+				if runtimeCtx.Binding.RuntimeMode == contracts.RuntimeModeStandalone {
+					targetPort = standaloneDependencyTargetPort(targetSvc, dep.LocalEndpoint)
+					targetHost = serviceNetworkAlias(dep.TargetService)
+					targetURLHost = targetHost
+				}
 				// Register with DNS if available
-				if m.dnsServer != nil {
+				if runtimeCtx.Binding.RuntimeMode != contracts.RuntimeModeStandalone && m.dnsServer != nil {
 					m.dnsServer.RegisterService(ServiceRecord{
 						ServiceName: dep.TargetService,
 						ProjectID:   runtimeCtx.Project.ProjectID,
 						Host:        "127.0.0.1",
-						Port:        targetSvc.HealthCheck.Port,
+						Port:        targetPort,
 						Protocol:    dep.Protocol,
 					})
 				}
 
 				// Use DNS hostname for service discovery
-				dnsHostname := fmt.Sprintf("%s.%s.%s", dep.TargetService, runtimeCtx.Project.ProjectID, "lazyops.internal")
-				config.Env[envKeyPrefix+"_HOST"] = dnsHostname
-				config.Env[envKeyPrefix+"_PORT"] = fmt.Sprintf("%d", targetSvc.HealthCheck.Port)
-				config.Env[envKeyPrefix+"_URL"] = fmt.Sprintf("%s://%s.%s.%s:%d",
-					scheme, dep.TargetService, runtimeCtx.Project.ProjectID, "lazyops.internal", targetSvc.HealthCheck.Port)
+				config.Env[envKeyPrefix+"_HOST"] = targetHost
+				config.Env[envKeyPrefix+"_PORT"] = fmt.Sprintf("%d", targetPort)
+				config.Env[envKeyPrefix+"_URL"] = fmt.Sprintf("%s://%s:%d", scheme, targetURLHost, targetPort)
 			} else {
 				// Fallback: use derived endpoint with DNS-resolvable hostname
 				derivedEndpoint := derivedDependencyEndpoint(dep, runtimeCtx.Project.ProjectID)
@@ -416,9 +461,11 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 		metadataCache.Services[service.Name] = SidecarServiceMetadata{
 			SelectedMode:               selectedMode,
 			DependencyAliases:          append([]string(nil), config.DependencyAliases...),
+			DependencyStrategies:       append([]SidecarDependencyStrategy(nil), config.DependencyStrategies...),
 			Protocols:                  protocols,
 			EnvContracts:               append([]SidecarEnvContract(nil), config.EnvContracts...),
 			ManagedCredentialContracts: append([]SidecarManagedCredentialContract(nil), config.ManagedCredentialContracts...),
+			ManagedDBAdapters:          append([]SidecarManagedDBAdapterContract(nil), config.ManagedDBAdapters...),
 			LocalhostRescueContracts:   append([]SidecarLocalhostRescueContract(nil), config.LocalhostRescueContracts...),
 			TransparentProxyContracts:  append([]TransparentProxyContract(nil), config.TransparentProxyContracts...),
 			Resolutions:                append([]DependencyResolutionView(nil), config.Resolutions...),
@@ -475,10 +522,12 @@ func (m *SidecarManager) injectRuntimeSidecars(layout WorkspaceLayout, runtimeCt
 				"selected_mode":                 config.SelectedMode,
 				"precedence":                    plan.Precedence,
 				"dependency_aliases":            config.DependencyAliases,
+				"dependency_strategies":         config.DependencyStrategies,
 				"env":                           config.Env,
 				"env_contracts":                 config.EnvContracts,
 				"managed_credentials":           config.ManagedCredentials,
 				"managed_credential_contracts":  config.ManagedCredentialContracts,
+				"managed_db_adapters":           config.ManagedDBAdapters,
 				"managed_credential_audit_path": paths.managedCredentialAuditPath,
 				"localhost_rescue_contracts":    config.LocalhostRescueContracts,
 				"transparent_proxy_contracts":   config.TransparentProxyContracts,
@@ -539,7 +588,7 @@ func (m *SidecarManager) renderPaths(layout WorkspaceLayout, runtimeCtx RuntimeC
 	}
 }
 
-func (m *SidecarManager) defaultCreate(ctx context.Context, runtimeCtx RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error) {
+func (m *SidecarManager) defaultCreate(_ context.Context, _ RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths) (SidecarActivation, SidecarHookResult, error) {
 	if err := copyFile(paths.versionConfigPath, filepath.Join(paths.liveRoot, "config.json"), 0o644); err != nil {
 		return SidecarActivation{}, SidecarHookResult{}, err
 	}
@@ -553,19 +602,6 @@ func (m *SidecarManager) defaultCreate(ctx context.Context, runtimeCtx RuntimeCo
 		}
 		if err := writeJSON(filepath.Join(serviceDir, "config.json"), service); err != nil {
 			return SidecarActivation{}, SidecarHookResult{}, err
-		}
-
-		if m.processManager != nil {
-			configPath := filepath.Join(serviceDir, "config.json")
-			processName := sidecarProcessKey(runtimeCtx, service.ServiceName)
-			if _, err := m.processManager.StartProcess(ctx, processName, configPath); err != nil {
-				if m.logger != nil {
-					m.logger.Warn("sidecar process start failed",
-						"service", service.ServiceName,
-						"error", err.Error(),
-					)
-				}
-			}
 		}
 	}
 
@@ -609,24 +645,9 @@ func (m *SidecarManager) defaultReconcile(_ context.Context, _ RuntimeContext, p
 	return result, nil
 }
 
-func (m *SidecarManager) defaultRestart(ctx context.Context, runtimeCtx RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths, previous *SidecarActivation, activation SidecarActivation) (SidecarHookResult, error) {
+func (m *SidecarManager) defaultRestart(_ context.Context, _ RuntimeContext, plan SidecarPlan, paths sidecarRenderPaths, previous *SidecarActivation, activation SidecarActivation) (SidecarHookResult, error) {
 	status := "skipped"
 	message := "sidecar restart not required"
-
-	if m.processManager != nil {
-		for _, service := range plan.Services {
-			configPath := filepath.Join(paths.liveConfigRoot, service.ServiceName, "config.json")
-			processName := sidecarProcessKey(runtimeCtx, service.ServiceName)
-			if _, err := m.processManager.RestartProcess(ctx, processName, configPath); err != nil {
-				if m.logger != nil {
-					m.logger.Warn("sidecar process restart failed",
-						"service", service.ServiceName,
-						"error", err.Error(),
-					)
-				}
-			}
-		}
-	}
 
 	if previous != nil && previous.Version != "" && previous.Version != plan.Version {
 		status = "restarted"
@@ -743,6 +764,65 @@ func selectSidecarMode(policy contracts.CompatibilityPolicy) string {
 	default:
 		return ""
 	}
+}
+
+func selectSidecarDependencyStrategy(
+	runtimeCtx RuntimeContext,
+	dependency contracts.DependencyBindingPayload,
+	resolution DependencyResolutionView,
+	selectedMode string,
+) SidecarDependencyStrategy {
+	strategyName := selectedMode
+	if selectedMode == "localhost_rescue" {
+		strategyName = "localhost_proxy"
+	}
+	if shouldUseManagedDBAdapter(runtimeCtx, dependency, resolution) {
+		strategyName = "managed_db_adapter"
+	}
+
+	listenerPort := dependencyLocalListenerPort(dependency.LocalEndpoint)
+	listenerHost := ""
+	if listenerPort > 0 {
+		listenerHost = "127.0.0.1"
+	}
+
+	return SidecarDependencyStrategy{
+		Alias:                 dependency.Alias,
+		TargetService:         dependency.TargetService,
+		Protocol:              dependency.Protocol,
+		Strategy:              strategyName,
+		LocalEndpoint:         dependency.LocalEndpoint,
+		ListenerHost:          listenerHost,
+		ListenerPort:          listenerPort,
+		Upstream:              resolution.ResolvedUpstream,
+		RouteScope:            resolution.RouteScope,
+		ResolutionStatus:      resolution.ResolutionStatus,
+		PlacementPeerRef:      resolution.PlacementPeerRef,
+		Provider:              resolution.Provider,
+		PublicFallbackBlocked: resolution.PublicFallbackBlocked,
+		InvalidationReasons:   append([]string(nil), resolution.InvalidationReasons...),
+		ResolutionReason:      resolution.Reason,
+	}
+}
+
+func shouldUseManagedDBAdapter(
+	runtimeCtx RuntimeContext,
+	dependency contracts.DependencyBindingPayload,
+	_ DependencyResolutionView,
+) bool {
+	if runtimeCtx.Binding.RuntimeMode != contracts.RuntimeModeStandalone {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(dependency.Protocol), "tcp") {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(dependency.TargetService), "lazyops-internal-postgres") {
+		return false
+	}
+	if dependencyLocalListenerPort(dependency.LocalEndpoint) <= 0 {
+		return false
+	}
+	return runtimeCtx.Revision.CompatibilityPolicy.LocalhostRescue || runtimeCtx.Revision.CompatibilityPolicy.ManagedCredentials
 }
 
 func validateSelectedSidecarMode(selectedMode string, policy contracts.CompatibilityPolicy) error {
@@ -977,6 +1057,97 @@ func validateLocalhostRescueContract(serviceName string, contract SidecarLocalho
 		return &OperationError{
 			Code:      "localhost_rescue_namespace_required",
 			Message:   fmt.Sprintf("localhost rescue for service %q must stay inside the same network namespace", serviceName),
+			Retryable: false,
+		}
+	}
+	return nil
+}
+
+func (m *SidecarManager) buildManagedDBAdapterContract(
+	runtimeCtx RuntimeContext,
+	serviceName string,
+	dependency contracts.DependencyBindingPayload,
+	resolution DependencyResolutionView,
+) (SidecarManagedDBAdapterContract, error) {
+	listener, err := parseLocalhostEndpoint(dependency.Protocol, dependency.LocalEndpoint)
+	if err != nil {
+		return SidecarManagedDBAdapterContract{}, err
+	}
+	credentialState, err := loadOrCreateInternalPostgresCredentialState(
+		m.runtimeRoot,
+		m.processManager.stateEncryptionKey,
+		runtimeCtx.Project.ProjectID,
+		runtimeCtx.Binding.BindingID,
+		listener.Port,
+		m.now(),
+	)
+	if err != nil {
+		return SidecarManagedDBAdapterContract{}, err
+	}
+	credentialRef := credentialState.CredentialRef
+	if strings.TrimSpace(credentialRef) == "" {
+		credentialRef = fmt.Sprintf("managed://%s/%s/internal/postgres", runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID)
+	}
+	contract := SidecarManagedDBAdapterContract{
+		Alias:               dependency.Alias,
+		TargetService:       dependency.TargetService,
+		Protocol:            dependency.Protocol,
+		Engine:              "postgresql",
+		ListenerEndpoint:    listener.Normalized,
+		ListenerHost:        listener.Host,
+		ListenerPort:        listener.Port,
+		Upstream:            resolution.ResolvedUpstream,
+		UpstreamUsername:    "lazyops_managed",
+		UpstreamDatabase:    "app",
+		CredentialRef:       credentialRef,
+		RouteScope:          resolution.RouteScope,
+		ResolutionStatus:    resolution.ResolutionStatus,
+		PlacementPeerRef:    resolution.PlacementPeerRef,
+		Provider:            resolution.Provider,
+		InvalidationReasons: append([]string(nil), resolution.InvalidationReasons...),
+		ResolutionReason:    resolution.Reason,
+	}
+	if strings.TrimSpace(credentialState.PasswordEncrypted) != "" {
+		contract.UpstreamPasswordEncrypted = credentialState.PasswordEncrypted
+	} else {
+		contract.UpstreamPasswordPlaintext = credentialState.Password
+	}
+	if strings.TrimSpace(contract.Upstream) == "" {
+		return SidecarManagedDBAdapterContract{}, &OperationError{
+			Code:      "managed_db_adapter_missing_upstream",
+			Message:   fmt.Sprintf("managed db adapter for service %q dependency %q is missing an upstream target", serviceName, dependency.Alias),
+			Retryable: false,
+		}
+	}
+	return contract, nil
+}
+
+func validateManagedDBAdapterContract(serviceName string, contract SidecarManagedDBAdapterContract, serviceIndex map[string]ServiceRuntimeContext) error {
+	if _, ok := serviceIndex[contract.TargetService]; !ok {
+		return &OperationError{
+			Code:      "managed_db_adapter_missing_target",
+			Message:   fmt.Sprintf("managed db adapter for service %q references missing target service %q", serviceName, contract.TargetService),
+			Retryable: false,
+		}
+	}
+	if !strings.EqualFold(contract.Engine, "postgresql") {
+		return &OperationError{
+			Code:      "managed_db_adapter_unsupported_engine",
+			Message:   fmt.Sprintf("managed db adapter for service %q only supports postgresql in v1", serviceName),
+			Retryable: false,
+		}
+	}
+	if !isLoopbackHost(contract.ListenerHost) || contract.ListenerPort <= 0 {
+		return &OperationError{
+			Code:      "managed_db_adapter_invalid_listener",
+			Message:   fmt.Sprintf("managed db adapter for service %q must bind to localhost with a valid port", serviceName),
+			Retryable: false,
+		}
+	}
+	if strings.TrimSpace(contract.Upstream) == "" {
+		return &OperationError{
+			Code:      "managed_db_adapter_missing_upstream",
+			Message:   fmt.Sprintf("managed db adapter for service %q is missing an upstream target", serviceName),
 			Retryable: false,
 		}
 	}

@@ -63,7 +63,9 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	store := state.New(statePath)
-	runtimeDriver := agentruntime.NewFilesystemDriver(logger, runtimeRoot)
+	runtimeDriver := agentruntime.NewFilesystemDriver(logger, runtimeRoot).
+		WithStateEncryptionKey(cfg.StateEncryptionKey).
+		WithAgentImageRef(cfg.AgentImageRef)
 	runtimeService := agentruntime.NewService(logger, store, runtimeDriver)
 	metricAggregator := agentruntime.NewMetricAggregator(logger, agentruntime.DefaultMetricAggregatorConfig())
 	nodeMetricsCollector := agentruntime.NewNodeMetricsCollector(logger, agentruntime.DefaultNodeMetricsConfig())

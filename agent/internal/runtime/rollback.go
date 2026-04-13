@@ -27,6 +27,7 @@ type rollbackPaths struct {
 
 func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx RuntimeContext) (RollbackReleaseResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 	paths := rollbackFilePaths(d.root, layout, runtimeCtx)
 
 	traffic, err := loadTrafficShiftRecord(paths.trafficPath)
@@ -201,6 +202,7 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 	if d.processManager != nil {
 		for _, svc := range runtimeCtx.Services {
 			_ = d.processManager.StopProcess(workloadProcessKey(runtimeCtx, svc.Name))
+			_ = d.processManager.StopProcess(sidecarProcessKey(runtimeCtx, svc.Name))
 		}
 
 		stableRoot := revisionRoot(d.root, runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, restoredRevisionID)
@@ -210,6 +212,28 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 				processName := workloadProcessKey(runtimeCtx, svc.Name)
 				if _, err := d.processManager.RestartProcess(context.Background(), processName, configPath); err != nil && d.logger != nil {
 					d.logger.Warn("rollback process restart failed",
+						"service", svc.Name,
+						"error", err.Error(),
+					)
+				}
+			}
+
+			sidecarConfigPath := filepath.Join(
+				d.root,
+				"projects",
+				runtimeCtx.Project.ProjectID,
+				"bindings",
+				runtimeCtx.Binding.BindingID,
+				"sidecars",
+				"live",
+				"services",
+				svc.Name,
+				"config.json",
+			)
+			if _, err := os.Stat(sidecarConfigPath); err == nil {
+				processName := sidecarProcessKey(runtimeCtx, svc.Name)
+				if _, err := d.processManager.RestartProcess(context.Background(), processName, sidecarConfigPath); err != nil && d.logger != nil {
+					d.logger.Warn("rollback sidecar restart failed",
 						"service", svc.Name,
 						"error", err.Error(),
 					)

@@ -5,8 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"lazyops-agent/internal/contracts"
@@ -109,6 +112,18 @@ func (r *runtimeDependencyResolver) ResolveDependency(service ServiceRuntimeCont
 		PlacementPeerRef:    targetPeerRef,
 		Reason:              "dependency target is placed on the same target as the source service",
 	}
+	if r.runtimeCtx.Binding.RuntimeMode == contracts.RuntimeModeStandalone {
+		targetPort := standaloneDependencyTargetPort(targetService, dependency.LocalEndpoint)
+		upstream := standaloneDependencyUpstream(r.runtimeCtx, targetService, dependency.Protocol, targetPort)
+		resolution.ResolvedEndpoint = upstream
+		resolution.ResolvedUpstream = upstream
+	} else if !isInternalServiceName(targetService.Name) {
+		targetPort := effectiveRuntimePort(targetService)
+		if targetPort > 0 {
+			resolution.ResolvedEndpoint = rewriteEndpointPort(resolution.ResolvedEndpoint, dependency.Protocol, targetPort)
+			resolution.ResolvedUpstream = rewriteEndpointPort(resolution.ResolvedUpstream, dependency.Protocol, targetPort)
+		}
+	}
 
 	if r.runtimeCtx.Binding.RuntimeMode == contracts.RuntimeModeDistributedMesh && sourcePeerRef != targetPeerRef {
 		resolution = resolvedRoute{
@@ -166,8 +181,8 @@ func (r *runtimeDependencyResolver) ResolvePublicService(service ServiceRuntimeC
 
 	route := GatewayRoute{
 		ServiceName:      service.Name,
-		Port:             service.HealthCheck.Port,
-		Upstream:         fmt.Sprintf("127.0.0.1:%d", service.HealthCheck.Port),
+		Port:             effectiveRuntimePort(service),
+		Upstream:         fmt.Sprintf("127.0.0.1:%d", effectiveRuntimePort(service)),
 		RouteScope:       "local",
 		ResolutionStatus: "local_verified",
 		PlacementPeerRef: placementPeerRef,
@@ -179,7 +194,7 @@ func (r *runtimeDependencyResolver) ResolvePublicService(service ServiceRuntimeC
 	}
 
 	route.RouteScope = "mesh_private"
-	route.Upstream = overlayGatewayUpstream(service.Name, placementPeerRef, service.HealthCheck.Port)
+	route.Upstream = overlayGatewayUpstream(service.Name, placementPeerRef, effectiveRuntimePort(service))
 	route.Provider = r.activeProvider()
 	route.PublicFallbackBlocked = true
 	route.ResolutionStatus = "planned"
@@ -383,4 +398,34 @@ func loadMeshRouteReport(path string) ([]MeshRouteRecord, error) {
 		return nil, err
 	}
 	return routes, nil
+}
+
+func rewriteEndpointPort(endpoint, protocol string, port int) string {
+	value := strings.TrimSpace(endpoint)
+	if value == "" || port <= 0 {
+		return value
+	}
+
+	if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err == nil && parsed != nil {
+			host := parsed.Hostname()
+			if host == "" {
+				host = "127.0.0.1"
+			}
+			parsed.Host = net.JoinHostPort(host, strconv.Itoa(port))
+			return parsed.String()
+		}
+	}
+
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		return net.JoinHostPort(host, strconv.Itoa(port))
+	}
+
+	if strings.Count(value, ":") == 1 && !strings.Contains(value, "/") {
+		parts := strings.SplitN(value, ":", 2)
+		return net.JoinHostPort(strings.TrimSpace(parts[0]), strconv.Itoa(port))
+	}
+
+	return net.JoinHostPort(value, strconv.Itoa(port))
 }

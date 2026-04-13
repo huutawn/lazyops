@@ -7,14 +7,24 @@ import (
 )
 
 func ToBuildCallbackCommand(req requestdto.BuildCallbackRequest) service.BuildCallbackCommand {
+	var suggestedHealthcheck *service.BuildSuggestedHealthcheckRecord
+	if req.Metadata.SuggestedHealthcheck != nil {
+		suggestedHealthcheck = &service.BuildSuggestedHealthcheckRecord{
+			Path: req.Metadata.SuggestedHealthcheck.Path,
+			Port: req.Metadata.SuggestedHealthcheck.Port,
+		}
+	}
+
 	return service.BuildCallbackCommand{
-		BuildJobID:       req.BuildJobID,
-		ProjectID:        req.ProjectID,
-		CommitSHA:        req.CommitSHA,
-		Status:           req.Status,
-		ImageRef:         req.ImageRef,
-		ImageDigest:      req.ImageDigest,
-		DetectedServices: req.Metadata.DetectedServices,
+		BuildJobID:           req.BuildJobID,
+		ProjectID:            req.ProjectID,
+		CommitSHA:            req.CommitSHA,
+		Status:               req.Status,
+		ImageRef:             req.ImageRef,
+		ImageDigest:          req.ImageDigest,
+		DetectedServices:     req.Metadata.DetectedServices,
+		DetectedFramework:    req.Metadata.DetectedFramework,
+		SuggestedHealthcheck: suggestedHealthcheck,
 	}
 }
 
@@ -65,15 +75,29 @@ func toBuildJobResponse(record service.BuildJobRecord) responsedto.BuildJobRespo
 		RetryCount:        record.RetryCount,
 		MaxAttempts:       record.MaxAttempts,
 		ArtifactMetadata: responsedto.BuildArtifactMetadataResponse{
-			CommitSHA:        record.ArtifactMetadata.CommitSHA,
-			ArtifactRef:      record.ArtifactMetadata.ArtifactRef,
-			ImageRef:         record.ArtifactMetadata.ImageRef,
-			ImageDigest:      record.ArtifactMetadata.ImageDigest,
-			DetectedServices: record.ArtifactMetadata.DetectedServices,
+			CommitSHA:         record.ArtifactMetadata.CommitSHA,
+			ArtifactRef:       record.ArtifactMetadata.ArtifactRef,
+			ImageRef:          record.ArtifactMetadata.ImageRef,
+			ImageDigest:       record.ArtifactMetadata.ImageDigest,
+			DetectedServices:  record.ArtifactMetadata.DetectedServices,
+			DetectedFramework: record.ArtifactMetadata.DetectedFramework,
+			SuggestedHealthcheck: toBuildSuggestedHealthcheckResponse(
+				record.ArtifactMetadata.SuggestedHealthcheck,
+			),
 		},
 		StartedAt:   record.StartedAt,
 		CompletedAt: record.CompletedAt,
 		CreatedAt:   record.CreatedAt,
 		UpdatedAt:   record.UpdatedAt,
+	}
+}
+
+func toBuildSuggestedHealthcheckResponse(item *service.BuildSuggestedHealthcheckRecord) *responsedto.BuildSuggestedHealthcheckResponse {
+	if item == nil {
+		return nil
+	}
+	return &responsedto.BuildSuggestedHealthcheckResponse{
+		Path: item.Path,
+		Port: item.Port,
 	}
 }

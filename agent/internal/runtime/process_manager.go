@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,11 +47,13 @@ type ProcessManager struct {
 	healthCheckInterval time.Duration
 	now                 func() time.Time
 
-	mu              sync.Mutex
-	processes       map[string]*ProcessInfo
-	cmds            map[string]*exec.Cmd
-	sidecarProxy    *SidecarProxy
-	iptablesManager *IPTablesManager
+	mu                 sync.Mutex
+	processes          map[string]*ProcessInfo
+	cmds               map[string]*exec.Cmd
+	sidecarProxy       *SidecarProxy
+	iptablesManager    *IPTablesManager
+	agentImageRef      string
+	stateEncryptionKey string
 }
 
 type runtimeWorkloadConfig struct {
@@ -58,6 +61,19 @@ type runtimeWorkloadConfig struct {
 	ArtifactRef   string                `json:"artifact_ref"`
 	ImageRef      string                `json:"image_ref"`
 	WorkspaceRoot string                `json:"workspace_root"`
+	NetworkName   string                `json:"network_name,omitempty"`
+}
+
+type sidecarRuntimeConfig struct {
+	ProjectID            string                            `json:"project_id,omitempty"`
+	BindingID            string                            `json:"binding_id,omitempty"`
+	RevisionID           string                            `json:"revision_id,omitempty"`
+	ServiceName          string                            `json:"service_name"`
+	AppContainerName     string                            `json:"app_container_name,omitempty"`
+	SidecarContainerName string                            `json:"sidecar_container_name,omitempty"`
+	SidecarImageRef      string                            `json:"sidecar_image_ref,omitempty"`
+	ProxyRoutes          []SidecarProxyRoute               `json:"proxy_routes,omitempty"`
+	ManagedDBAdapters    []SidecarManagedDBAdapterContract `json:"managed_db_adapters,omitempty"`
 }
 
 func NewProcessManager(logger *slog.Logger, runtimeRoot string) *ProcessManager {
@@ -74,6 +90,7 @@ func NewProcessManager(logger *slog.Logger, runtimeRoot string) *ProcessManager 
 		cmds:            make(map[string]*exec.Cmd),
 		sidecarProxy:    NewSidecarProxy(logger),
 		iptablesManager: NewIPTablesManager(logger),
+		agentImageRef:   defaultSidecarCompanionImageRef(),
 	}
 }
 
@@ -127,6 +144,22 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 				"config", configPath,
 			)
 		}
+		return info, nil
+	}
+
+	if sidecarCfg, ok, err := loadSidecarRuntimeConfig(configPath); err != nil {
+		info.State = ProcessStateStopped
+		return info, fmt.Errorf("failed to decode sidecar runtime config for %s: %w", serviceName, err)
+	} else if ok {
+		containerName, startErr := m.startSidecarCompanion(ctx, configPath, sidecarCfg)
+		if startErr != nil {
+			info.State = ProcessStateStopped
+			return info, fmt.Errorf("failed to start compatibility sidecar for %s: %w", serviceName, startErr)
+		}
+		info.State = ProcessStateRunning
+		info.StartedAt = m.now()
+		info.Runner = "docker"
+		info.Container = containerName
 		return info, nil
 	}
 
@@ -520,6 +553,34 @@ func loadRuntimeWorkloadConfig(configPath string) (runtimeWorkloadConfig, bool, 
 	return cfg, true, nil
 }
 
+func loadSidecarRuntimeConfig(configPath string) (sidecarRuntimeConfig, bool, error) {
+	payload, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return sidecarRuntimeConfig{}, false, nil
+		}
+		return sidecarRuntimeConfig{}, false, err
+	}
+
+	var cfg sidecarRuntimeConfig
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		return sidecarRuntimeConfig{}, false, nil
+	}
+	if strings.TrimSpace(cfg.ServiceName) == "" {
+		return sidecarRuntimeConfig{}, false, nil
+	}
+	if strings.TrimSpace(cfg.AppContainerName) == "" {
+		return sidecarRuntimeConfig{}, false, nil
+	}
+	if len(cfg.ProxyRoutes) == 0 && len(cfg.ManagedDBAdapters) == 0 {
+		return sidecarRuntimeConfig{}, false, nil
+	}
+	if strings.TrimSpace(cfg.SidecarContainerName) == "" {
+		cfg.SidecarContainerName = sidecarContainerName(cfg.ProjectID, cfg.BindingID, cfg.ServiceName)
+	}
+	return cfg, true, nil
+}
+
 func (m *ProcessManager) startContainerWorkload(ctx context.Context, cfg runtimeWorkloadConfig) (string, error) {
 	projectID, bindingID, revisionID := parseWorkspaceIdentity(cfg.WorkspaceRoot)
 	containerName := workloadContainerName(projectID, bindingID, cfg.Service.Name)
@@ -532,18 +593,27 @@ func (m *ProcessManager) startContainerWorkload(ctx context.Context, cfg runtime
 		}
 	}
 
-	port := cfg.Service.HealthCheck.Port
+	port := effectiveRuntimePort(cfg.Service)
 	if port <= 0 {
 		port = 8080
+	}
+	networkName := strings.TrimSpace(cfg.NetworkName)
+	if networkName == "" {
+		networkName = bindingNetworkName(projectID, bindingID)
+	}
+	if err := m.ensureDockerNetwork(ctx, networkName, projectID, bindingID); err != nil {
+		return "", err
 	}
 
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
 		"--restart", "unless-stopped",
-		"--network", "host",
+		"--network", networkName,
+		"--network-alias", serviceNetworkAlias(cfg.Service.Name),
 		"--label", "lazyops.managed=app-service",
 		"--label", "lazyops.service=" + cfg.Service.Name,
+		"-p", fmt.Sprintf("127.0.0.1:%d:%d", port, port),
 	}
 	if projectID != "" {
 		args = append(args, "--label", "lazyops.project_id="+projectID)
@@ -561,6 +631,65 @@ func (m *ProcessManager) startContainerWorkload(ctx context.Context, cfg runtime
 	}
 
 	args = append(args, cfg.ImageRef)
+	if _, err := m.runDockerCommand(ctx, args...); err != nil {
+		return "", err
+	}
+	return containerName, nil
+}
+
+func (m *ProcessManager) startSidecarCompanion(ctx context.Context, configPath string, cfg sidecarRuntimeConfig) (string, error) {
+	appRunning, err := m.isContainerRunning(ctx, cfg.AppContainerName)
+	if err != nil {
+		return "", err
+	}
+	if !appRunning {
+		return "", fmt.Errorf("app container %q is not running yet", cfg.AppContainerName)
+	}
+
+	containerName := strings.TrimSpace(cfg.SidecarContainerName)
+	if containerName == "" {
+		containerName = sidecarContainerName(cfg.ProjectID, cfg.BindingID, cfg.ServiceName)
+	}
+	if _, err := m.runDockerCommand(ctx, "rm", "-f", containerName); err != nil {
+		lowered := strings.ToLower(err.Error())
+		if !strings.Contains(lowered, "no such container") {
+			return "", err
+		}
+	}
+
+	payload, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.StdEncoding.EncodeToString(payload)
+	imageRef := strings.TrimSpace(cfg.SidecarImageRef)
+	if imageRef == "" {
+		imageRef = strings.TrimSpace(m.agentImageRef)
+	}
+	if imageRef == "" {
+		imageRef = defaultSidecarCompanionImageRef()
+	}
+
+	args := []string{
+		"run", "-d",
+		"--name", containerName,
+		"--restart", "unless-stopped",
+		"--network", "container:" + cfg.AppContainerName,
+		"--label", "lazyops.managed=sidecar-service",
+		"--label", "lazyops.project_id=" + cfg.ProjectID,
+		"--label", "lazyops.binding_id=" + cfg.BindingID,
+		"--label", "lazyops.revision_id=" + cfg.RevisionID,
+		"--label", "lazyops.service=" + cfg.ServiceName,
+		"-e", "LAZYOPS_COMPATIBILITY_CONFIG_B64=" + encoded,
+		"-e", "AGENT_LOG_LEVEL=info",
+	}
+	if strings.TrimSpace(m.stateEncryptionKey) != "" {
+		args = append(args, "-e", "AGENT_STATE_ENCRYPTION_KEY="+m.stateEncryptionKey)
+	}
+	args = append(args,
+		imageRef,
+		"compatibility-sidecar",
+	)
 	if _, err := m.runDockerCommand(ctx, args...); err != nil {
 		return "", err
 	}
@@ -679,4 +808,37 @@ func (m *ProcessManager) runDockerCommand(ctx context.Context, args ...string) (
 		return text, fmt.Errorf("docker %s failed: %s: %w", strings.Join(args, " "), text, err)
 	}
 	return text, nil
+}
+
+func (m *ProcessManager) ensureDockerNetwork(ctx context.Context, networkName, projectID, bindingID string) error {
+	if strings.TrimSpace(networkName) == "" {
+		return fmt.Errorf("docker network name is required")
+	}
+	if _, err := m.runDockerCommand(ctx, "network", "inspect", networkName); err == nil {
+		return nil
+	}
+
+	args := []string{
+		"network", "create",
+		"--driver", "bridge",
+		"--label", "lazyops.managed=binding-network",
+	}
+	if strings.TrimSpace(projectID) != "" {
+		args = append(args, "--label", "lazyops.project_id="+projectID)
+	}
+	if strings.TrimSpace(bindingID) != "" {
+		args = append(args, "--label", "lazyops.binding_id="+bindingID)
+	}
+	args = append(args, networkName)
+	_, err := m.runDockerCommand(ctx, args...)
+	return err
+}
+
+func defaultSidecarCompanionImageRef() string {
+	for _, key := range []string{"AGENT_IMAGE_REF", "AGENT_DEFAULT_IMAGE"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return "tawn/lazyops-agent:latest"
 }

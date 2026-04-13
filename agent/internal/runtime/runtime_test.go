@@ -1067,7 +1067,7 @@ func TestFilesystemDriverRenderSidecarsInjectsRuntimeConfigAndMetadataCache(t *t
 	if plan.Services[0].SelectedMode != "env_injection" {
 		t.Fatalf("expected env_injection mode, got %q", plan.Services[0].SelectedMode)
 	}
-	if plan.Services[0].Env["LAZYOPS_DEP_API_ENDPOINT"] != "http://localhost:8080" {
+	if plan.Services[0].Env["LAZYOPS_DEP_API_ENDPOINT"] != "http://api:8080" {
 		t.Fatalf("expected env injection endpoint for api dependency, got %#v", plan.Services[0].Env)
 	}
 
@@ -1162,8 +1162,8 @@ func TestFilesystemDriverRenderSidecarsBuildsValidatedEnvContracts(t *testing.T)
 			t.Fatalf("expected env contract key %q to be populated, got %#v", key, contract.Values)
 		}
 	}
-	if contract.Values["LAZYOPS_DEP_API_ENDPOINT"] != "http://localhost:8080" {
-		t.Fatalf("expected env contract endpoint http://localhost:8080, got %#v", contract.Values)
+	if contract.Values["LAZYOPS_DEP_API_ENDPOINT"] != "http://api:8080" {
+		t.Fatalf("expected env contract endpoint http://api:8080, got %#v", contract.Values)
 	}
 
 	webRuntimePath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_123", "services", "web", "runtime.json")
@@ -1368,8 +1368,8 @@ func TestFilesystemDriverRenderSidecarsSupportsTCPLocalhostRescue(t *testing.T) 
 	if contract.ListenerEndpoint != "localhost:5432" || contract.ListenerPort != 5432 {
 		t.Fatalf("expected tcp localhost listener to stay on port 5432, got %#v", contract)
 	}
-	if contract.Upstream != "api.prj_123.lazyops.internal" {
-		t.Fatalf("expected tcp upstream without http scheme, got %#v", contract)
+	if contract.Upstream != "api:5432" {
+		t.Fatalf("expected tcp upstream to use standalone bridge alias and runtime port, got %#v", contract)
 	}
 }
 
@@ -2550,8 +2550,9 @@ func TestRenderGatewayConfigHandlerAppliesGatewayConfig(t *testing.T) {
 	}
 }
 
-func TestRenderGatewayConfigHandlerReturnsNonRetryableValidationError(t *testing.T) {
-	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, NewFilesystemDriver(nil, filepath.Join(t.TempDir(), "runtime-root")))
+func TestRenderGatewayConfigHandlerAssignsRuntimePortWhenDeclaredPortMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, NewFilesystemDriver(nil, root))
 
 	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
 	payload.Revision.Services[1].HealthCheck.Port = 0
@@ -2581,14 +2582,34 @@ func TestRenderGatewayConfigHandlerReturnsNonRetryableValidationError(t *testing
 		OccurredAt:    time.Now().UTC(),
 		Payload:       raw,
 	})
-	if result.Error == nil {
-		t.Fatal("expected render gateway config to fail validation")
+	if result.Error != nil {
+		t.Fatalf("expected render gateway config to succeed with runtime port allocation, got %#v", result.Error)
 	}
-	if result.Error.Retryable {
-		t.Fatal("expected invalid gateway config to be non-retryable")
+	if result.Status != contracts.CommandAckDone {
+		t.Fatalf("expected done status, got %q", result.Status)
 	}
-	if result.Error.Code != "gateway_invalid_route_port" {
-		t.Fatalf("expected gateway_invalid_route_port code, got %q", result.Error.Code)
+
+	planPath := filepath.Join(root, "projects", "prj_123", "bindings", "bind_123", "gateway", "live", "plan.json")
+	planPayload, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read live gateway plan: %v", err)
+	}
+	var plan GatewayPlan
+	if err := json.Unmarshal(planPayload, &plan); err != nil {
+		t.Fatalf("decode live gateway plan: %v", err)
+	}
+	var webRoute *GatewayRoute
+	for i := range plan.Routes {
+		if plan.Routes[i].ServiceName == "web" {
+			webRoute = &plan.Routes[i]
+			break
+		}
+	}
+	if webRoute == nil {
+		t.Fatalf("expected web route in gateway plan, got %#v", plan.Routes)
+	}
+	if webRoute.Port <= 0 {
+		t.Fatalf("expected allocated runtime port for web route, got %d", webRoute.Port)
 	}
 }
 

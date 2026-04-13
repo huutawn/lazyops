@@ -113,6 +113,7 @@ services:
       AGENT_USE_MOCK_CONTROL: ${AGENT_USE_MOCK_CONTROL:-false}
       AGENT_STATE_DIR: /var/lib/lazyops-agent/state
       AGENT_RUNTIME_ROOT_DIR: /var/lib/lazyops-agent/runtime
+      AGENT_DEFAULT_IMAGE: ${AGENT_DEFAULT_IMAGE:-tawn/lazyops-agent:latest}
       AGENT_STATE_ENCRYPTION_KEY: ${AGENT_STATE_ENCRYPTION_KEY:-}
       AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-}
     depends_on:

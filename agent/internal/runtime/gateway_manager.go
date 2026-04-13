@@ -646,14 +646,15 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 		wsRoutes := filterRoutes(plan.RoutingPolicy.Routes, true)
 		for i, route := range wsRoutes {
 			svc := findServiceByRouteName(route.Service, plan.Services)
-			if svc == nil {
+			upstream := findGatewayRouteUpstream(route.Service, plan.Routes)
+			if svc == nil || upstream == "" {
 				continue
 			}
 
 			matcher := fmt.Sprintf("  @ws%d path %s*", i, route.Path)
 			builder.WriteString(matcher + "\n")
 			builder.WriteString(fmt.Sprintf("  handle @ws%d {\n", i))
-			builder.WriteString(fmt.Sprintf("    reverse_proxy %s:%d {\n", svc.Name, svc.HealthCheck.Port))
+			builder.WriteString(fmt.Sprintf("    reverse_proxy %s {\n", upstream))
 			builder.WriteString("      transport http {\n")
 			builder.WriteString("        keepalive 60s\n")
 			builder.WriteString("        keepalive_idle_conns 100\n")
@@ -672,7 +673,8 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 		httpRoutes := filterRoutes(plan.RoutingPolicy.Routes, false)
 		for _, route := range httpRoutes {
 			svc := findServiceByRouteName(route.Service, plan.Services)
-			if svc == nil {
+			upstream := findGatewayRouteUpstream(route.Service, plan.Routes)
+			if svc == nil || upstream == "" {
 				continue
 			}
 
@@ -682,7 +684,7 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 				if route.StripPrefix {
 					builder.WriteString("    uri strip_prefix /\n")
 				}
-				builder.WriteString(fmt.Sprintf("    reverse_proxy %s:%d\n", svc.Name, svc.HealthCheck.Port))
+				builder.WriteString(fmt.Sprintf("    reverse_proxy %s\n", upstream))
 				builder.WriteString("  }\n\n")
 			} else {
 				matcher := fmt.Sprintf("  @%s path %s*", sanitizePathMatcher(route.Path), route.Path)
@@ -691,7 +693,7 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 				if route.StripPrefix {
 					builder.WriteString(fmt.Sprintf("    uri strip_prefix %s\n", route.Path))
 				}
-				builder.WriteString(fmt.Sprintf("    reverse_proxy %s:%d\n", svc.Name, svc.HealthCheck.Port))
+				builder.WriteString(fmt.Sprintf("    reverse_proxy %s\n", upstream))
 				builder.WriteString("  }\n\n")
 			}
 		}
@@ -718,6 +720,15 @@ func filterRoutes(routes []contracts.RoutePayload, websocket bool) []contracts.R
 		}
 	}
 	return filtered
+}
+
+func findGatewayRouteUpstream(serviceName string, routes []GatewayRoute) string {
+	for _, route := range routes {
+		if route.ServiceName == serviceName {
+			return strings.TrimSpace(route.Upstream)
+		}
+	}
+	return ""
 }
 
 func findServiceByRouteName(name string, services []ServiceRuntimeContext) *ServiceRuntimeContext {

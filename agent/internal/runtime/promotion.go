@@ -22,6 +22,7 @@ type rolloutPaths struct {
 
 func (d *FilesystemDriver) PromoteRelease(_ context.Context, runtimeCtx RuntimeContext) (PromoteReleaseResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 	candidate, err := loadCandidateRecord(layout)
 	if err != nil {
 		return PromoteReleaseResult{}, &OperationError{

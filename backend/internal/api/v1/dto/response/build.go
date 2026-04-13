@@ -3,11 +3,18 @@ package response
 import "time"
 
 type BuildArtifactMetadataResponse struct {
-	CommitSHA        string   `json:"commit_sha"`
-	ArtifactRef      string   `json:"artifact_ref,omitempty"`
-	ImageRef         string   `json:"image_ref,omitempty"`
-	ImageDigest      string   `json:"image_digest,omitempty"`
-	DetectedServices []string `json:"detected_services,omitempty"`
+	CommitSHA            string                             `json:"commit_sha"`
+	ArtifactRef          string                             `json:"artifact_ref,omitempty"`
+	ImageRef             string                             `json:"image_ref,omitempty"`
+	ImageDigest          string                             `json:"image_digest,omitempty"`
+	DetectedServices     []string                           `json:"detected_services,omitempty"`
+	DetectedFramework    string                             `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck *BuildSuggestedHealthcheckResponse `json:"suggested_healthcheck,omitempty"`
+}
+
+type BuildSuggestedHealthcheckResponse struct {
+	Path string `json:"path"`
+	Port int    `json:"port"`
 }
 
 type BuildJobResponse struct {

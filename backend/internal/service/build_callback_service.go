@@ -85,7 +85,15 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 		return nil, ErrBuildArtifactMismatch
 	}
 
-	artifactMetadata, err := normalizeBuildArtifactMetadata(status, commitSHA, cmd.ImageRef, cmd.ImageDigest, cmd.DetectedServices)
+	artifactMetadata, err := normalizeBuildArtifactMetadata(
+		status,
+		commitSHA,
+		cmd.ImageRef,
+		cmd.ImageDigest,
+		cmd.DetectedServices,
+		cmd.DetectedFramework,
+		cmd.SuggestedHealthcheck,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +165,7 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 	if err != nil {
 		return nil, err
 	}
+	applySuggestedHealthcheckToOneClickDefaultService(&blueprintRecord, artifact)
 	blueprintRecord.Compiled.ArtifactMetadata = BlueprintArtifactMetadata{
 		CommitSHA:   artifact.CommitSHA,
 		ArtifactRef: artifact.ArtifactRef,
@@ -283,12 +292,22 @@ func normalizeBuildCallbackStatus(raw string) (string, error) {
 	}
 }
 
-func normalizeBuildArtifactMetadata(status, commitSHA, imageRef, imageDigest string, detectedServices []string) (BuildArtifactMetadataStageRecord, error) {
+func normalizeBuildArtifactMetadata(
+	status,
+	commitSHA,
+	imageRef,
+	imageDigest string,
+	detectedServices []string,
+	detectedFramework string,
+	suggestedHealthcheck *BuildSuggestedHealthcheckRecord,
+) (BuildArtifactMetadataStageRecord, error) {
 	artifact := BuildArtifactMetadataStageRecord{
-		CommitSHA:        strings.TrimSpace(commitSHA),
-		ImageRef:         strings.TrimSpace(imageRef),
-		ImageDigest:      strings.TrimSpace(imageDigest),
-		DetectedServices: normalizeDetectedServices(detectedServices),
+		CommitSHA:            strings.TrimSpace(commitSHA),
+		ImageRef:             strings.TrimSpace(imageRef),
+		ImageDigest:          strings.TrimSpace(imageDigest),
+		DetectedServices:     normalizeDetectedServices(detectedServices),
+		DetectedFramework:    normalizeDetectedFramework(detectedFramework),
+		SuggestedHealthcheck: normalizeSuggestedHealthcheck(suggestedHealthcheck),
 	}
 	if artifact.CommitSHA == "" {
 		return BuildArtifactMetadataStageRecord{}, ErrInvalidInput
@@ -330,5 +349,130 @@ func deriveBuildArtifactRef(imageRef, imageDigest string) string {
 		return imageRef
 	default:
 		return ""
+	}
+}
+
+func normalizeDetectedFramework(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "next":
+		return "next"
+	case "vite":
+		return "vite"
+	case "react-scripts":
+		return "react-scripts"
+	default:
+		return ""
+	}
+}
+
+func normalizeSuggestedHealthcheck(raw *BuildSuggestedHealthcheckRecord) *BuildSuggestedHealthcheckRecord {
+	if raw == nil {
+		return nil
+	}
+	port := raw.Port
+	if port <= 0 {
+		return nil
+	}
+	path := strings.TrimSpace(raw.Path)
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return &BuildSuggestedHealthcheckRecord{
+		Path: path,
+		Port: port,
+	}
+}
+
+func applySuggestedHealthcheckToOneClickDefaultService(blueprint *BlueprintRecord, artifact BuildArtifactMetadataStageRecord) {
+	if blueprint == nil || artifact.SuggestedHealthcheck == nil {
+		return
+	}
+	if !isOneClickGeneratedBlueprint(*blueprint) {
+		return
+	}
+	if len(blueprint.Compiled.Services) != 1 {
+		return
+	}
+
+	service := blueprint.Compiled.Services[0]
+	if strings.TrimSpace(service.Name) != "app" || strings.TrimSpace(service.Path) != "." || !service.Public {
+		return
+	}
+	if !isGenericFallbackHealthcheck(service.Healthcheck) {
+		return
+	}
+
+	if service.Healthcheck == nil {
+		service.Healthcheck = map[string]any{}
+	}
+	service.Healthcheck["path"] = artifact.SuggestedHealthcheck.Path
+	service.Healthcheck["port"] = artifact.SuggestedHealthcheck.Port
+	if _, ok := service.Healthcheck["protocol"]; !ok {
+		service.Healthcheck["protocol"] = "http"
+	}
+	blueprint.Compiled.Services[0] = service
+}
+
+func isOneClickGeneratedBlueprint(blueprint BlueprintRecord) bool {
+	return strings.HasPrefix(
+		strings.TrimSpace(blueprint.Compiled.ArtifactMetadata.ArtifactRef),
+		"artifact://one-click/",
+	)
+}
+
+func isGenericFallbackHealthcheck(healthcheck map[string]any) bool {
+	if len(healthcheck) == 0 {
+		return false
+	}
+
+	port := extractHealthcheckPort(healthcheck)
+	if port != 8080 {
+		return false
+	}
+
+	path := strings.TrimSpace(strings.ToLower(extractHealthcheckString(healthcheck, "path")))
+	if path == "" {
+		path = "/"
+	}
+	if path != "/" {
+		return false
+	}
+
+	protocol := strings.TrimSpace(strings.ToLower(extractHealthcheckString(healthcheck, "protocol")))
+	return protocol == "" || protocol == "http"
+}
+
+func extractHealthcheckString(healthcheck map[string]any, key string) string {
+	value, ok := healthcheck[key]
+	if !ok {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
+}
+
+func extractHealthcheckPort(healthcheck map[string]any) int {
+	value, ok := healthcheck["port"]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	default:
+		return 0
 	}
 }

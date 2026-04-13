@@ -2,9 +2,12 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +21,8 @@ import (
 type FilesystemDriver struct {
 	logger         *slog.Logger
 	root           string
+	stateKey       string
+	agentImageRef  string
 	fetcher        AssetFetcher
 	gateway        *GatewayManager
 	sidecar        *SidecarManager
@@ -28,18 +33,118 @@ type FilesystemDriver struct {
 
 func NewFilesystemDriver(logger *slog.Logger, root string) *FilesystemDriver {
 	pm := NewProcessManager(logger, root)
+	sidecar := NewSidecarManager(logger, root).WithProcessManager(pm)
 	return &FilesystemDriver{
 		logger:         logger,
 		root:           root,
 		fetcher:        NewLocalCacheFetcher(filepath.Join(root, "cache", "assets")),
 		gateway:        NewGatewayManager(logger, root),
-		sidecar:        NewSidecarManager(logger, root).WithProcessManager(pm),
+		sidecar:        sidecar,
 		mesh:           NewMeshManager(logger, root),
 		processManager: pm,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
+}
+
+func (d *FilesystemDriver) WithStateEncryptionKey(key string) *FilesystemDriver {
+	if d == nil {
+		return d
+	}
+	d.stateKey = strings.TrimSpace(key)
+	if d.processManager != nil {
+		d.processManager.stateEncryptionKey = d.stateKey
+	}
+	return d
+}
+
+func (d *FilesystemDriver) WithAgentImageRef(imageRef string) *FilesystemDriver {
+	if d == nil {
+		return d
+	}
+	d.agentImageRef = strings.TrimSpace(imageRef)
+	if d.processManager != nil {
+		d.processManager.agentImageRef = d.agentImageRef
+	}
+	if d.sidecar != nil {
+		d.sidecar.companionImageRef = d.agentImageRef
+	}
+	return d
+}
+
+func (d *FilesystemDriver) hydrateRuntimeContextFromWorkspace(layout WorkspaceLayout, runtimeCtx RuntimeContext) RuntimeContext {
+	manifest, err := loadWorkspaceManifest(layout)
+	if err != nil || len(manifest.Services) == 0 {
+		return runtimeCtx
+	}
+	if strings.TrimSpace(manifest.Revision.RevisionID) != strings.TrimSpace(runtimeCtx.Revision.RevisionID) {
+		return runtimeCtx
+	}
+	return withRuntimeServices(runtimeCtx, manifest.Services)
+}
+
+func (d *FilesystemDriver) assignRuntimePorts(runtimeCtx RuntimeContext) (RuntimeContext, error) {
+	if runtimeCtx.Binding.RuntimeMode != contracts.RuntimeModeStandalone || len(runtimeCtx.Services) == 0 {
+		return runtimeCtx, nil
+	}
+
+	services := append([]ServiceRuntimeContext(nil), runtimeCtx.Services...)
+	reserved := make(map[int]string, len(services))
+	for i := range services {
+		service := &services[i]
+		if !shouldAssignStandaloneRuntimePort(runtimeCtx, *service) {
+			continue
+		}
+
+		declaredPort := declaredHealthcheckPort(*service)
+		if declaredPort > 0 && !serviceLocalListenerPortConflicts(*service, declaredPort) && d.runtimePortAvailable(declaredPort, reserved) {
+			service.RuntimePort = declaredPort
+			reserved[declaredPort] = service.Name
+			continue
+		}
+
+		allocatedPort, err := d.allocateStandaloneRuntimePort(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, service.Name, reserved)
+		if err != nil {
+			return RuntimeContext{}, err
+		}
+		service.RuntimePort = allocatedPort
+		reserved[allocatedPort] = service.Name
+	}
+
+	return withRuntimeServices(runtimeCtx, services), nil
+}
+
+func (d *FilesystemDriver) runtimePortAvailable(port int, reserved map[int]string) bool {
+	if port <= 0 {
+		return false
+	}
+	if _, exists := reserved[port]; exists {
+		return false
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
+}
+
+func (d *FilesystemDriver) allocateStandaloneRuntimePort(projectID, bindingID, serviceName string, reserved map[int]string) (int, error) {
+	seedInput := strings.TrimSpace(projectID) + "|" + strings.TrimSpace(bindingID) + "|" + strings.TrimSpace(serviceName)
+	seed := sha256.Sum256([]byte(seedInput))
+	seedValue := binary.BigEndian.Uint32(seed[:4])
+
+	span := standaloneRuntimePortRangeEnd - standaloneRuntimePortRangeStart + 1
+	for attempt := 0; attempt < span; attempt++ {
+		candidate := standaloneRuntimePortRangeStart + int((seedValue+uint32(attempt))%uint32(span))
+		if d.runtimePortAvailable(candidate, reserved) {
+			return candidate, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no runtime ports available for service %q in standalone range %d-%d", serviceName, standaloneRuntimePortRangeStart, standaloneRuntimePortRangeEnd)
 }
 
 func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeCtx RuntimeContext) (_ PreparedWorkspace, err error) {
@@ -51,6 +156,11 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 	}
 	if d.fetcher == nil {
 		return PreparedWorkspace{}, fmt.Errorf("artifact fetcher is required")
+	}
+
+	runtimeCtx, err = d.assignRuntimePorts(runtimeCtx)
+	if err != nil {
+		return PreparedWorkspace{}, err
 	}
 
 	layout := workspaceLayout(d.root, runtimeCtx)
@@ -97,6 +207,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 			"artifact_ref":   artifact.ArtifactRef,
 			"image_ref":      artifact.ImageRef,
 			"workspace_root": layout.Root,
+			"network_name":   bindingNetworkName(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID),
 		}); err != nil {
 			return PreparedWorkspace{}, err
 		}
@@ -227,6 +338,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 
 func (d *FilesystemDriver) RenderGatewayConfig(ctx context.Context, runtimeCtx RuntimeContext) (GatewayRenderResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 	if d.gateway == nil {
 		d.gateway = NewGatewayManager(d.logger, d.root)
 	}
@@ -236,15 +348,18 @@ func (d *FilesystemDriver) RenderGatewayConfig(ctx context.Context, runtimeCtx R
 
 func (d *FilesystemDriver) RenderSidecars(ctx context.Context, runtimeCtx RuntimeContext) (SidecarRenderResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 	if d.sidecar == nil {
 		d.sidecar = NewSidecarManager(d.logger, d.root)
 	}
 	d.sidecar.now = d.now
+	d.sidecar.companionImageRef = d.agentImageRef
 	return d.sidecar.RenderSidecars(ctx, runtimeCtx, layout)
 }
 
 func (d *FilesystemDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeContext) (ReconcileRevisionResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 
 	appliedSteps := []string{
 		"validate_revision_workspace",
@@ -282,6 +397,7 @@ func (d *FilesystemDriver) ReconcileRevision(ctx context.Context, runtimeCtx Run
 
 func (d *FilesystemDriver) StartReleaseCandidate(ctx context.Context, runtimeCtx RuntimeContext) (CandidateRecord, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
+	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
 	manifest, err := loadWorkspaceManifest(layout)
 	if err != nil {
 		return CandidateRecord{}, fmt.Errorf("workspace manifest is missing for revision %q: %w", runtimeCtx.Revision.RevisionID, err)
@@ -290,6 +406,9 @@ func (d *FilesystemDriver) StartReleaseCandidate(ctx context.Context, runtimeCtx
 	startedServices := make([]string, 0, len(runtimeCtx.Services))
 	startFailed := make([]string, 0)
 	if d.processManager != nil {
+		if err := d.processManager.ensureDockerNetwork(ctx, bindingNetworkName(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID), runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID); err != nil {
+			return CandidateRecord{}, err
+		}
 		for _, service := range runtimeCtx.Services {
 			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(service.Name)), "lazyops-internal-") {
 				continue
@@ -314,6 +433,35 @@ func (d *FilesystemDriver) StartReleaseCandidate(ctx context.Context, runtimeCtx
 				continue
 			}
 			startedServices = append(startedServices, service.Name)
+		}
+
+		for _, service := range runtimeCtx.Services {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(service.Name)), "lazyops-internal-") {
+				continue
+			}
+			sidecarConfigPath := filepath.Join(
+				d.root,
+				"projects",
+				runtimeCtx.Project.ProjectID,
+				"bindings",
+				runtimeCtx.Binding.BindingID,
+				"sidecars",
+				"live",
+				"services",
+				service.Name,
+				"config.json",
+			)
+			if _, err := os.Stat(sidecarConfigPath); err != nil {
+				continue
+			}
+			processName := sidecarProcessKey(runtimeCtx, service.Name)
+			if _, err := d.processManager.StartProcess(ctx, processName, sidecarConfigPath); err != nil && d.logger != nil {
+				d.logger.Warn("failed to start compatibility sidecar",
+					"service", service.Name,
+					"revision_id", runtimeCtx.Revision.RevisionID,
+					"error", err.Error(),
+				)
+			}
 		}
 	}
 
@@ -363,6 +511,14 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 			Retryable: false,
 		}
 	}
+	bindingID := strings.TrimSpace(request.BindingID)
+	if bindingID == "" {
+		return ProvisionInternalServicesResult{}, &OperationError{
+			Code:      "invalid_binding_id",
+			Message:   "binding_id is required",
+			Retryable: false,
+		}
+	}
 
 	desired := make(map[string]contracts.InternalServiceProvisionSpec, len(request.Services))
 	for _, item := range request.Services {
@@ -383,9 +539,14 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 	created := make([]string, 0, len(desired))
 	updated := make([]string, 0, len(desired))
 	removed := make([]string, 0, len(internalServiceRuntimeSpecs))
+	if len(desired) > 0 {
+		if err := d.ensureBindingNetwork(ctx, projectID, bindingID); err != nil {
+			return ProvisionInternalServicesResult{}, err
+		}
+	}
 
 	for kind, definition := range internalServiceRuntimeSpecs {
-		containerName := internalServiceContainerName(projectID, kind)
+		containerName := internalServiceContainerName(projectID, bindingID, kind)
 		spec, keep := desired[kind]
 		exists, err := d.internalServiceContainerExists(ctx, containerName)
 		if err != nil {
@@ -415,7 +576,7 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 			}
 		}
 
-		if err := d.recreateInternalServiceContainer(ctx, projectID, containerName, definition, spec.Port); err != nil {
+		if err := d.recreateInternalServiceContainer(ctx, projectID, bindingID, containerName, definition, spec.Port); err != nil {
 			return ProvisionInternalServicesResult{}, err
 		}
 		if exists {
@@ -441,7 +602,7 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 
 	return ProvisionInternalServicesResult{
 		ProjectID: projectID,
-		BindingID: strings.TrimSpace(request.BindingID),
+		BindingID: bindingID,
 		Created:   created,
 		Updated:   updated,
 		Removed:   removed,
@@ -564,8 +725,13 @@ var internalServiceRuntimeSpecs = map[string]internalServiceRuntimeSpec{
 	},
 }
 
-func internalServiceContainerName(projectID, kind string) string {
-	return fmt.Sprintf("lazyops-int-%s-%s", normalizeContainerToken(projectID), normalizeContainerToken(kind))
+func internalServiceContainerName(projectID, bindingID, kind string) string {
+	return fmt.Sprintf(
+		"lazyops-int-%s-%s-%s",
+		normalizeContainerToken(projectID),
+		normalizeContainerToken(bindingID),
+		normalizeContainerToken(kind),
+	)
 }
 
 func normalizeContainerToken(input string) string {
@@ -620,7 +786,7 @@ func (d *FilesystemDriver) removeInternalServiceContainer(ctx context.Context, n
 	return nil
 }
 
-func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context, projectID, containerName string, definition internalServiceRuntimeSpec, requestedPort int) error {
+func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context, projectID, bindingID, containerName string, definition internalServiceRuntimeSpec, requestedPort int) error {
 	if requestedPort <= 0 {
 		requestedPort = definition.Port
 	}
@@ -640,7 +806,7 @@ func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context,
 		}
 	}
 
-	hostDataDir := filepath.Join("/var/lib/lazyops-agent", "internal-services", normalizeContainerToken(projectID), definition.HostDataDirName)
+	hostDataDir := filepath.Join("/var/lib/lazyops-agent", "internal-services", normalizeContainerToken(projectID), normalizeContainerToken(bindingID), definition.HostDataDirName)
 	if err := os.MkdirAll(hostDataDir, 0o755); err != nil {
 		return &OperationError{
 			Code:      "internal_service_data_dir_failed",
@@ -654,16 +820,33 @@ func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context,
 		"run", "-d",
 		"--name", containerName,
 		"--restart", "unless-stopped",
+		"--network", bindingNetworkName(projectID, bindingID),
+		"--network-alias", internalServiceNetworkAlias(definition.HostDataDirName),
 		"--label", "lazyops.managed=internal-service",
 		"--label", "lazyops.project_id=" + projectID,
+		"--label", "lazyops.binding_id=" + bindingID,
 		"--label", "lazyops.kind=" + definition.HostDataDirName,
-		"-p", fmt.Sprintf("127.0.0.1:%d:%d", requestedPort, definition.Port),
 	}
 
 	if definition.ContainerDataDir != "" {
 		args = append(args, "-v", hostDataDir+":"+definition.ContainerDataDir)
 	}
-	for key, value := range definition.Env {
+	envVars := definition.Env
+	var credentialState internalPostgresCredentialState
+	if definition.HostDataDirName == "postgres" {
+		var err error
+		credentialState, err = d.ensureInternalPostgresCredentialState(projectID, bindingID, requestedPort)
+		if err != nil {
+			return err
+		}
+		envVars = map[string]string{
+			"POSTGRES_DB":               credentialState.Database,
+			"POSTGRES_USER":             credentialState.Username,
+			"POSTGRES_PASSWORD":         credentialState.Password,
+			"POSTGRES_HOST_AUTH_METHOD": "password",
+		}
+	}
+	for key, value := range envVars {
 		args = append(args, "-e", key+"="+value)
 	}
 	args = append(args, definition.Image)
@@ -672,7 +855,112 @@ func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context,
 	if _, err := d.runDockerCommand(ctx, args...); err != nil {
 		return err
 	}
+	if definition.HostDataDirName == "postgres" {
+		if err := d.ensureInternalPostgresAuthentication(ctx, containerName, hostDataDir, credentialState); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func internalServiceNetworkAlias(kind string) string {
+	return "lazyops-internal-" + normalizeContainerToken(kind)
+}
+
+func (d *FilesystemDriver) ensureInternalPostgresAuthentication(ctx context.Context, containerName, hostDataDir string, credentialState internalPostgresCredentialState) error {
+	if strings.TrimSpace(credentialState.Username) == "" || strings.TrimSpace(credentialState.Password) == "" {
+		return &OperationError{
+			Code:      "internal_postgres_missing_credentials",
+			Message:   "internal postgres credentials are missing",
+			Retryable: false,
+		}
+	}
+	if err := rewritePostgresHostAuth(filepath.Join(hostDataDir, "pg_hba.conf"), "password"); err != nil {
+		return err
+	}
+	if err := d.waitForInternalPostgres(ctx, containerName); err != nil {
+		return err
+	}
+	passwordSQL := escapePostgresLiteral(credentialState.Password)
+	usernameSQL := escapePostgresIdentifier(credentialState.Username)
+	if _, err := d.runDockerCommand(
+		ctx,
+		"exec", "-u", "postgres", containerName,
+		"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres",
+		"-c", fmt.Sprintf("ALTER ROLE %s WITH PASSWORD '%s';", usernameSQL, passwordSQL),
+	); err != nil {
+		return &OperationError{
+			Code:      "internal_postgres_password_sync_failed",
+			Message:   fmt.Sprintf("sync internal postgres password for %s failed", containerName),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+	if _, err := d.runDockerCommand(
+		ctx,
+		"exec", "-u", "postgres", containerName,
+		"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres",
+		"-c", "SELECT pg_reload_conf();",
+	); err != nil {
+		return &OperationError{
+			Code:      "internal_postgres_reload_failed",
+			Message:   fmt.Sprintf("reload internal postgres config for %s failed", containerName),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+	return nil
+}
+
+func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containerName string) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if _, err := d.runDockerCommand(
+			ctx,
+			"exec", "-u", "postgres", containerName,
+			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres",
+			"-tAc", "SELECT 1",
+		); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return &OperationError{
+				Code:      "internal_postgres_start_timeout",
+				Message:   fmt.Sprintf("timed out waiting for internal postgres container %q", containerName),
+				Retryable: true,
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func (d *FilesystemDriver) ensureBindingNetwork(ctx context.Context, projectID, bindingID string) error {
+	networkName := bindingNetworkName(projectID, bindingID)
+	if _, err := d.runDockerCommand(ctx, "network", "inspect", networkName); err == nil {
+		return nil
+	}
+
+	args := []string{
+		"network", "create",
+		"--driver", "bridge",
+		"--label", "lazyops.managed=binding-network",
+		"--label", "lazyops.project_id=" + projectID,
+		"--label", "lazyops.binding_id=" + bindingID,
+		networkName,
+	}
+	_, err := d.runDockerCommand(ctx, args...)
+	return err
+}
+
+func (d *FilesystemDriver) ensureInternalPostgresCredentialState(projectID, bindingID string, listenerPort int) (internalPostgresCredentialState, error) {
+	return loadOrCreateInternalPostgresCredentialState(d.root, d.stateKey, projectID, bindingID, listenerPort, d.now())
 }
 
 func (d *FilesystemDriver) runDockerCommand(ctx context.Context, args ...string) (string, error) {

@@ -1,7 +1,9 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"lazyops-server/internal/models"
@@ -167,4 +169,247 @@ func TestBuildCallbackServiceBroadcastsFailureEvent(t *testing.T) {
 	if event.Type != "build.job.failed" {
 		t.Fatalf("expected build.job.failed event, got %#v", event)
 	}
+}
+
+func TestBuildCallbackServiceAppliesSuggestedHealthcheckToAutogenDefaultService(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:   "app",
+			Path:   ".",
+			Public: true,
+			Healthcheck: map[string]any{
+				"path":     "/",
+				"port":     8080,
+				"protocol": "http",
+			},
+		},
+		"artifact://one-click/prj_123/autogen-20260412T000000Z",
+	))
+
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/frontend",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","project_repo_link_id":"prl_123","github_delivery_id":"delivery_123","github_installation_id":100,"github_repo_id":42,"repo_owner":"lazyops","repo_name":"frontend","repo_full_name":"lazyops/frontend","tracked_branch":"main","commit_sha":"abc123def456","trigger_kind":"push","preview_enabled":false,"artifact_metadata_stage":{"commit_sha":"abc123def456"},"retry_policy":{"max_attempts":3,"backoff":"linear"},"callback_expectation":{"path":"/api/v1/builds/callback","required_fields":["build_job_id","project_id","commit_sha","status","image_ref","image_digest","metadata.detected_services"]}}`,
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:        "bld_123",
+		ProjectID:         "prj_123",
+		CommitSHA:         "abc123def456",
+		Status:            "succeeded",
+		ImageRef:          "ghcr.io/lazyops/frontend:abc123",
+		ImageDigest:       "sha256:deadbeef",
+		DetectedServices:  []string{"node"},
+		DetectedFramework: "next",
+		SuggestedHealthcheck: &BuildSuggestedHealthcheckRecord{
+			Path: "/",
+			Port: 3000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build callback success: %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 1 {
+		t.Fatalf("expected one revision service, got %#v", result.Revision)
+	}
+
+	port := extractHealthcheckPort(result.Revision.Services[0].Healthcheck)
+	if port != 3000 {
+		t.Fatalf("expected overridden healthcheck port 3000, got %d", port)
+	}
+}
+
+func TestBuildCallbackServiceDoesNotOverrideExplicitHealthcheck(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:   "app",
+			Path:   ".",
+			Public: true,
+			Healthcheck: map[string]any{
+				"path":     "/health",
+				"port":     5173,
+				"protocol": "http",
+			},
+		},
+		"artifact://one-click/prj_123/autogen-20260412T000000Z",
+	))
+
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/frontend",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","project_repo_link_id":"prl_123","github_delivery_id":"delivery_123","github_installation_id":100,"github_repo_id":42,"repo_owner":"lazyops","repo_name":"frontend","repo_full_name":"lazyops/frontend","tracked_branch":"main","commit_sha":"abc123def456","trigger_kind":"push","preview_enabled":false,"artifact_metadata_stage":{"commit_sha":"abc123def456"},"retry_policy":{"max_attempts":3,"backoff":"linear"},"callback_expectation":{"path":"/api/v1/builds/callback","required_fields":["build_job_id","project_id","commit_sha","status","image_ref","image_digest","metadata.detected_services"]}}`,
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:        "bld_123",
+		ProjectID:         "prj_123",
+		CommitSHA:         "abc123def456",
+		Status:            "succeeded",
+		ImageRef:          "ghcr.io/lazyops/frontend:abc123",
+		ImageDigest:       "sha256:deadbeef",
+		DetectedServices:  []string{"node"},
+		DetectedFramework: "next",
+		SuggestedHealthcheck: &BuildSuggestedHealthcheckRecord{
+			Path: "/",
+			Port: 3000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build callback success: %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 1 {
+		t.Fatalf("expected one revision service, got %#v", result.Revision)
+	}
+
+	port := extractHealthcheckPort(result.Revision.Services[0].Healthcheck)
+	if port != 5173 {
+		t.Fatalf("expected explicit healthcheck port 5173 unchanged, got %d", port)
+	}
+}
+
+func TestBuildCallbackServiceDoesNotOverrideGenericFallbackForNonOneClickBlueprint(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:   "app",
+			Path:   ".",
+			Public: true,
+			Healthcheck: map[string]any{
+				"path":     "/",
+				"port":     8080,
+				"protocol": "http",
+			},
+		},
+		"artifact://builds/123",
+	))
+
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/frontend",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","project_repo_link_id":"prl_123","github_delivery_id":"delivery_123","github_installation_id":100,"github_repo_id":42,"repo_owner":"lazyops","repo_name":"frontend","repo_full_name":"lazyops/frontend","tracked_branch":"main","commit_sha":"abc123def456","trigger_kind":"push","preview_enabled":false,"artifact_metadata_stage":{"commit_sha":"abc123def456"},"retry_policy":{"max_attempts":3,"backoff":"linear"},"callback_expectation":{"path":"/api/v1/builds/callback","required_fields":["build_job_id","project_id","commit_sha","status","image_ref","image_digest","metadata.detected_services"]}}`,
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:        "bld_123",
+		ProjectID:         "prj_123",
+		CommitSHA:         "abc123def456",
+		Status:            "succeeded",
+		ImageRef:          "ghcr.io/lazyops/frontend:abc123",
+		ImageDigest:       "sha256:deadbeef",
+		DetectedServices:  []string{"node"},
+		DetectedFramework: "next",
+		SuggestedHealthcheck: &BuildSuggestedHealthcheckRecord{
+			Path: "/",
+			Port: 3000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build callback success: %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 1 {
+		t.Fatalf("expected one revision service, got %#v", result.Revision)
+	}
+
+	port := extractHealthcheckPort(result.Revision.Services[0].Healthcheck)
+	if port != 8080 {
+		t.Fatalf("expected non-one-click generic fallback healthcheck port 8080 unchanged, got %d", port)
+	}
+}
+
+func mustBlueprintModelWithSingleService(
+	t *testing.T,
+	blueprintID string,
+	projectID string,
+	service BlueprintServiceContractRecord,
+	artifactRef string,
+) models.Blueprint {
+	t.Helper()
+
+	base := mustBlueprintModel(t, blueprintID, projectID)
+	var compiled BlueprintCompiledContractRecord
+	if err := json.Unmarshal([]byte(base.CompiledJSON), &compiled); err != nil {
+		t.Fatalf("unmarshal base compiled blueprint: %v", err)
+	}
+	compiled.Services = []BlueprintServiceContractRecord{service}
+	if strings.TrimSpace(artifactRef) != "" {
+		compiled.ArtifactMetadata.ArtifactRef = strings.TrimSpace(artifactRef)
+	}
+
+	compiledJSON, err := json.Marshal(compiled)
+	if err != nil {
+		t.Fatalf("marshal compiled blueprint: %v", err)
+	}
+	base.CompiledJSON = string(compiledJSON)
+	return base
 }

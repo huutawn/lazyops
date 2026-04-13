@@ -149,7 +149,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Build
-	imageRef, imageDigest, services, err := w.buildAndPush(ctx, input)
+	imageRef, imageDigest, services, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
 
 	status := "succeeded"
 	if err != nil {
@@ -158,7 +158,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Callback
-	if err := w.callback(ctx, input, status, imageRef, imageDigest, services); err != nil {
+	if err := w.callback(ctx, input, status, imageRef, imageDigest, services, detectedFramework, suggestedHealthcheck); err != nil {
 		slog.Error("build callback failed", "job_id", job.ID, "error", err)
 		w.failJob(job.ID, fmt.Sprintf("callback failed: %v", err))
 		return
@@ -184,11 +184,21 @@ type BuildWorkerInput struct {
 	PreviewEnabled       bool   `json:"preview_enabled"`
 }
 
-func (w *Worker) buildAndPush(ctx context.Context, input BuildWorkerInput) (imageRef, imageDigest string, services []string, err error) {
+func (w *Worker) buildAndPush(
+	ctx context.Context,
+	input BuildWorkerInput,
+) (
+	imageRef string,
+	imageDigest string,
+	services []string,
+	detectedFramework string,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+	err error,
+) {
 	// Clone repo
 	repoDir, err := w.cloneRepo(ctx, input)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("clone repo: %w", err)
+		return "", "", nil, "", nil, fmt.Errorf("clone repo: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
 
@@ -201,12 +211,12 @@ func (w *Worker) buildAndPush(ctx context.Context, input BuildWorkerInput) (imag
 
 	// Login to registry
 	if err := w.dockerLogin(ctx); err != nil {
-		return "", "", nil, fmt.Errorf("docker login: %w", err)
+		return "", "", nil, "", nil, fmt.Errorf("docker login: %w", err)
 	}
 
 	// Build with nixpacks when available; fallback to docker build if Dockerfile exists.
 	if err := w.buildImage(ctx, repoDir, imageName); err != nil {
-		return "", "", nil, err
+		return "", "", nil, "", nil, err
 	}
 
 	// Push image
@@ -214,7 +224,7 @@ func (w *Worker) buildAndPush(ctx context.Context, input BuildWorkerInput) (imag
 	pushCmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "push", imageName)
 	pushOutput, err := pushCmd.CombinedOutput()
 	if err != nil {
-		return "", "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
+		return "", "", nil, "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
 	}
 
 	// Get image digest
@@ -225,8 +235,9 @@ func (w *Worker) buildAndPush(ctx context.Context, input BuildWorkerInput) (imag
 	if len(services) == 0 {
 		services = []string{"app"}
 	}
+	detectedFramework, suggestedHealthcheck = w.detectFrontendMetadata(repoDir)
 
-	return imageName, digest, services, nil
+	return imageName, digest, services, detectedFramework, suggestedHealthcheck, nil
 }
 
 func (w *Worker) imageName(input BuildWorkerInput, tag string) string {
@@ -392,7 +403,62 @@ func (w *Worker) detectServices(repoDir string) []string {
 	return unique
 }
 
-func (w *Worker) callback(ctx context.Context, input BuildWorkerInput, status, imageRef, imageDigest string, services []string) error {
+type BuildSuggestedHealthcheckMetadata struct {
+	Path string `json:"path"`
+	Port int    `json:"port"`
+}
+
+func (w *Worker) detectFrontendMetadata(repoDir string) (string, *BuildSuggestedHealthcheckMetadata) {
+	packageJSONPath := filepath.Join(repoDir, "package.json")
+	payload, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		return "", nil
+	}
+
+	var manifest struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(payload, &manifest); err != nil {
+		return "", nil
+	}
+
+	hasDep := func(name string) bool {
+		if manifest.Dependencies != nil {
+			if _, ok := manifest.Dependencies[name]; ok {
+				return true
+			}
+		}
+		if manifest.DevDependencies != nil {
+			if _, ok := manifest.DevDependencies[name]; ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch {
+	case hasDep("next"):
+		return "next", &BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000}
+	case hasDep("vite"):
+		return "vite", &BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000}
+	case hasDep("react-scripts"):
+		return "react-scripts", &BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000}
+	default:
+		return "", nil
+	}
+}
+
+func (w *Worker) callback(
+	ctx context.Context,
+	input BuildWorkerInput,
+	status,
+	imageRef,
+	imageDigest string,
+	services []string,
+	detectedFramework string,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+) error {
 	if services == nil {
 		services = []string{}
 	}
@@ -407,9 +473,16 @@ func (w *Worker) callback(ctx context.Context, input BuildWorkerInput, status, i
 	if status == "succeeded" {
 		body["image_ref"] = imageRef
 		body["image_digest"] = imageDigest
-		body["metadata"] = map[string]any{
+		metadata := map[string]any{
 			"detected_services": services,
 		}
+		if strings.TrimSpace(detectedFramework) != "" {
+			metadata["detected_framework"] = strings.TrimSpace(detectedFramework)
+		}
+		if suggestedHealthcheck != nil {
+			metadata["suggested_healthcheck"] = suggestedHealthcheck
+		}
+		body["metadata"] = metadata
 	}
 
 	payload, _ := json.Marshal(body)

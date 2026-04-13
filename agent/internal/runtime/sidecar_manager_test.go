@@ -167,6 +167,81 @@ func TestSidecarManagerRenderSidecarWithDependencies(t *testing.T) {
 	}
 }
 
+func TestSidecarManagerRenderSidecarBuildsManagedDBAdapterForInternalPostgres(t *testing.T) {
+	root := t.TempDir()
+	mgr := NewSidecarManager(nil, root).WithCompanionImageRef("tawn/lazyops-agent:test")
+	mgr.processManager.stateEncryptionKey = "test-sidecar-managed-db-adapter-key"
+
+	layout := makeTestLayout(root)
+	if err := writeTestManifest(layout); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := writeTestService(layout, "app"); err != nil {
+		t.Fatalf("write app: %v", err)
+	}
+	if err := writeTestService(layout, "lazyops-internal-postgres"); err != nil {
+		t.Fatalf("write postgres: %v", err)
+	}
+
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{ProjectID: "prj_1"},
+		Binding: contracts.DeploymentBindingPayload{BindingID: "bind_1", RuntimeMode: contracts.RuntimeModeStandalone},
+		Revision: contracts.DesiredRevisionPayload{
+			RevisionID: "rev_1",
+			CompatibilityPolicy: contracts.CompatibilityPolicy{
+				LocalhostRescue: true,
+			},
+		},
+		Services: []ServiceRuntimeContext{
+			{
+				Name: "app",
+				Dependencies: []contracts.DependencyBindingPayload{
+					{
+						Alias:         "postgres",
+						TargetService: "lazyops-internal-postgres",
+						Protocol:      "tcp",
+						LocalEndpoint: "localhost:5432",
+					},
+				},
+			},
+			{
+				Name: "lazyops-internal-postgres",
+				HealthCheck: contracts.HealthCheckPayload{
+					Protocol: "tcp",
+					Port:     5432,
+				},
+			},
+		},
+	}
+
+	result, err := mgr.RenderSidecars(context.Background(), runtimeCtx, layout)
+	if err != nil {
+		t.Fatalf("render sidecars: %v", err)
+	}
+	if len(result.Plan.Services) != 1 {
+		t.Fatalf("expected 1 sidecar service, got %d", len(result.Plan.Services))
+	}
+	service := result.Plan.Services[0]
+	if service.SidecarImageRef != "tawn/lazyops-agent:test" {
+		t.Fatalf("expected sidecar image ref to be propagated, got %q", service.SidecarImageRef)
+	}
+	if len(service.ManagedDBAdapters) != 1 {
+		t.Fatalf("expected managed db adapter contract, got %#v", service.ManagedDBAdapters)
+	}
+	if len(service.ProxyRoutes) != 0 {
+		t.Fatalf("expected postgres adapter to avoid plain proxy route, got %#v", service.ProxyRoutes)
+	}
+	if len(service.DependencyStrategies) != 1 || service.DependencyStrategies[0].Strategy != "managed_db_adapter" {
+		t.Fatalf("expected managed_db_adapter strategy, got %#v", service.DependencyStrategies)
+	}
+	if service.ManagedDBAdapters[0].UpstreamPasswordEncrypted == "" {
+		t.Fatalf("expected encrypted upstream password, got %#v", service.ManagedDBAdapters[0])
+	}
+	if service.ManagedDBAdapters[0].UpstreamPasswordPlaintext != "" {
+		t.Fatalf("expected no plaintext upstream password when state key is configured, got %#v", service.ManagedDBAdapters[0])
+	}
+}
+
 func TestSidecarManagerRenderSidecarMissingTargetService(t *testing.T) {
 	root := t.TempDir()
 	mgr := NewSidecarManager(nil, root)
