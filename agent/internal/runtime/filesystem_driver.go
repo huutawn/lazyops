@@ -913,7 +913,7 @@ func (d *FilesystemDriver) ensureInternalPostgresAuthentication(ctx context.Cont
 }
 
 func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containerName string) error {
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -921,15 +921,24 @@ func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containe
 		if _, err := d.runDockerCommand(
 			ctx,
 			"exec", "-u", "postgres", containerName,
-			"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres",
-			"-tAc", "SELECT 1",
+			"pg_isready", "-U", "postgres", "-d", "postgres", "-t", "5",
 		); err == nil {
 			return nil
 		}
+		running, inspectErr := d.internalServiceContainerRunning(ctx, containerName)
+		if inspectErr == nil && !running {
+			diagnostic := d.internalPostgresDiagnosticSnapshot(ctx, containerName)
+			return &OperationError{
+				Code:      "internal_postgres_container_not_running",
+				Message:   fmt.Sprintf("internal postgres container %q is not running%s", containerName, diagnostic),
+				Retryable: true,
+			}
+		}
 		if time.Now().After(deadline) {
+			diagnostic := d.internalPostgresDiagnosticSnapshot(ctx, containerName)
 			return &OperationError{
 				Code:      "internal_postgres_start_timeout",
-				Message:   fmt.Sprintf("timed out waiting for internal postgres container %q", containerName),
+				Message:   fmt.Sprintf("timed out waiting for internal postgres container %q%s", containerName, diagnostic),
 				Retryable: true,
 			}
 		}
@@ -939,6 +948,38 @@ func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containe
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+func (d *FilesystemDriver) internalPostgresDiagnosticSnapshot(ctx context.Context, containerName string) string {
+	statusOutput, statusErr := d.runDockerCommand(
+		ctx,
+		"inspect",
+		"--format",
+		"status={{.State.Status}} exit={{.State.ExitCode}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}",
+		containerName,
+	)
+	logOutput, logErr := d.runDockerCommand(ctx, "logs", "--tail", "40", containerName)
+	parts := make([]string, 0, 2)
+	if statusErr == nil && strings.TrimSpace(statusOutput) != "" {
+		parts = append(parts, strings.TrimSpace(statusOutput))
+	}
+	if logErr == nil && strings.TrimSpace(logOutput) != "" {
+		parts = append(parts, "logs="+sanitizeInlineLogOutput(logOutput))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
+}
+
+func sanitizeInlineLogOutput(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "\n", " | ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	return value
 }
 
 func (d *FilesystemDriver) ensureBindingNetwork(ctx context.Context, projectID, bindingID string) error {
