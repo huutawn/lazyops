@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -731,13 +734,6 @@ func (s *Service) handlePromoteRelease(ctx context.Context, envelope contracts.C
 }
 
 func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
-	var payload contracts.PrepareReleaseWorkspacePayload
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		return dispatcher.NonRetryable("invalid_rollback_release_payload", "command payload could not be decoded", map[string]any{
-			"error": err.Error(),
-		})
-	}
-
 	if s.nodeAgentGuard != nil {
 		if err := s.nodeAgentGuard.AssertNotNodeAgent("rollback_release"); err != nil {
 			return dispatcher.NonRetryable("node_agent_guard_blocked", err.Error(), map[string]any{
@@ -746,7 +742,7 @@ func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.
 		}
 	}
 
-	runtimeCtx, err := ContextFromPreparePayload(payload)
+	runtimeCtx, err := s.decodeRollbackRuntimeContext(ctx, envelope.Payload)
 	if err != nil {
 		return dispatcher.NonRetryable("invalid_runtime_context", err.Error(), nil)
 	}
@@ -810,6 +806,84 @@ func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.
 	}
 
 	return dispatcher.Done(rolledBack.Summary.Summary)
+}
+
+type rollbackReleasePayload struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	RevisionID   string `json:"revision_id,omitempty"`
+}
+
+func (s *Service) decodeRollbackRuntimeContext(ctx context.Context, rawPayload json.RawMessage) (RuntimeContext, error) {
+	var preparePayload contracts.PrepareReleaseWorkspacePayload
+	if err := json.Unmarshal(rawPayload, &preparePayload); err == nil {
+		runtimeCtx, runtimeErr := ContextFromPreparePayload(preparePayload)
+		if runtimeErr == nil {
+			return runtimeCtx, nil
+		}
+	}
+
+	var rollbackPayload rollbackReleasePayload
+	if err := json.Unmarshal(rawPayload, &rollbackPayload); err != nil {
+		return RuntimeContext{}, fmt.Errorf("command payload could not be decoded: %w", err)
+	}
+	if strings.TrimSpace(rollbackPayload.RevisionID) == "" {
+		return RuntimeContext{}, fmt.Errorf("rollback payload must include revision_id")
+	}
+	return s.loadRuntimeContextByRevisionID(ctx, rollbackPayload.RevisionID)
+}
+
+func (s *Service) loadRuntimeContextByRevisionID(ctx context.Context, revisionID string) (RuntimeContext, error) {
+	revisionID = strings.TrimSpace(revisionID)
+	if revisionID == "" {
+		return RuntimeContext{}, fmt.Errorf("revision_id is required")
+	}
+
+	candidateWorkspace := ""
+	if s.store != nil {
+		local, err := s.store.Load(ctx)
+		if err == nil {
+			if root := strings.TrimSpace(local.RevisionCache.CandidateWorkspaceRoot); root != "" && filepath.Base(root) == revisionID {
+				candidateWorkspace = root
+			}
+		}
+	}
+	if candidateWorkspace != "" {
+		runtimeCtx, err := loadRuntimeContextFromWorkspaceManifestPath(filepath.Join(candidateWorkspace, "workspace.json"))
+		if err == nil {
+			return runtimeCtx, nil
+		}
+	}
+
+	driver, ok := s.driver.(*FilesystemDriver)
+	if !ok {
+		return RuntimeContext{}, fmt.Errorf("runtime driver cannot resolve revision %q without a workspace-backed implementation", revisionID)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(driver.root, "projects", "*", "bindings", "*", "revisions", revisionID, "workspace.json"))
+	if err != nil {
+		return RuntimeContext{}, fmt.Errorf("locate workspace for revision %q: %w", revisionID, err)
+	}
+	sort.Strings(matches)
+	switch len(matches) {
+	case 0:
+		return RuntimeContext{}, fmt.Errorf("workspace manifest for revision %q was not found", revisionID)
+	case 1:
+		return loadRuntimeContextFromWorkspaceManifestPath(matches[0])
+	default:
+		return RuntimeContext{}, fmt.Errorf("multiple workspace manifests found for revision %q", revisionID)
+	}
+}
+
+func loadRuntimeContextFromWorkspaceManifestPath(path string) (RuntimeContext, error) {
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return RuntimeContext{}, err
+	}
+	var manifest WorkspaceManifest
+	if err := json.Unmarshal(payload, &manifest); err != nil {
+		return RuntimeContext{}, err
+	}
+	return ContextFromWorkspaceManifest(manifest)
 }
 
 func (s *Service) handleGarbageCollectRuntime(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {

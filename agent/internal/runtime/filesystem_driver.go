@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -833,9 +834,14 @@ func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context,
 	}
 	envVars := definition.Env
 	var credentialState internalPostgresCredentialState
+	internalPostgresFreshVolume := false
 	if definition.HostDataDirName == "postgres" {
 		var err error
 		credentialState, err = d.ensureInternalPostgresCredentialState(projectID, bindingID, requestedPort)
+		if err != nil {
+			return err
+		}
+		internalPostgresFreshVolume, err = internalPostgresDataDirFresh(hostDataDir)
 		if err != nil {
 			return err
 		}
@@ -856,7 +862,7 @@ func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context,
 		return err
 	}
 	if definition.HostDataDirName == "postgres" {
-		if err := d.ensureInternalPostgresAuthentication(ctx, containerName, hostDataDir, credentialState); err != nil {
+		if err := d.ensureInternalPostgresAuthentication(ctx, containerName, hostDataDir, credentialState, internalPostgresFreshVolume); err != nil {
 			return err
 		}
 	}
@@ -867,7 +873,7 @@ func internalServiceNetworkAlias(kind string) string {
 	return "lazyops-internal-" + normalizeContainerToken(kind)
 }
 
-func (d *FilesystemDriver) ensureInternalPostgresAuthentication(ctx context.Context, containerName, hostDataDir string, credentialState internalPostgresCredentialState) error {
+func (d *FilesystemDriver) ensureInternalPostgresAuthentication(ctx context.Context, containerName, hostDataDir string, credentialState internalPostgresCredentialState, freshVolume bool) error {
 	if strings.TrimSpace(credentialState.Username) == "" || strings.TrimSpace(credentialState.Password) == "" {
 		return &OperationError{
 			Code:      "internal_postgres_missing_credentials",
@@ -875,36 +881,160 @@ func (d *FilesystemDriver) ensureInternalPostgresAuthentication(ctx context.Cont
 			Retryable: false,
 		}
 	}
-	if err := rewritePostgresHostAuth(filepath.Join(hostDataDir, "pg_hba.conf"), "password"); err != nil {
+	adminDatabase := firstNonEmpty(strings.TrimSpace(credentialState.Database), "postgres")
+	volumeState := "reused"
+	if freshVolume {
+		volumeState = "fresh"
+	}
+
+	needsHostAuthRewrite := false
+	if !freshVolume {
+		var err error
+		needsHostAuthRewrite, err = postgresHostAuthNeedsRewrite(filepath.Join(hostDataDir, "pg_hba.conf"), "password")
+		if err != nil {
+			return err
+		}
+		if needsHostAuthRewrite {
+			if err := rewritePostgresHostAuth(filepath.Join(hostDataDir, "pg_hba.conf"), "password"); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := d.waitForInternalPostgres(ctx, containerName, credentialState.Username, adminDatabase, volumeState); err != nil {
 		return err
 	}
-	if err := d.waitForInternalPostgres(ctx, containerName); err != nil {
+
+	credentialFingerprint := fingerprintInternalPostgresCredentialState(credentialState)
+	if freshVolume {
+		return persistInternalPostgresPasswordSyncState(hostDataDir, credentialFingerprint, d.now())
+	}
+
+	needsPasswordSync, err := internalPostgresPasswordSyncNeeded(hostDataDir, credentialFingerprint)
+	if err != nil {
 		return err
 	}
+	if !needsPasswordSync && !needsHostAuthRewrite {
+		return nil
+	}
+
 	passwordSQL := escapePostgresLiteral(credentialState.Password)
 	usernameSQL := escapePostgresIdentifier(credentialState.Username)
-	if _, err := d.runDockerCommand(
-		ctx,
+	passwordSyncCommand := []string{
 		"exec", "-u", "postgres", containerName,
-		"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres",
+		"psql", "-v", "ON_ERROR_STOP=1", "-U", credentialState.Username, "-d", adminDatabase,
 		"-c", fmt.Sprintf("ALTER ROLE %s WITH PASSWORD '%s';", usernameSQL, passwordSQL),
-	); err != nil {
+	}
+	passwordSyncOutput, err := d.runDockerCommand(ctx, passwordSyncCommand...)
+	if err != nil {
+		details := d.internalPostgresDiagnosticDetails(ctx, containerName)
+		details["attempted_command"] = "docker " + strings.Join(passwordSyncCommand, " ")
+		if strings.TrimSpace(passwordSyncOutput) != "" {
+			details["command_output"] = passwordSyncOutput
+		}
+		details["volume_state"] = volumeState
 		return &OperationError{
 			Code:      "internal_postgres_password_sync_failed",
 			Message:   fmt.Sprintf("sync internal postgres password for %s failed", containerName),
 			Retryable: true,
+			Details:   details,
 			Err:       err,
 		}
 	}
-	if _, err := d.runDockerCommand(
-		ctx,
-		"exec", "-u", "postgres", containerName,
-		"psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres",
-		"-c", "SELECT pg_reload_conf();",
-	); err != nil {
+
+	if needsHostAuthRewrite {
+		reloadCommand := []string{
+			"exec", "-u", "postgres", containerName,
+			"psql", "-v", "ON_ERROR_STOP=1", "-U", credentialState.Username, "-d", adminDatabase,
+			"-c", "SELECT pg_reload_conf();",
+		}
+		reloadOutput, err := d.runDockerCommand(ctx, reloadCommand...)
+		if err != nil {
+			details := d.internalPostgresDiagnosticDetails(ctx, containerName)
+			details["attempted_command"] = "docker " + strings.Join(reloadCommand, " ")
+			if strings.TrimSpace(reloadOutput) != "" {
+				details["command_output"] = reloadOutput
+			}
+			details["volume_state"] = volumeState
+			return &OperationError{
+				Code:      "internal_postgres_reload_failed",
+				Message:   fmt.Sprintf("reload internal postgres config for %s failed", containerName),
+				Retryable: true,
+				Details:   details,
+				Err:       err,
+			}
+		}
+	}
+
+	return persistInternalPostgresPasswordSyncState(hostDataDir, credentialFingerprint, d.now())
+}
+
+func internalPostgresDataDirFresh(hostDataDir string) (bool, error) {
+	_, err := os.Stat(filepath.Join(hostDataDir, "PG_VERSION"))
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	return false, &OperationError{
+		Code:      "internal_postgres_data_dir_probe_failed",
+		Message:   fmt.Sprintf("inspect postgres data directory %s failed", hostDataDir),
+		Retryable: true,
+		Err:       err,
+	}
+}
+
+type internalPostgresPasswordSyncState struct {
+	CredentialFingerprint string    `json:"credential_fingerprint"`
+	SyncedAt              time.Time `json:"synced_at"`
+}
+
+func fingerprintInternalPostgresCredentialState(credentialState internalPostgresCredentialState) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		credentialState.Username,
+		credentialState.Database,
+		credentialState.Password,
+	}, "\x00")))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func internalPostgresPasswordSyncNeeded(hostDataDir, credentialFingerprint string) (bool, error) {
+	payload, err := os.ReadFile(internalPostgresSyncStatePath(hostDataDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, &OperationError{
+			Code:      "internal_postgres_sync_state_read_failed",
+			Message:   fmt.Sprintf("read internal postgres sync state for %s failed", hostDataDir),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+	var syncState internalPostgresPasswordSyncState
+	if err := json.Unmarshal(payload, &syncState); err != nil {
+		return true, nil
+	}
+	return strings.TrimSpace(syncState.CredentialFingerprint) != strings.TrimSpace(credentialFingerprint), nil
+}
+
+func persistInternalPostgresPasswordSyncState(hostDataDir, credentialFingerprint string, syncedAt time.Time) error {
+	if err := os.MkdirAll(hostDataDir, 0o755); err != nil {
 		return &OperationError{
-			Code:      "internal_postgres_reload_failed",
-			Message:   fmt.Sprintf("reload internal postgres config for %s failed", containerName),
+			Code:      "internal_postgres_sync_state_dir_failed",
+			Message:   fmt.Sprintf("prepare internal postgres sync state directory for %s failed", hostDataDir),
+			Retryable: false,
+			Err:       err,
+		}
+	}
+	if err := writeJSON(internalPostgresSyncStatePath(hostDataDir), internalPostgresPasswordSyncState{
+		CredentialFingerprint: credentialFingerprint,
+		SyncedAt:              syncedAt,
+	}); err != nil {
+		return &OperationError{
+			Code:      "internal_postgres_sync_state_write_failed",
+			Message:   fmt.Sprintf("persist internal postgres sync state for %s failed", hostDataDir),
 			Retryable: true,
 			Err:       err,
 		}
@@ -912,34 +1042,54 @@ func (d *FilesystemDriver) ensureInternalPostgresAuthentication(ctx context.Cont
 	return nil
 }
 
-func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containerName string) error {
+func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containerName, bootstrapUser, bootstrapDatabase, volumeState string) error {
+	bootstrapUser = firstNonEmpty(strings.TrimSpace(bootstrapUser), "postgres")
+	bootstrapDatabase = firstNonEmpty(strings.TrimSpace(bootstrapDatabase), "postgres")
+	readinessCommand := []string{
+		"exec", "-u", "postgres", containerName,
+		"pg_isready", "-U", bootstrapUser, "-d", bootstrapDatabase, "-t", "5",
+	}
+	attemptedCommand := "docker " + strings.Join(readinessCommand, " ")
 	deadline := time.Now().Add(2 * time.Minute)
+	var lastOutput string
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if _, err := d.runDockerCommand(
-			ctx,
-			"exec", "-u", "postgres", containerName,
-			"pg_isready", "-U", "postgres", "-d", "postgres", "-t", "5",
-		); err == nil {
+		output, err := d.runDockerCommand(ctx, readinessCommand...)
+		lastOutput = output
+		if err == nil {
 			return nil
 		}
 		running, inspectErr := d.internalServiceContainerRunning(ctx, containerName)
 		if inspectErr == nil && !running {
+			details := d.internalPostgresDiagnosticDetails(ctx, containerName)
+			details["attempted_command"] = attemptedCommand
+			if strings.TrimSpace(lastOutput) != "" {
+				details["command_output"] = lastOutput
+			}
+			details["volume_state"] = volumeState
 			diagnostic := d.internalPostgresDiagnosticSnapshot(ctx, containerName)
 			return &OperationError{
 				Code:      "internal_postgres_container_not_running",
 				Message:   fmt.Sprintf("internal postgres container %q is not running%s", containerName, diagnostic),
 				Retryable: true,
+				Details:   details,
 			}
 		}
 		if time.Now().After(deadline) {
+			details := d.internalPostgresDiagnosticDetails(ctx, containerName)
+			details["attempted_command"] = attemptedCommand
+			if strings.TrimSpace(lastOutput) != "" {
+				details["command_output"] = lastOutput
+			}
+			details["volume_state"] = volumeState
 			diagnostic := d.internalPostgresDiagnosticSnapshot(ctx, containerName)
 			return &OperationError{
 				Code:      "internal_postgres_start_timeout",
 				Message:   fmt.Sprintf("timed out waiting for internal postgres container %q%s", containerName, diagnostic),
 				Retryable: true,
+				Details:   details,
 			}
 		}
 		select {
@@ -951,6 +1101,24 @@ func (d *FilesystemDriver) waitForInternalPostgres(ctx context.Context, containe
 }
 
 func (d *FilesystemDriver) internalPostgresDiagnosticSnapshot(ctx context.Context, containerName string) string {
+	details := d.internalPostgresDiagnosticDetails(ctx, containerName)
+	parts := make([]string, 0, 2)
+	if status, ok := details["container_status"].(string); ok && strings.TrimSpace(status) != "" {
+		parts = append(parts, strings.TrimSpace(status))
+	}
+	if logs, ok := details["container_logs_tail"].(string); ok && strings.TrimSpace(logs) != "" {
+		parts = append(parts, "logs="+sanitizeInlineLogOutput(logs))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
+}
+
+func (d *FilesystemDriver) internalPostgresDiagnosticDetails(ctx context.Context, containerName string) map[string]any {
+	details := map[string]any{
+		"container_name": containerName,
+	}
 	statusOutput, statusErr := d.runDockerCommand(
 		ctx,
 		"inspect",
@@ -959,17 +1127,13 @@ func (d *FilesystemDriver) internalPostgresDiagnosticSnapshot(ctx context.Contex
 		containerName,
 	)
 	logOutput, logErr := d.runDockerCommand(ctx, "logs", "--tail", "40", containerName)
-	parts := make([]string, 0, 2)
 	if statusErr == nil && strings.TrimSpace(statusOutput) != "" {
-		parts = append(parts, strings.TrimSpace(statusOutput))
+		details["container_status"] = strings.TrimSpace(statusOutput)
 	}
 	if logErr == nil && strings.TrimSpace(logOutput) != "" {
-		parts = append(parts, "logs="+sanitizeInlineLogOutput(logOutput))
+		details["container_logs_tail"] = strings.TrimSpace(logOutput)
 	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return " (" + strings.Join(parts, "; ") + ")"
+	return details
 }
 
 func sanitizeInlineLogOutput(value string) string {

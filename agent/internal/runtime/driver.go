@@ -847,6 +847,26 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 	}, nil
 }
 
+func ContextFromWorkspaceManifest(manifest WorkspaceManifest) (RuntimeContext, error) {
+	runtimeCtx, err := ContextFromPreparePayload(contracts.PrepareReleaseWorkspacePayload{
+		Project: contracts.ProjectMetadataPayload{
+			ProjectID: manifest.Project.ProjectID,
+			Name:      manifest.Project.Name,
+			Slug:      manifest.Project.Slug,
+			Labels:    manifest.Project.Labels,
+		},
+		Binding:  manifest.Binding,
+		Revision: manifest.Revision,
+	})
+	if err != nil {
+		return RuntimeContext{}, err
+	}
+	if len(manifest.Services) > 0 {
+		runtimeCtx = withRuntimeServices(runtimeCtx, manifest.Services)
+	}
+	return runtimeCtx, nil
+}
+
 func workspaceLayout(root string, runtimeCtx RuntimeContext) WorkspaceLayout {
 	workspaceRoot := filepath.Join(
 		root,

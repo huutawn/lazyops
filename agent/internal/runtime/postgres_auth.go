@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const internalPostgresSyncStateFileName = ".lazyops-password-sync.json"
+
 func rewritePostgresHostAuth(path, authMethod string) error {
 	authMethod = strings.TrimSpace(authMethod)
 	if authMethod == "" {
@@ -50,6 +52,34 @@ func rewritePostgresHostAuth(path, authMethod string) error {
 		}
 	}
 	return nil
+}
+
+func postgresHostAuthNeedsRewrite(path, authMethod string) (bool, error) {
+	authMethod = strings.TrimSpace(authMethod)
+	if authMethod == "" {
+		return false, &OperationError{
+			Code:      "internal_postgres_invalid_auth_method",
+			Message:   "postgres host auth method is required",
+			Retryable: false,
+		}
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, &OperationError{
+			Code:      "internal_postgres_pg_hba_read_failed",
+			Message:   fmt.Sprintf("read postgres host auth config %s failed", path),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+	return rewritePostgresHostAuthContent(string(payload), authMethod) != string(payload), nil
+}
+
+func internalPostgresSyncStatePath(hostDataDir string) string {
+	return filepath.Join(hostDataDir, internalPostgresSyncStateFileName)
 }
 
 func rewritePostgresHostAuthContent(content, authMethod string) string {
