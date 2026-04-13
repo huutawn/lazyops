@@ -1,22 +1,24 @@
-# Mô Tả Cách Vẽ Use Case Cho PR LazyOps
+# Đặc Tả Use Case Current State Của LazyOps
 
-Tài liệu này dùng để vẽ lại sơ đồ use case bằng UML use case chuẩn trong StarUML, draw.io, Visio hoặc Word.
+Tài liệu này mô tả use case của LazyOps theo trạng thái hiện tại của repo. Mục tiêu là để nhóm có thể:
 
-Nguyên tắc chung khi vẽ:
+- vẽ lại sơ đồ use case bằng StarUML, draw.io, Visio hoặc Mermaid;
+- giữ cùng một vocabulary với `README.md`, `docs/index.md`, `docs/feature-catalog.md`, `docs/contracts-matrix.md`, và `docs/short-flow-spec.md`;
+- tránh mô tả quá mức các phần vẫn đang ở mức `adapter/composed`.
 
-- Vẽ một khung hệ thống tên là `LazyOps Platform`.
-- Actor đặt ở ngoài khung hệ thống.
-- Use case đặt trong khung hệ thống, dùng hình oval.
-- Đường nối giữa actor và use case là đường thẳng association.
-- Nếu sơ đồ quá lớn, tách thành nhiều sơ đồ nhỏ theo nhóm chức năng.
+## 1. Khung đọc tài liệu
 
-## 1. Sơ đồ use case tổng quát
+### 1.1. Cách hiểu current state
 
-### Tên sơ đồ
+- `standalone` là luồng triển khai chính hiện tại và là lát cắt nên dùng để mô tả trong báo cáo, demo, hoặc sơ đồ sequence.
+- `standalone` đã có rollout planner, dispatch xuống agent, health gate, promote, rollback, và garbage collect, nhưng vẫn nên mô tả là `best-effort` hoặc `adapter/composed`, không phải một PaaS đã hoàn thiện tuyệt đối.
+- `distributed-mesh` và `distributed-k3s` đã có contract, inventory, planning vocabulary và phần telemetry liên quan, nhưng chưa nên mô tả như runtime end-to-end hoàn chỉnh.
+- UX 3 bước `Connect Code`, `Connect Infra`, `Deploy` là lớp orchestration quan trọng ở hiện tại. Lớp UX này dựa trên các contract backend có thật, không phải một hệ thống tách biệt khỏi deployment APIs.
+- Không nên claim rằng multi-service monorepo FE+BE trong cùng một project đã deploy end-to-end hoàn chỉnh ở current state.
 
-`Use Case Tổng Quát Hệ Thống LazyOps`
+### 1.2. Actor chuẩn hóa
 
-### Actor cần vẽ
+Các actor nên dùng thống nhất trong sơ đồ và trong phần thuyết minh:
 
 - `Operator Web`
 - `Operator CLI`
@@ -24,461 +26,355 @@ Nguyên tắc chung khi vẽ:
 - `Build Worker`
 - `Runtime Agent`
 
-### Use case cần vẽ
+## 2. Nhóm use case tổng quát
+
+Các nhóm use case hiện có thật trong hệ thống:
 
 - `Đăng nhập và quản lý phiên`
-- `Tạo project và chọn runtime`
-- `Onboard target và đăng ký agent`
+- `Tạo project và liên kết repo`
+- `Kết nối hạ tầng và đăng ký agent`
 - `Khởi tạo lazyops.yaml và DeploymentBinding`
-- `Liên kết repo với GitHub App`
-- `Xử lý webhook, build callback và đối soát artifact`
-- `Tạo deployment và rollout standalone`
-- `Quan sát, topology, logs, traces và tunnel debug`
+- `One-click deploy / tạo deployment`
+- `Rollout standalone: prepare, start candidate, health gate, promote, rollback`
+- `Quan sát topology, logs, traces, incidents`
+- `Tạo tunnel debug DB/TCP`
 
-### Actor nối với use case nào
+### 2.1. Sơ đồ use case tổng quát
+
+Dùng danh sách sau để vẽ use case tổng quát nếu cần:
+
+- Khung hệ thống: `LazyOps Platform`
+- Actor bên trái: `Operator Web`, `Operator CLI`
+- Actor bên phải: `GitHub / GitHub App`, `Build Worker`, `Runtime Agent`
+- Use case bên trong khung:
+  - `Đăng nhập và quản lý phiên`
+  - `Tạo project và liên kết repo`
+  - `Kết nối hạ tầng và đăng ký agent`
+  - `Khởi tạo lazyops.yaml và DeploymentBinding`
+  - `One-click deploy / tạo deployment`
+  - `Rollout standalone: prepare, start candidate, health gate, promote, rollback`
+  - `Quan sát topology, logs, traces, incidents`
+  - `Tạo tunnel debug DB/TCP`
+
+### 2.2. Actor nối với use case nào
 
 `Operator Web` nối với:
 
 - `Đăng nhập và quản lý phiên`
-- `Tạo project và chọn runtime`
-- `Onboard target và đăng ký agent`
-- `Liên kết repo với GitHub App`
-- `Tạo deployment và rollout standalone`
-- `Quan sát, topology, logs, traces và tunnel debug`
+- `Tạo project và liên kết repo`
+- `Kết nối hạ tầng và đăng ký agent`
+- `One-click deploy / tạo deployment`
+- `Rollout standalone: prepare, start candidate, health gate, promote, rollback`
+- `Quan sát topology, logs, traces, incidents`
 
 `Operator CLI` nối với:
 
 - `Đăng nhập và quản lý phiên`
 - `Khởi tạo lazyops.yaml và DeploymentBinding`
-- `Liên kết repo với GitHub App`
-- `Quan sát, topology, logs, traces và tunnel debug`
+- `Quan sát topology, logs, traces, incidents`
+- `Tạo tunnel debug DB/TCP`
 
 `GitHub / GitHub App` nối với:
 
-- `Liên kết repo với GitHub App`
-- `Xử lý webhook, build callback và đối soát artifact`
+- `Tạo project và liên kết repo`
+- `One-click deploy / tạo deployment`
 
 `Build Worker` nối với:
 
-- `Xử lý webhook, build callback và đối soát artifact`
+- `One-click deploy / tạo deployment`
 
 `Runtime Agent` nối với:
 
-- `Onboard target và đăng ký agent`
-- `Tạo deployment và rollout standalone`
-- `Quan sát, topology, logs, traces và tunnel debug`
+- `Kết nối hạ tầng và đăng ký agent`
+- `Rollout standalone: prepare, start candidate, health gate, promote, rollback`
+- `Quan sát topology, logs, traces, incidents`
 
-### Gợi ý bố cục
+## 3. Ghi chú trạng thái để tránh mô tả quá mức
 
-- Đặt `Operator Web` và `Operator CLI` bên trái.
-- Đặt `GitHub / GitHub App`, `Build Worker`, `Runtime Agent` bên phải.
-- Các use case đặt trong khung hệ thống theo 3 hàng:
-  - hàng 1: khởi tạo
-  - hàng 2: tích hợp và triển khai
-  - hàng 3: quan sát và debug
+### 3.1. Luồng chính nên trình bày
 
-## 2. Sơ đồ use case nhóm khởi tạo và tích hợp
+- Luồng chính để mô tả trong báo cáo là `standalone` kết hợp với one-click deploy hoặc tạo deployment thông thường.
+- Các bước quan trọng nên xuất hiện trong sequence diagram là: repo link, webhook hoặc build callback, artifact-ready revision, deployment record, rollout planner, command dispatch, health gate, promote hoặc rollback.
 
-### Tên sơ đồ
+### 3.2. Các phần chỉ nên xem là capability boundary
 
-`Use Case Khởi Tạo Nền Tảng Và Tích Hợp Repo`
+- `distributed-mesh` nên được mô tả là lớp planning, topology, dependency resolution và tunnel policy có thật, nhưng chưa nên gọi là fully automated runtime.
+- `distributed-k3s` nên được mô tả là ranh giới policy, telemetry và desired state ở mức cluster, không nên mô tả như LazyOps đang trực tiếp thay thế hoàn toàn scheduler Kubernetes.
 
-### Actor cần vẽ
+### 3.3. Các claim nên tránh
 
-- `Operator Web`
-- `Operator CLI`
-- `GitHub / GitHub App`
-- `Runtime Agent`
+- Không mô tả mesh hoặc k3s như một pipeline rollout production-ready tương đương `standalone`.
+- Không mô tả observability như một platform thống nhất đã hoàn thiện tuyệt đối; current state vẫn là nhiều bề mặt đọc được ghép lại.
+- Không mô tả tunnel như truy cập vận hành lâu dài; đây là debug path tạm thời cho `db` và `tcp`.
+- Không mô tả multi-service FE+BE trong cùng một project như use case đã hỗ trợ đầy đủ end-to-end.
 
-### Use case cần vẽ
+## 4. Cách đọc UX 3 bước theo contract hiện tại
 
-- `Tạo project và chọn runtime`
-- `Onboard target và đăng ký agent`
-- `Khởi tạo lazyops.yaml và DeploymentBinding`
-- `Liên kết repo với GitHub App`
+UX 3 bước nên được giải thích như sau:
 
-### Actor nối với use case nào
+1. `Connect Code`
+   - bao phủ tạo project, liên kết GitHub App, kiểm tra repo link, tracked branch, webhook health và build readiness;
+   - không phải một module riêng tách khỏi backend contracts.
+2. `Connect Infra`
+   - bao phủ tạo target, SSH/bootstrap flow, enroll agent và heartbeat online.
+3. `Deploy`
+   - bao phủ one-click deploy hoặc tạo deployment, từ đó kích hoạt rollout planner và command dispatch xuống runtime agent.
 
-`Operator Web` nối với:
+Nói ngắn gọn, 3 bước này là lớp UX đơn giản hóa cho operator, còn bên dưới vẫn dùng các contract thật như `ProjectRepoLink`, `DeploymentBinding`, `BuildJob`, `Revision`, `Deployment`, `ws/agents/control`, `topology`, `traces`, và `tunnel sessions`.
 
-- `Tạo project và chọn runtime`
-- `Onboard target và đăng ký agent`
-- `Liên kết repo với GitHub App`
-
-`Operator CLI` nối với:
-
-- `Khởi tạo lazyops.yaml và DeploymentBinding`
-- `Liên kết repo với GitHub App`
-
-`GitHub / GitHub App` nối với:
-
-- `Liên kết repo với GitHub App`
-
-`Runtime Agent` nối với:
-
-- `Onboard target và đăng ký agent`
-
-### Quan hệ logic nên mô tả trong thuyết minh
-
-- `Tạo project và chọn runtime` là bước trước của `Onboard target và đăng ký agent`.
-- `Onboard target và đăng ký agent` là bước trước của `Khởi tạo lazyops.yaml và DeploymentBinding`.
-- `Khởi tạo lazyops.yaml và DeploymentBinding` là bước trước của `Liên kết repo với GitHub App`.
-
-Lưu ý:
-
-- Ba quan hệ trên thường chỉ mô tả trong phần diễn giải.
-- Nếu giáo viên muốn, có thể dùng mũi tên phụ chú thay vì include/extend vì đây là quan hệ quy trình, không phải tái sử dụng use case điển hình.
-
-## 3. Sơ đồ use case nhóm triển khai và vận hành
-
-### Tên sơ đồ
-
-`Use Case Triển Khai Và Điều Phối Runtime`
-
-### Actor cần vẽ
-
-- `Operator Web`
-- `GitHub`
-- `Build Worker`
-- `Runtime Agent`
-
-### Use case cần vẽ
-
-- `Xử lý webhook, build callback và đối soát artifact`
-- `Tạo deployment và rollout standalone`
-
-### Actor nối với use case nào
-
-`GitHub` nối với:
-
-- `Xử lý webhook, build callback và đối soát artifact`
-
-`Build Worker` nối với:
-
-- `Xử lý webhook, build callback và đối soát artifact`
-
-`Operator Web` nối với:
-
-- `Tạo deployment và rollout standalone`
-
-`Runtime Agent` nối với:
-
-- `Tạo deployment và rollout standalone`
-
-### Quan hệ logic nên mô tả trong thuyết minh
-
-- `Xử lý webhook, build callback và đối soát artifact` cung cấp đầu vào artifact cho `Tạo deployment và rollout standalone`.
-- `Tạo deployment và rollout standalone` là use case trung tâm của phần vận hành runtime hiện tại.
-
-## 4. Sơ đồ use case nhóm quan sát và debug
-
-### Tên sơ đồ
-
-`Use Case Quan Sát Và Debug Hệ Thống`
-
-### Actor cần vẽ
-
-- `Operator Web`
-- `Operator CLI`
-- `Runtime Agent`
-
-### Use case cần vẽ
-
-- `Quan sát topology`
-- `Xem logs`
-- `Xem traces`
-- `Theo dõi incidents`
-- `Tạo tunnel debug DB/TCP`
-
-### Actor nối với use case nào
-
-`Operator Web` nối với:
-
-- `Quan sát topology`
-- `Xem logs`
-- `Xem traces`
-- `Theo dõi incidents`
-
-`Operator CLI` nối với:
-
-- `Xem logs`
-- `Xem traces`
-- `Tạo tunnel debug DB/TCP`
-
-`Runtime Agent` nối với:
-
-- `Quan sát topology`
-- `Xem logs`
-- `Xem traces`
-- `Theo dõi incidents`
-
-### Cách hiểu khi vẽ
-
-- Với `Runtime Agent`, đường nối mang nghĩa agent là nguồn phát sinh dữ liệu cho các use case observability.
-- Với `Operator Web` và `Operator CLI`, đường nối mang nghĩa người vận hành là người sử dụng các chức năng quan sát/debug.
-
-## 5. Danh sách use case chi tiết để vẽ riêng nếu cần
-
-Nếu cần tách thành nhiều sơ đồ nhỏ hơn nữa, có thể vẽ riêng từng use case chính như sau.
+## 5. Use case chi tiết
 
 ### UC01. Đăng nhập và quản lý phiên
 
-Actor:
+Mục tiêu:
+
+- cho operator truy cập hệ thống bằng web session hoặc PAT cho CLI;
+- giữ ranh giới tách biệt giữa session người dùng và agent token.
+
+Actor chính:
 
 - `Operator Web`
 - `Operator CLI`
 
-Use case:
+Luồng chính:
 
-- `Đăng nhập bằng email/password`
-- `Đăng nhập bằng OAuth`
-- `Tạo PAT cho CLI`
-- `Thu hồi PAT`
+1. Operator đăng nhập bằng email/password hoặc OAuth trên web.
+2. Backend tạo web session cho frontend.
+3. Operator có thể tạo PAT để CLI dùng cho các lệnh local.
+4. Các request protected sau đó đi qua middleware xác thực và phân quyền.
 
-Đường nối:
+Hậu điều kiện:
 
-`Operator Web` nối với:
+- operator có phiên hợp lệ để gọi API hoặc WebSocket phù hợp.
 
-- `Đăng nhập bằng email/password`
-- `Đăng nhập bằng OAuth`
+Ghi chú current state:
 
-`Operator CLI` nối với:
+- PAT của CLI là credential cho operator, khác hoàn toàn với agent token.
+- `Runtime Agent` không dùng session của user.
 
-- `Đăng nhập bằng email/password`
-- `Tạo PAT cho CLI`
-- `Thu hồi PAT`
+### UC02. Tạo project và liên kết repo
 
-### UC02. Tạo project và chọn runtime
+Mục tiêu:
 
-Actor:
+- tạo đơn vị quản lý cho ứng dụng;
+- gắn project với GitHub App installation, repo và tracked branch;
+- chuẩn bị điều kiện cho webhook và build callback.
 
-- `Operator Web`
-
-Use case:
-
-- `Tạo project`
-- `Chọn runtime mode`
-
-Đường nối:
-
-`Operator Web` nối với:
-
-- `Tạo project`
-- `Chọn runtime mode`
-
-### UC03. Onboard target và đăng ký agent
-
-Actor:
+Actor chính:
 
 - `Operator Web`
-- `Runtime Agent`
-
-Use case:
-
-- `Tạo instance`
-- `Tạo mesh network`
-- `Tạo cluster`
-- `Phát bootstrap token`
-- `Agent enroll`
-- `Agent heartbeat`
-- `Mở control channel`
-
-Đường nối:
-
-`Operator Web` nối với:
-
-- `Tạo instance`
-- `Tạo mesh network`
-- `Tạo cluster`
-- `Phát bootstrap token`
-
-`Runtime Agent` nối với:
-
-- `Agent enroll`
-- `Agent heartbeat`
-- `Mở control channel`
-
-### UC04. Khởi tạo lazyops.yaml và DeploymentBinding
-
-Actor:
-
-- `Operator CLI`
-
-Use case:
-
-- `Quét repository`
-- `Phát hiện services`
-- `Lấy danh sách project và target`
-- `Chọn hoặc tạo DeploymentBinding`
-- `Sinh lazyops.yaml`
-- `Kiểm tra an toàn cấu hình`
-- `Ghi file lazyops.yaml`
-
-Đường nối:
-
-`Operator CLI` nối với toàn bộ các use case trên.
-
-### UC05. Liên kết repo với GitHub App
-
-Actor:
-
-- `Operator Web`
-- `Operator CLI`
 - `GitHub / GitHub App`
 
-Use case:
+Luồng chính:
 
-- `Đồng bộ GitHub installations`
-- `Liệt kê repositories khả dụng`
-- `Liên kết repo với project`
-- `Chọn tracked branch`
+1. Operator tạo project trên web.
+2. Operator chọn hoặc xác nhận runtime mode mục tiêu.
+3. Operator sync GitHub App installations.
+4. Operator chọn repo và tracked branch cho project.
+5. Backend tạo hoặc cập nhật `ProjectRepoLink`.
+6. Sau bước này, webhook và build job mới có thể map repo vào đúng project.
 
-Đường nối:
+Hậu điều kiện:
 
-`Operator Web` nối với:
+- project có repo link hợp lệ.
 
-- `Đồng bộ GitHub installations`
-- `Liên kết repo với project`
-- `Chọn tracked branch`
+Ghi chú current state:
 
-`Operator CLI` nối với:
+- Đây là phần nền của `Connect Code`.
+- Cần mô tả repo link là contract thật, không phải chỉ là metadata UI.
 
-- `Đồng bộ GitHub installations`
-- `Liên kết repo với project`
-- `Chọn tracked branch`
+### UC03. Kết nối hạ tầng và đăng ký agent
 
-`GitHub / GitHub App` nối với:
+Mục tiêu:
 
-- `Đồng bộ GitHub installations`
-- `Liệt kê repositories khả dụng`
+- đưa target thật vào hệ thống;
+- tạo control channel outbound từ target về backend.
 
-### UC06. Xử lý webhook, build callback và đối soát artifact
-
-Actor:
-
-- `GitHub`
-- `Build Worker`
-
-Use case:
-
-- `Nhận GitHub webhook`
-- `Kiểm tra chữ ký webhook`
-- `Chuẩn hóa sự kiện`
-- `Tạo build job`
-- `Nhận build callback`
-- `Đối soát artifact`
-- `Tạo artifact-ready revision`
-
-Đường nối:
-
-`GitHub` nối với:
-
-- `Nhận GitHub webhook`
-
-`Build Worker` nối với:
-
-- `Nhận build callback`
-
-### UC07. Tạo deployment và rollout standalone
-
-Actor:
+Actor chính:
 
 - `Operator Web`
 - `Runtime Agent`
 
-Use case:
+Luồng chính:
 
-- `Tạo deployment`
-- `Lập kế hoạch rollout`
-- `Dispatch command`
-- `Chạy health gate`
-- `Promote release`
-- `Rollback release`
-- `Ghi incident`
+1. Operator tạo target, đặc biệt là `instance` cho luồng `standalone`.
+2. Backend cấp bootstrap token ngắn hạn.
+3. Operator chạy agent trên máy đích.
+4. Agent gọi enroll API.
+5. Backend xác thực bootstrap token, ownership và thông tin target.
+6. Backend cấp agent token và lưu quan hệ với target.
+7. Agent mở `GET /ws/agents/control` và gửi heartbeat định kỳ.
 
-Đường nối:
+Hậu điều kiện:
 
-`Operator Web` nối với:
+- target online và sẵn sàng nhận rollout command.
 
-- `Tạo deployment`
+Ghi chú current state:
 
-`Runtime Agent` nối với:
+- Đây là nền của `Connect Infra`.
+- Nên nhấn mạnh agent dùng outbound control WebSocket, không yêu cầu backend gọi inbound vào server đích.
 
-- `Dispatch command`
-- `Chạy health gate`
-- `Promote release`
-- `Rollback release`
+### UC04. Khởi tạo `lazyops.yaml` và `DeploymentBinding`
 
-Gợi ý mô tả quan hệ:
+Mục tiêu:
 
-- `Tạo deployment` dẫn tới `Lập kế hoạch rollout`
-- `Lập kế hoạch rollout` dẫn tới `Dispatch command`
-- `Dispatch command` dẫn tới `Chạy health gate`
-- `Chạy health gate` rẽ nhánh sang `Promote release` hoặc `Rollback release`
-- `Rollback release` thường đi kèm `Ghi incident`
+- tạo contract triển khai trong repo local mà không ghi secret hoặc thông tin hạ tầng thật vào repo.
 
-### UC08. Quan sát, topology, logs, traces và tunnel debug
+Actor chính:
 
-Actor:
+- `Operator CLI`
+
+Luồng chính:
+
+1. Operator chạy `lazyops init` trong git repo.
+2. CLI scan repo và detect service candidates.
+3. CLI gọi backend để lấy project, target và bindings liên quan.
+4. CLI tạo mới hoặc tái sử dụng `DeploymentBinding`.
+5. CLI generate `lazyops.yaml` với `project_slug`, `runtime_mode`, `deployment_binding.target_ref`, services và policy logic.
+6. CLI validate để tránh ghi SSH key, token, IP raw, hoặc backend IDs vào repo.
+
+Hậu điều kiện:
+
+- repo có `lazyops.yaml` như local contract.
+
+Ghi chú current state:
+
+- `lazyops.yaml` chỉ nên được mô tả là logical deployment contract.
+- `DeploymentBinding` mới là nơi backend resolve target thật.
+
+### UC05. One-click deploy / tạo deployment
+
+Mục tiêu:
+
+- tạo đường ngắn nhất để operator đi từ project đã bootstrap sang deployment chạy được;
+- kết nối UX 3 bước với build pipeline và deployment records.
+
+Actor chính:
+
+- `Operator Web`
+- `GitHub / GitHub App`
+- `Build Worker`
+
+Luồng chính:
+
+1. Nếu project đã liên kết repo, GitHub webhook và build callback có thể tạo `BuildJob` và revision `artifact_ready` phù hợp cho lần deploy tiếp theo.
+2. Operator dùng one-click deploy hoặc tạo deployment thông thường từ UI.
+3. Backend resolve bootstrap context, repo link, binding và runtime mode.
+4. Backend tái sử dụng artifact hoặc revision hiện có nếu đã sẵn sàng; nếu không, backend đi theo nhánh autogen hoặc default revision phù hợp với current state.
+5. Backend tạo `DesiredStateRevision` và `Deployment` record.
+
+Hậu điều kiện:
+
+- hệ thống có deployment record đủ điều kiện để kích hoạt rollout standalone.
+
+Ghi chú current state:
+
+- One-click deploy là đường UX quan trọng ở hiện tại.
+- Cần mô tả rõ đây là orchestration trên contract backend, không phải một đường đi tách biệt khỏi revision/deployment APIs.
+
+### UC06. Rollout standalone: prepare, start candidate, health gate, promote, rollback
+
+Mục tiêu:
+
+- thực thi kế hoạch rollout xuống target `instance` qua runtime agent;
+- kiểm soát promote hoặc rollback theo health gate.
+
+Actor chính:
+
+- `Operator Web`
+- `Runtime Agent`
+
+Luồng chính:
+
+1. Backend kiểm tra artifact, binding và trạng thái agent.
+2. Rollout planner sinh plan cho runtime mode `standalone`.
+3. Backend dispatch command xuống agent theo thứ tự logic.
+4. Agent chuẩn bị workspace, render sidecars nếu cần, render gateway config, reconcile revision, start candidate workload.
+5. Agent chạy health gate.
+6. Nếu health gate pass, backend promote release.
+7. Nếu health gate fail, backend rollback release và ghi incident.
+
+Hậu điều kiện:
+
+- deployment ở trạng thái `promoted`, `failed`, hoặc `rolled_back`.
+
+Ghi chú current state:
+
+- Đây là use case trung tâm nên demo trong đồ án.
+- Nên mô tả `standalone` là luồng rõ ràng nhất hiện tại nhưng vẫn ở mức `best-effort` hoặc `adapter/composed`.
+- Nếu cần nhắc sidecar hoặc internal services, chỉ mô tả chúng là runtime helper của rollout standalone.
+
+### UC07. Quan sát topology, logs, traces, incidents
+
+Mục tiêu:
+
+- giúp operator theo dõi hệ thống sau triển khai;
+- giữ `correlation_id` xuyên suốt giữa request, rollout và telemetry.
+
+Actor chính:
 
 - `Operator Web`
 - `Operator CLI`
 - `Runtime Agent`
 
-Use case:
+Luồng chính:
 
-- `Gửi topology state`
-- `Gửi log batch`
-- `Gửi trace summary`
-- `Xem topology`
-- `Xem logs`
-- `Xem trace`
-- `Xem correlated observability`
-- `Tạo tunnel debug`
-- `Đóng tunnel debug`
+1. Agent gửi log batches, trace summaries và topology snapshots về backend.
+2. Backend lưu trữ và phục vụ các API đọc cho operator.
+3. Frontend và CLI gọi API để xem topology, traces, logs preview và incidents.
+4. Operator dùng dữ liệu này để xác định nguyên nhân sự cố hoặc kiểm tra trạng thái sau rollout.
 
-Đường nối:
+Hậu điều kiện:
 
-`Runtime Agent` nối với:
+- operator có bề mặt quan sát thực để hỗ trợ vận hành.
 
-- `Gửi topology state`
-- `Gửi log batch`
-- `Gửi trace summary`
+Ghi chú current state:
 
-`Operator Web` nối với:
+- Đây là nhóm use case có thật, nhưng vẫn là tập hợp các bề mặt observability được ghép lại.
+- Không nên mô tả như một observability platform hợp nhất đã hoàn thiện tuyệt đối.
 
-- `Xem topology`
-- `Xem logs`
-- `Xem trace`
-- `Xem correlated observability`
+### UC08. Tạo tunnel debug DB/TCP
 
-`Operator CLI` nối với:
+Mục tiêu:
 
-- `Xem logs`
-- `Xem trace`
-- `Tạo tunnel debug`
-- `Đóng tunnel debug`
+- tạo đường debug tạm thời cho operator khi cần kiểm tra dịch vụ nội bộ.
 
-## 6. Mẫu câu mô tả để ghi dưới sơ đồ
+Actor chính:
 
-Bạn có thể dùng đoạn mô tả sau trong báo cáo:
+- `Operator CLI`
+- `Runtime Agent`
 
-> Sơ đồ use case của hệ thống LazyOps được xây dựng với các actor chính gồm Operator Web, Operator CLI, GitHub/GitHub App, Build Worker và Runtime Agent. Các actor này tương tác với các nhóm chức năng chính của hệ thống như xác thực, khởi tạo project và target, tạo `lazyops.yaml`, liên kết repository, xử lý webhook/build callback, triển khai ứng dụng và quan sát hệ thống. Đường nối giữa actor và use case thể hiện actor nào trực tiếp sử dụng hoặc tham gia vào chức năng đó.
+Luồng chính:
 
-## 7. Gợi ý vẽ nhanh
+1. Operator chạy `lazyops tunnel db` hoặc `lazyops tunnel tcp`.
+2. CLI đọc `lazyops.yaml`, resolve project và binding.
+3. Backend tạo `TunnelSession` với kiểm tra local-port conflict và TTL.
+4. Operator dùng cổng cục bộ đã cấp để debug.
+5. Operator đóng tunnel khi hoàn tất.
 
-Nếu bạn cần vẽ thật nhanh bằng tay hoặc bằng công cụ UML:
+Hậu điều kiện:
 
-1. Vẽ khung `LazyOps Platform`.
-2. Đặt actor người dùng bên trái: `Operator Web`, `Operator CLI`.
-3. Đặt actor hệ thống ngoài bên phải: `GitHub / GitHub App`, `Build Worker`, `Runtime Agent`.
-4. Đặt các use case trong khung theo cụm:
-   - cụm khởi tạo
-   - cụm tích hợp
-   - cụm triển khai
-   - cụm quan sát
-5. Nối actor với đúng các use case đã liệt kê ở trên.
-6. Nếu sơ đồ tổng quát quá rối, tách thành 3 sơ đồ nhỏ:
-   - khởi tạo và tích hợp
-   - triển khai
-   - observability và debug
+- có một debug path tạm thời phục vụ xử lý sự cố.
+
+Ghi chú current state:
+
+- Tunnel công khai hiện hỗ trợ `db` và `tcp`.
+- Đây là debug path, không phải production access pattern.
+
+## 6. Gợi ý cấu trúc sơ đồ khi mang đi báo cáo
+
+Nếu cần chia sơ đồ use case thành nhiều hình nhỏ, có thể tách theo ba cụm:
+
+- `Khởi tạo và liên kết`: UC01, UC02, UC03, UC04
+- `Triển khai`: UC05, UC06
+- `Vận hành và debug`: UC07, UC08
+
+Bố cục nên ưu tiên:
+
+- actor thao tác ở bên trái: `Operator Web`, `Operator CLI`;
+- actor hệ thống ngoài ở bên phải: `GitHub / GitHub App`, `Build Worker`, `Runtime Agent`;
+- các use case chính xếp theo chiều từ trái sang phải: bootstrap, deploy, observe.
+
+## 7. Một đoạn mô tả ngắn có thể dùng ngay trong báo cáo
+
+LazyOps ở current state là một deployment control plane đa bề mặt gồm frontend, backend, CLI và outbound runtime agent. Luồng nổi bật nhất hiện tại là `standalone`: operator liên kết repo và hạ tầng qua UX 3 bước `Connect Code`, `Connect Infra`, `Deploy`; backend xử lý GitHub webhook, build callback, revision và deployment records; sau đó runtime agent nhận command rollout qua WebSocket outbound để chuẩn bị workspace, khởi chạy candidate, chạy health gate, rồi promote hoặc rollback. Các bề mặt observability như topology, traces, logs preview, incidents và debug tunnels đã có thật, nhưng vẫn nên mô tả là các bề mặt `adapter/composed` thay vì một hệ thống observability hoàn toàn thống nhất.

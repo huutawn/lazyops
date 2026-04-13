@@ -25,6 +25,19 @@ type rollbackPaths struct {
 	rollbackPath string
 }
 
+type rollbackScenario string
+
+const (
+	rollbackScenarioCandidateFailed   rollbackScenario = "candidate_failed_before_promotion"
+	rollbackScenarioPromotedUnhealthy rollbackScenario = "promoted_revision_unhealthy"
+)
+
+type rollbackPlan struct {
+	FailedRevisionID   string
+	RestoredRevisionID string
+	Scenario           rollbackScenario
+}
+
 func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx RuntimeContext) (RollbackReleaseResult, error) {
 	layout := workspaceLayout(d.root, runtimeCtx)
 	runtimeCtx = d.hydrateRuntimeContextFromWorkspace(layout, runtimeCtx)
@@ -49,20 +62,29 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 		return RollbackReleaseResult{}, err
 	}
 
-	failedRevisionID := currentFailedRevision(runtimeCtx, traffic)
-	restoredRevisionID := rollbackTargetRevision(runtimeCtx, traffic, failedRevisionID)
-	if restoredRevisionID == "" {
+	plan := selectRollbackPlan(runtimeCtx, traffic)
+	if plan.RestoredRevisionID == "" {
 		return RollbackReleaseResult{}, &OperationError{
 			Code:      "rollback_previous_stable_missing",
-			Message:   fmt.Sprintf("cannot roll back revision %q because no previous stable revision is recorded", failedRevisionID),
+			Message:   fmt.Sprintf("cannot roll back revision %q because no restorable stable revision is recorded", plan.FailedRevisionID),
 			Retryable: false,
 		}
 	}
 
-	if _, err := os.Stat(revisionRoot(d.root, runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, restoredRevisionID)); err != nil {
+	stableRoot := revisionRoot(d.root, runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, plan.RestoredRevisionID)
+	if _, err := os.Stat(stableRoot); err != nil {
 		return RollbackReleaseResult{}, &OperationError{
 			Code:      "rollback_stable_workspace_missing",
-			Message:   fmt.Sprintf("stable revision %q is missing from local runtime state", restoredRevisionID),
+			Message:   fmt.Sprintf("stable revision %q is missing from local runtime state", plan.RestoredRevisionID),
+			Retryable: false,
+			Err:       err,
+		}
+	}
+	stableRuntimeCtx, err := loadRuntimeContextFromWorkspaceManifestPath(filepath.Join(stableRoot, "workspace.json"))
+	if err != nil {
+		return RollbackReleaseResult{}, &OperationError{
+			Code:      "rollback_stable_workspace_manifest_missing",
+			Message:   fmt.Sprintf("stable revision %q is missing a workspace manifest", plan.RestoredRevisionID),
 			Retryable: false,
 			Err:       err,
 		}
@@ -77,16 +99,17 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 
 	incident := &contracts.IncidentPayload{
 		ProjectID:  runtimeCtx.Project.ProjectID,
-		RevisionID: failedRevisionID,
+		RevisionID: plan.FailedRevisionID,
 		Severity:   contracts.SeverityCritical,
 		Kind:       "deployment_promoted_revision_unhealthy",
-		Summary:    rollbackSummaryText(failedRevisionID, restoredRevisionID),
+		Summary:    rollbackSummaryText(plan),
 		OccurredAt: now,
 		Details: map[string]any{
 			"binding_id":             runtimeCtx.Binding.BindingID,
 			"policy_action":          HealthGatePolicyRollbackRelease,
-			"failed_revision_id":     failedRevisionID,
-			"restored_revision_id":   restoredRevisionID,
+			"failed_revision_id":     plan.FailedRevisionID,
+			"restored_revision_id":   plan.RestoredRevisionID,
+			"rollback_scenario":      string(plan.Scenario),
 			"previous_stable_source": firstNonEmpty(runtimeCtx.Rollout.PreviousStableRevisionID, traffic.PreviousRevisionID),
 		},
 	}
@@ -103,31 +126,33 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 	events := []DeploymentEvent{
 		{
 			Type:       "deployment.unhealthy",
-			RevisionID: failedRevisionID,
+			RevisionID: plan.FailedRevisionID,
 			OccurredAt: now,
 			Summary:    incident.Summary,
 			Details: map[string]any{
 				"policy_action":        HealthGatePolicyRollbackRelease,
-				"restored_revision_id": restoredRevisionID,
+				"restored_revision_id": plan.RestoredRevisionID,
+				"rollback_scenario":    string(plan.Scenario),
 				"severity":             incident.Severity,
 				"kind":                 incident.Kind,
 			},
 		},
 		{
 			Type:       "deployment.rolled_back",
-			RevisionID: restoredRevisionID,
+			RevisionID: plan.RestoredRevisionID,
 			OccurredAt: now,
-			Summary:    fmt.Sprintf("traffic returned to stable revision %s after rollback", restoredRevisionID),
+			Summary:    fmt.Sprintf("traffic returned to stable revision %s after rollback", plan.RestoredRevisionID),
 			Details: map[string]any{
-				"failed_revision_id": failedRevisionID,
+				"failed_revision_id": plan.FailedRevisionID,
+				"rollback_scenario":  string(plan.Scenario),
 				"zero_downtime":      true,
 			},
 		},
 	}
 
 	drainPlan := RollbackDrainPlan{
-		FailedRevisionID:   failedRevisionID,
-		RestoredRevisionID: restoredRevisionID,
+		FailedRevisionID:   plan.FailedRevisionID,
+		RestoredRevisionID: plan.RestoredRevisionID,
 		Status:             "draining",
 		ZeroDowntime:       true,
 		CleanupPolicy:      "retain_failed_revision_until_runtime_gc_confirms_it_is_unreferenced",
@@ -135,9 +160,9 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 	}
 
 	updatedTraffic := TrafficShiftRecord{
-		ActiveRevisionID:   restoredRevisionID,
-		PreviousRevisionID: failedRevisionID,
-		StableRevisionID:   restoredRevisionID,
+		ActiveRevisionID:   plan.RestoredRevisionID,
+		PreviousRevisionID: plan.FailedRevisionID,
+		StableRevisionID:   plan.RestoredRevisionID,
 		GatewayVersion:     gatewayVersion,
 		SidecarVersion:     sidecarVersion,
 		ZeroDowntime:       true,
@@ -149,16 +174,69 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 	summary := RollbackSummary{
 		ProjectID:          runtimeCtx.Project.ProjectID,
 		BindingID:          runtimeCtx.Binding.BindingID,
-		FailedRevisionID:   failedRevisionID,
-		RestoredRevisionID: restoredRevisionID,
+		FailedRevisionID:   plan.FailedRevisionID,
+		RestoredRevisionID: plan.RestoredRevisionID,
 		ZeroDowntime:       true,
 		GatewayVersion:     gatewayVersion,
 		SidecarVersion:     sidecarVersion,
 		PublicURLs:         append([]string(nil), publicURLs...),
 		Incident:           incident,
 		Events:             events,
-		Summary:            rollbackSummaryText(failedRevisionID, restoredRevisionID),
+		Summary:            rollbackSummaryText(plan),
 		RolledBackAt:       now,
+	}
+
+	if d.processManager != nil {
+		stopServiceNames := unionRollbackServiceNames(runtimeCtx.Services, stableRuntimeCtx.Services)
+		for _, serviceName := range stopServiceNames {
+			_ = d.processManager.StopProcess(workloadProcessKey(runtimeCtx, serviceName))
+			_ = d.processManager.StopProcess(sidecarProcessKey(runtimeCtx, serviceName))
+		}
+
+		restartFailures := make(map[string]string)
+		for _, svc := range stableRuntimeCtx.Services {
+			if isRollbackManagedInternalService(svc.Name) {
+				continue
+			}
+
+			configPath := filepath.Join(stableRoot, "services", svc.Name, "runtime.json")
+			if _, err := os.Stat(configPath); err == nil {
+				processName := workloadProcessKey(stableRuntimeCtx, svc.Name)
+				if _, err := d.processManager.RestartProcess(context.Background(), processName, configPath); err != nil {
+					restartFailures[svc.Name] = err.Error()
+				}
+			}
+
+			sidecarConfigPath := filepath.Join(
+				d.root,
+				"projects",
+				runtimeCtx.Project.ProjectID,
+				"bindings",
+				runtimeCtx.Binding.BindingID,
+				"sidecars",
+				"live",
+				"services",
+				svc.Name,
+				"config.json",
+			)
+			if _, err := os.Stat(sidecarConfigPath); err == nil {
+				processName := sidecarProcessKey(stableRuntimeCtx, svc.Name)
+				if _, err := d.processManager.RestartProcess(context.Background(), processName, sidecarConfigPath); err != nil {
+					restartFailures[svc.Name+":sidecar"] = err.Error()
+				}
+			}
+		}
+
+		if len(restartFailures) > 0 {
+			incident.Details["restart_failures"] = restartFailures
+			if d.logger != nil {
+				d.logger.Warn("rollback restore reported restart failures",
+					"failed_revision_id", plan.FailedRevisionID,
+					"restored_revision_id", plan.RestoredRevisionID,
+					"restart_failures", restartFailures,
+				)
+			}
+		}
 	}
 
 	if err := writeJSON(paths.summaryPath, summary); err != nil {
@@ -181,8 +259,8 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 	}
 
 	result := RollbackReleaseResult{
-		FailedRevisionID:   failedRevisionID,
-		RestoredRevisionID: restoredRevisionID,
+		FailedRevisionID:   plan.FailedRevisionID,
+		RestoredRevisionID: plan.RestoredRevisionID,
 		TrafficPath:        paths.trafficPath,
 		EventsPath:         paths.eventsPath,
 		SummaryPath:        paths.summaryPath,
@@ -199,60 +277,18 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 		return RollbackReleaseResult{}, err
 	}
 
-	if d.processManager != nil {
-		for _, svc := range runtimeCtx.Services {
-			_ = d.processManager.StopProcess(workloadProcessKey(runtimeCtx, svc.Name))
-			_ = d.processManager.StopProcess(sidecarProcessKey(runtimeCtx, svc.Name))
-		}
-
-		stableRoot := revisionRoot(d.root, runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID, restoredRevisionID)
-		for _, svc := range runtimeCtx.Services {
-			configPath := filepath.Join(stableRoot, "services", svc.Name, "runtime.json")
-			if _, err := os.Stat(configPath); err == nil {
-				processName := workloadProcessKey(runtimeCtx, svc.Name)
-				if _, err := d.processManager.RestartProcess(context.Background(), processName, configPath); err != nil && d.logger != nil {
-					d.logger.Warn("rollback process restart failed",
-						"service", svc.Name,
-						"error", err.Error(),
-					)
-				}
-			}
-
-			sidecarConfigPath := filepath.Join(
-				d.root,
-				"projects",
-				runtimeCtx.Project.ProjectID,
-				"bindings",
-				runtimeCtx.Binding.BindingID,
-				"sidecars",
-				"live",
-				"services",
-				svc.Name,
-				"config.json",
-			)
-			if _, err := os.Stat(sidecarConfigPath); err == nil {
-				processName := sidecarProcessKey(runtimeCtx, svc.Name)
-				if _, err := d.processManager.RestartProcess(context.Background(), processName, sidecarConfigPath); err != nil && d.logger != nil {
-					d.logger.Warn("rollback sidecar restart failed",
-						"service", svc.Name,
-						"error", err.Error(),
-					)
-				}
-			}
-		}
-	}
-
 	if err := annotateRolledBackCandidate(layout, incident, summary, len(runtimeCtx.Services), now); err != nil && d.logger != nil {
 		d.logger.Warn("rollback candidate audit update failed",
-			"revision_id", failedRevisionID,
+			"revision_id", plan.FailedRevisionID,
 			"error", err,
 		)
 	}
 
 	if d.logger != nil {
 		d.logger.Warn("rolled back unhealthy revision",
-			"failed_revision_id", failedRevisionID,
-			"restored_revision_id", restoredRevisionID,
+			"failed_revision_id", plan.FailedRevisionID,
+			"restored_revision_id", plan.RestoredRevisionID,
+			"rollback_scenario", plan.Scenario,
 			"gateway_version", gatewayVersion,
 			"sidecar_version", sidecarVersion,
 		)
@@ -363,28 +399,83 @@ func appendRollbackHistory(path string, summary RollbackSummary) error {
 	return writeJSON(path, history)
 }
 
-func currentFailedRevision(runtimeCtx RuntimeContext, traffic TrafficShiftRecord) string {
-	return firstNonEmpty(
+func selectRollbackPlan(runtimeCtx RuntimeContext, traffic TrafficShiftRecord) rollbackPlan {
+	candidateRevisionID := strings.TrimSpace(runtimeCtx.Revision.RevisionID)
+	currentStableRevisionID := firstNonEmpty(
+		runtimeCtx.Rollout.CurrentRevisionID,
+		runtimeCtx.Rollout.StableRevisionID,
+		traffic.ActiveRevisionID,
+	)
+	previousStableRevisionID := firstNonEmpty(
+		runtimeCtx.Rollout.PreviousStableRevisionID,
+		traffic.PreviousRevisionID,
+	)
+
+	if candidateRevisionID != "" && candidateRevisionID != currentStableRevisionID && candidateRevisionID != traffic.ActiveRevisionID {
+		restoredRevisionID := currentStableRevisionID
+		if restoredRevisionID == candidateRevisionID {
+			restoredRevisionID = ""
+		}
+		return rollbackPlan{
+			FailedRevisionID:   candidateRevisionID,
+			RestoredRevisionID: restoredRevisionID,
+			Scenario:           rollbackScenarioCandidateFailed,
+		}
+	}
+
+	failedRevisionID := firstNonEmpty(
 		traffic.ActiveRevisionID,
 		runtimeCtx.Rollout.CurrentRevisionID,
-		runtimeCtx.Revision.RevisionID,
+		candidateRevisionID,
 	)
+	restoredRevisionID := previousStableRevisionID
+	if restoredRevisionID == failedRevisionID {
+		restoredRevisionID = ""
+	}
+	return rollbackPlan{
+		FailedRevisionID:   failedRevisionID,
+		RestoredRevisionID: restoredRevisionID,
+		Scenario:           rollbackScenarioPromotedUnhealthy,
+	}
 }
 
-func rollbackTargetRevision(runtimeCtx RuntimeContext, traffic TrafficShiftRecord, failedRevisionID string) string {
-	target := firstNonEmpty(runtimeCtx.Rollout.PreviousStableRevisionID, traffic.PreviousRevisionID)
-	if target == failedRevisionID {
-		return ""
+func unionRollbackServiceNames(candidateServices, restoredServices []ServiceRuntimeContext) []string {
+	unique := make(map[string]struct{})
+	for _, svc := range candidateServices {
+		if isRollbackManagedInternalService(svc.Name) {
+			continue
+		}
+		unique[svc.Name] = struct{}{}
 	}
-	return target
+	for _, svc := range restoredServices {
+		if isRollbackManagedInternalService(svc.Name) {
+			continue
+		}
+		unique[svc.Name] = struct{}{}
+	}
+	names := make([]string, 0, len(unique))
+	for name := range unique {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func isRollbackManagedInternalService(serviceName string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(serviceName)), "lazyops-internal-")
 }
 
 func revisionRoot(root, projectID, bindingID, revisionID string) string {
 	return filepath.Join(root, "projects", projectID, "bindings", bindingID, "revisions", revisionID)
 }
 
-func rollbackSummaryText(failedRevisionID, restoredRevisionID string) string {
-	return fmt.Sprintf("promoted revision %s became unhealthy; traffic returned to stable revision %s", failedRevisionID, restoredRevisionID)
+func rollbackSummaryText(plan rollbackPlan) string {
+	switch plan.Scenario {
+	case rollbackScenarioCandidateFailed:
+		return fmt.Sprintf("candidate revision %s failed before promotion; runtime returned to stable revision %s", plan.FailedRevisionID, plan.RestoredRevisionID)
+	default:
+		return fmt.Sprintf("promoted revision %s became unhealthy; traffic returned to stable revision %s", plan.FailedRevisionID, plan.RestoredRevisionID)
+	}
 }
 
 func annotateRolledBackCandidate(layout WorkspaceLayout, incident *contracts.IncidentPayload, summary RollbackSummary, serviceCount int, at time.Time) error {
