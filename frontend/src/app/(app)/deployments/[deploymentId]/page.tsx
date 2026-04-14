@@ -111,6 +111,9 @@ export default function DeploymentDetailPage() {
   };
   const safetyTriggers = Array.isArray(safetyPolicy.triggers) ? safetyPolicy.triggers : [];
   const timeline = Array.isArray(dep.timeline) ? dep.timeline : [];
+  const publicURLs = dep.public_urls ?? [];
+  const primaryPublicURL = publicURLs[0] ?? '';
+  const fallbackPublicURLs = publicURLs.slice(1);
 
   return (
     <div className="relative flex flex-col gap-8 max-w-[1400px] mx-auto py-10 lg:px-8">
@@ -199,6 +202,43 @@ export default function DeploymentDetailPage() {
               <SummaryField label="Bắt đầu" value={dep.started_at ? new Date(dep.started_at).toLocaleTimeString() : '—'} icon={<Clock className="size-3.5" />} />
               <SummaryField label="Kết thúc" value={dep.completed_at ? new Date(dep.completed_at).toLocaleTimeString() : '—'} icon={<Clock className="size-3.5" />} />
             </div>
+          </SectionCard>
+
+          <SectionCard
+            title={<div className="flex items-center gap-2"><Rocket className="size-5 text-[#38BDF8]" /> Domain công khai</div>}
+            description="Các domain hiện tại có thể dùng để gọi service public của revision này."
+          >
+            {primaryPublicURL ? (
+              <div className="flex flex-col gap-3">
+                <a
+                  href={primaryPublicURL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[15px] font-semibold text-[#38BDF8] underline-offset-4 hover:underline break-all"
+                >
+                  {primaryPublicURL}
+                </a>
+                {fallbackPublicURLs.length > 0 ? (
+                  <div className="flex flex-col gap-2">
+                    {fallbackPublicURLs.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[13px] text-[#94a3b8] underline-offset-4 hover:text-white hover:underline break-all"
+                      >
+                        {url}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-[14px] text-[#94a3b8]">
+                {dep.public_url_reason || 'Revision này chưa có domain công khai.'}
+              </p>
+            )}
           </SectionCard>
 
           <SectionCard 

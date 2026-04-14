@@ -127,14 +127,14 @@ type BootstrapInventoryRecord struct {
 }
 
 type ProjectBootstrapStatusRecord struct {
-	ProjectID    string
-	OverallState string
-	Steps        []BootstrapStepRecord
-	AutoMode     BootstrapAutoModeRecord
-	Inventory    BootstrapInventoryRecord
-	PublicURLs   []string
+	ProjectID       string
+	OverallState    string
+	Steps           []BootstrapStepRecord
+	AutoMode        BootstrapAutoModeRecord
+	Inventory       BootstrapInventoryRecord
+	PublicURLs      []string
 	PublicURLReason string
-	UpdatedAt    time.Time
+	UpdatedAt       time.Time
 }
 
 type bootstrapInventorySnapshot struct {
@@ -908,6 +908,47 @@ func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraSta
 	default:
 		return "ready", "Đã sẵn sàng triển khai", nil
 	}
+}
+
+func (s *BootstrapOrchestrator) resolveStatusPublicURLs(requesterUserID, requesterRole, projectID string) ([]string, string, error) {
+	if s == nil || s.deployments == nil || s.deploymentSvc == nil {
+		return []string{}, "", nil
+	}
+
+	deployments, err := s.deployments.ListByProject(projectID)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(deployments) == 0 {
+		return []string{}, "", nil
+	}
+
+	loadDetail := func(deployment models.Deployment) (*DeploymentDetailRecord, error) {
+		return s.deploymentSvc.Get(requesterUserID, requesterRole, projectID, deployment.ID)
+	}
+
+	for _, deployment := range deployments {
+		if strings.TrimSpace(strings.ToLower(deployment.Status)) != DeploymentStatusPromoted {
+			continue
+		}
+		detail, err := loadDetail(deployment)
+		if err != nil {
+			return nil, "", err
+		}
+		return append([]string{}, detail.PublicURLs...), detail.PublicURLReason, nil
+	}
+
+	for _, deployment := range deployments {
+		detail, err := loadDetail(deployment)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(detail.PublicURLs) > 0 || strings.TrimSpace(detail.PublicURLReason) != "" {
+			return append([]string{}, detail.PublicURLs...), detail.PublicURLReason, nil
+		}
+	}
+
+	return []string{}, "", nil
 }
 
 func (s *BootstrapOrchestrator) resolvePrimaryBinding(projectID string) (*models.DeploymentBinding, error) {

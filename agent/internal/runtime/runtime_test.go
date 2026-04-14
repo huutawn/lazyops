@@ -880,6 +880,42 @@ func TestFilesystemDriverRenderGatewayConfigCreatesVersionedPlanAndLiveConfig(t 
 	}
 }
 
+func TestFilesystemDriverRenderGatewayConfigSkipsFakeStandaloneMagicDomainsWithoutInjectedPublicDomains(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
+
+	payload := samplePreparePayload(contracts.RuntimeModeStandalone)
+	payload.Revision.PublicDomains = nil
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if _, err := driver.PrepareReleaseWorkspace(context.Background(), runtimeCtx); err != nil {
+		t.Fatalf("prepare release workspace: %v", err)
+	}
+
+	rendered, err := driver.RenderGatewayConfig(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("render gateway config: %v", err)
+	}
+	if len(rendered.PublicURLs) != 0 {
+		t.Fatalf("expected no public urls without injected public domains, got %#v", rendered.PublicURLs)
+	}
+
+	liveConfigRaw, err := os.ReadFile(rendered.LiveConfigPath)
+	if err != nil {
+		t.Fatalf("read live Caddyfile: %v", err)
+	}
+	liveConfig := string(liveConfigRaw)
+	if strings.Contains(liveConfig, "auto-primary.sslip.io") || strings.Contains(liveConfig, "prod-main.sslip.io") {
+		t.Fatalf("expected no fake standalone magic domain in live config, got %q", liveConfig)
+	}
+	if !strings.Contains(liveConfig, "# no public services for this revision") {
+		t.Fatalf("expected no-public-services gateway config, got %q", liveConfig)
+	}
+}
+
 func TestFilesystemDriverRenderGatewayConfigRollsBackOnReloadFailure(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)
@@ -3208,6 +3244,15 @@ func samplePreparePayload(mode contracts.RuntimeMode) contracts.PrepareReleaseWo
 			MagicDomainPolicy: contracts.MagicDomainPolicy{
 				Enabled:  true,
 				Provider: "sslip.io",
+			},
+			PublicDomains: []contracts.PublicDomainPayload{
+				{
+					ServiceName:  "web",
+					PrimaryHost:  "web.203-0-113-10.sslip.io",
+					FallbackHost: "web.203-0-113-10.nip.io",
+					PrimaryURL:   "https://web.203-0-113-10.sslip.io",
+					FallbackURL:  "https://web.203-0-113-10.nip.io",
+				},
 			},
 			ScaleToZeroPolicy: contracts.ScaleToZeroPolicy{
 				Enabled: false,

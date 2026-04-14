@@ -259,13 +259,23 @@ func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) (G
 			continue
 		}
 		publicServices = append(publicServices, service.Name)
-		primaryHost := fmt.Sprintf("%s.%s.%s", service.Name, hostToken, primaryProvider)
-		fallbackHost := fmt.Sprintf("%s.%s.%s", service.Name, hostToken, fallbackProvider)
 		route := resolver.ResolvePublicService(service)
-		route.PrimaryHost = primaryHost
-		route.FallbackHost = fallbackHost
-		route.PrimaryURL = "https://" + primaryHost
-		route.FallbackURL = "https://" + fallbackHost
+		if runtimeCtx.Binding.RuntimeMode == contracts.RuntimeModeStandalone {
+			if domain, ok := findInjectedPublicDomain(runtimeCtx.Revision.PublicDomains, service.Name); ok {
+				route.PrimaryHost = domain.PrimaryHost
+				route.FallbackHost = domain.FallbackHost
+				route.PrimaryURL = firstNonEmpty(domain.PrimaryURL, buildHTTPSURL(domain.PrimaryHost))
+				route.FallbackURL = firstNonEmpty(domain.FallbackURL, buildHTTPSURL(domain.FallbackHost))
+			}
+		}
+		if route.PrimaryHost == "" && route.FallbackHost == "" && runtimeCtx.Binding.RuntimeMode != contracts.RuntimeModeStandalone {
+			primaryHost := fmt.Sprintf("%s.%s.%s", service.Name, hostToken, primaryProvider)
+			fallbackHost := fmt.Sprintf("%s.%s.%s", service.Name, hostToken, fallbackProvider)
+			route.PrimaryHost = primaryHost
+			route.FallbackHost = fallbackHost
+			route.PrimaryURL = "https://" + primaryHost
+			route.FallbackURL = "https://" + fallbackHost
+		}
 		routes = append(routes, route)
 	}
 	sort.Slice(routes, func(i, j int) bool {
@@ -358,6 +368,10 @@ func (m *GatewayManager) defaultValidate(_ context.Context, plan GatewayPlan, pa
 			}
 		}
 		for _, host := range []string{route.PrimaryHost, route.FallbackHost} {
+			host = strings.TrimSpace(host)
+			if host == "" {
+				continue
+			}
 			if other, exists := seenHosts[host]; exists && other != route.ServiceName {
 				return GatewayHookResult{}, &OperationError{
 					Code:      "gateway_duplicate_host",
@@ -577,7 +591,7 @@ func renderCaddyfile(plan GatewayPlan) string {
 }
 
 func renderCaddyfilePerService(plan GatewayPlan) string {
-	if len(plan.Routes) == 0 {
+	if len(plan.Routes) == 0 || !hasRenderableGatewayHosts(plan.Routes) {
 		return "{\n  auto_https disable_redirects\n}\n\n# no public services for this revision\n"
 	}
 
@@ -587,6 +601,9 @@ func renderCaddyfilePerService(plan GatewayPlan) string {
 	builder.WriteString("}\n\n")
 
 	for _, route := range plan.Routes {
+		if !routeHasRenderableHosts(route) {
+			continue
+		}
 		builder.WriteString(fmt.Sprintf("https://%s, https://%s {\n", route.PrimaryHost, route.FallbackHost))
 		builder.WriteString("  encode zstd gzip\n")
 
@@ -617,7 +634,7 @@ func renderCaddyfilePerService(plan GatewayPlan) string {
 }
 
 func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
-	if len(plan.Routes) == 0 && plan.RoutingPolicy.SharedDomain == "" {
+	if !hasRenderableGatewayHosts(plan.Routes) && plan.RoutingPolicy.SharedDomain == "" {
 		return renderCaddyfilePerService(plan)
 	}
 
@@ -632,6 +649,9 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 
 		// Add magic domain fallbacks for the first service's domain
 		for _, route := range plan.Routes {
+			if !routeHasRenderableHosts(route) {
+				continue
+			}
 			if len(plan.RoutingPolicy.Routes) > 0 && route.ServiceName == plan.RoutingPolicy.Routes[0].Service {
 				domain = fmt.Sprintf("%s, https://%s, https://%s",
 					domain, route.PrimaryHost, route.FallbackHost)
@@ -703,6 +723,9 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 
 	// Individual service domains (keep for direct access)
 	for _, route := range plan.Routes {
+		if !routeHasRenderableHosts(route) {
+			continue
+		}
 		builder.WriteString(fmt.Sprintf("https://%s, https://%s {\n", route.PrimaryHost, route.FallbackHost))
 		builder.WriteString("  encode zstd gzip\n")
 		builder.WriteString(fmt.Sprintf("  reverse_proxy %s\n", route.Upstream))
@@ -774,7 +797,7 @@ func gatewayVersion(runtimeCtx RuntimeContext) string {
 		runtimeCtx.Binding.BindingID,
 		runtimeCtx.Revision.RevisionID,
 		runtimeCtx.Runtime.PlacementFingerprint,
-		gatewayHostToken(runtimeCtx),
+		gatewayDomainVersionToken(runtimeCtx),
 		runtimeCtx.Binding.DomainPolicy.Provider,
 	)
 	sum := sha256.Sum256([]byte(base))
@@ -825,10 +848,68 @@ func preferredMagicProviders() (string, string) {
 
 func collectPublicURLs(plan GatewayPlan) []string {
 	urls := make([]string, 0, len(plan.Routes)*2)
+	seen := make(map[string]struct{}, len(plan.Routes)*2)
 	for _, route := range plan.Routes {
-		urls = append(urls, route.PrimaryURL, route.FallbackURL)
+		for _, candidate := range []string{route.PrimaryURL, route.FallbackURL} {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				continue
+			}
+			if _, exists := seen[candidate]; exists {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			urls = append(urls, candidate)
+		}
 	}
 	return urls
+}
+
+func findInjectedPublicDomain(items []contracts.PublicDomainPayload, serviceName string) (contracts.PublicDomainPayload, bool) {
+	for _, item := range items {
+		if item.ServiceName == serviceName {
+			return item, true
+		}
+	}
+	return contracts.PublicDomainPayload{}, false
+}
+
+func buildHTTPSURL(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	return "https://" + host
+}
+
+func routeHasRenderableHosts(route GatewayRoute) bool {
+	return strings.TrimSpace(route.PrimaryHost) != "" && strings.TrimSpace(route.FallbackHost) != ""
+}
+
+func hasRenderableGatewayHosts(routes []GatewayRoute) bool {
+	for _, route := range routes {
+		if routeHasRenderableHosts(route) {
+			return true
+		}
+	}
+	return false
+}
+
+func gatewayDomainVersionToken(runtimeCtx RuntimeContext) string {
+	if len(runtimeCtx.Revision.PublicDomains) == 0 {
+		return gatewayHostToken(runtimeCtx)
+	}
+
+	items := make([]string, 0, len(runtimeCtx.Revision.PublicDomains))
+	for _, item := range runtimeCtx.Revision.PublicDomains {
+		items = append(items, strings.Join([]string{
+			item.ServiceName,
+			item.PrimaryHost,
+			item.FallbackHost,
+		}, "|"))
+	}
+	sort.Strings(items)
+	return strings.Join(items, ";")
 }
 
 func loadGatewayActivation(path string) (*GatewayActivation, error) {

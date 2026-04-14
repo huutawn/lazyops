@@ -174,7 +174,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	initContractSvc := service.NewInitContractService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
 	blueprintSvc := service.NewBlueprintService(projectRepo, projectRepoLinkRepo, deploymentBindingRepo, serviceRepo, blueprintRepo)
 	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo).
-		WithIncidentStore(incidentRepo)
+		WithIncidentStore(incidentRepo).
+		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
 	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor()).
@@ -214,6 +215,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		operatorStreamHub,
 	)
 	rolloutPlanner.WithProjectEnvService(projectEnvSvc)
+	rolloutPlanner.WithPublicDomainResolver(service.NewPublicDomainResolver(instanceRepo))
 	rolloutExecutionSvc := service.NewRolloutExecutionService(
 		deploymentSvc,
 		rolloutPlanner,

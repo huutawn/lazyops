@@ -16,7 +16,16 @@ type DesiredRevisionPayload struct {
 	MagicDomainPolicy    MagicDomainPolicy          `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    ScaleToZeroPolicy          `json:"scale_to_zero_policy"`
 	RoutingPolicy        RoutingPolicyPayload       `json:"routing_policy,omitempty"`
+	PublicDomains        []PublicDomainPayload      `json:"public_domains,omitempty"`
 	PlacementAssignments []PlacementAssignment      `json:"placement_assignments,omitempty"`
+}
+
+type PublicDomainPayload struct {
+	ServiceName  string `json:"service_name"`
+	PrimaryHost  string `json:"primary_host"`
+	FallbackHost string `json:"fallback_host"`
+	PrimaryURL   string `json:"primary_url"`
+	FallbackURL  string `json:"fallback_url"`
 }
 
 type ProjectMetadataPayload struct {

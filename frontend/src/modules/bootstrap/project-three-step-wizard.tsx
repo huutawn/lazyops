@@ -218,6 +218,9 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
   const code = stepById.get('connect_code');
   const infra = stepById.get('connect_infra');
   const deploy = stepById.get('deploy');
+  const publicURLs = data.public_urls ?? [];
+  const primaryPublicURL = publicURLs[0] ?? '';
+  const fallbackPublicURLs = publicURLs.slice(1);
 
   const statusCards = [
     { title: 'Mã nguồn', value: code?.state ?? 'missing', summary: code?.summary ?? 'Chưa kết nối GitHub' },
@@ -370,6 +373,43 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
           >
             Dịch vụ nội bộ
           </Link>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
+          <div className="flex flex-col gap-2">
+            <span className="text-[13px] font-semibold text-[#94a3b8]">Domain công khai</span>
+            {primaryPublicURL ? (
+              <div className="flex flex-col gap-2">
+                <a
+                  href={primaryPublicURL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[14px] font-medium text-[#38BDF8] underline-offset-4 hover:underline break-all"
+                >
+                  {primaryPublicURL}
+                </a>
+                {fallbackPublicURLs.length > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    {fallbackPublicURLs.map((url) => (
+                      <a
+                        key={url}
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[12px] text-[#94a3b8] underline-offset-4 hover:text-white hover:underline break-all"
+                      >
+                        {url}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-[13px] text-[#94a3b8]">
+                {data.public_url_reason || 'Chưa có domain công khai cho project này.'}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

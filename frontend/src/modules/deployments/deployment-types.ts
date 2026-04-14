@@ -31,6 +31,8 @@ export type DeploymentRecord = {
   runtime_mode: string;
   services: DeploymentService[];
   placement_assignments: PlacementAssignment[];
+  public_urls?: string[];
+  public_url_reason?: string;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;

@@ -35,13 +35,14 @@ var (
 )
 
 type RolloutPlanner struct {
-	registry    *runtime.Registry
-	revisions   DesiredStateRevisionStore
-	deployments DeploymentStore
-	incidents   RuntimeIncidentStore
-	bindings    DeploymentBindingStore
-	operatorHub OperatorEventBroadcaster
-	projectEnv  *ProjectEnvService
+	registry      *runtime.Registry
+	revisions     DesiredStateRevisionStore
+	deployments   DeploymentStore
+	incidents     RuntimeIncidentStore
+	bindings      DeploymentBindingStore
+	operatorHub   OperatorEventBroadcaster
+	projectEnv    *ProjectEnvService
+	publicDomains *PublicDomainResolver
 }
 
 type OperatorEventBroadcaster interface {
@@ -72,6 +73,14 @@ func (p *RolloutPlanner) WithProjectEnvService(service *ProjectEnvService) *Roll
 		return p
 	}
 	p.projectEnv = service
+	return p
+}
+
+func (p *RolloutPlanner) WithPublicDomainResolver(resolver *PublicDomainResolver) *RolloutPlanner {
+	if p == nil {
+		return p
+	}
+	p.publicDomains = resolver
 	return p
 }
 
@@ -127,6 +136,18 @@ func (p *RolloutPlanner) PlanCandidate(ctx context.Context, projectID, revisionI
 		"magic_domain_policy":   compiled.MagicDomainPolicy,
 		"scale_to_zero_policy":  compiled.ScaleToZeroPolicy,
 		"placement_assignments": compiled.PlacementAssignments,
+	}
+	if p.publicDomains != nil {
+		publicDomain := p.publicDomains.Resolve(PublicDomainResolveInput{
+			RuntimeMode:          binding.RuntimeMode,
+			TargetKind:           binding.TargetKind,
+			TargetID:             binding.TargetID,
+			Services:             compiled.Services,
+			PlacementAssignments: compiled.PlacementAssignments,
+		})
+		if len(publicDomain.Domains) > 0 {
+			revisionPayload["public_domains"] = toPublicDomainPayloads(publicDomain.Domains)
+		}
 	}
 
 	// The agent's prepare_release_workspace handler expects a nested payload

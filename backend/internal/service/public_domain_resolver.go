@@ -155,3 +155,21 @@ func collectPublicURLsFromDomains(domains []PublicDomainRecord) []string {
 	}
 	return urls
 }
+
+func toPublicDomainPayloads(domains []PublicDomainRecord) []map[string]any {
+	if len(domains) == 0 {
+		return nil
+	}
+
+	payloads := make([]map[string]any, 0, len(domains))
+	for _, domain := range domains {
+		payloads = append(payloads, map[string]any{
+			"service_name":  domain.ServiceName,
+			"primary_host":  domain.PrimaryHost,
+			"fallback_host": domain.FallbackHost,
+			"primary_url":   domain.PrimaryURL,
+			"fallback_url":  domain.FallbackURL,
+		})
+	}
+	return payloads
+}

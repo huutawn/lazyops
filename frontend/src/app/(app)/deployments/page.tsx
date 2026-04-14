@@ -82,13 +82,17 @@ export default function DeploymentsPage() {
                   <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Commit</th>
                   <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Build</th>
                   <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Rollout</th>
+                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Domain</th>
                   <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Trigger</th>
                   <th className="px-4 py-3 text-left font-medium text-lazyops-muted">By</th>
                   <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Completed</th>
                 </tr>
               </thead>
               <tbody>
-                {deployments.map((dep) => (
+                {deployments.map((dep) => {
+                  const publicURLs = dep.public_urls ?? [];
+                  const primaryPublicURL = publicURLs[0] ?? '';
+                  return (
                   <tr
                     key={dep.id}
                     className="border-b border-lazyops-border/50 transition-colors hover:bg-lazyops-border/10"
@@ -118,6 +122,20 @@ export default function DeploymentsPage() {
                         size="sm"
                       />
                     </td>
+                    <td className="px-4 py-3 text-xs">
+                      {primaryPublicURL ? (
+                        <a
+                          href={primaryPublicURL}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-primary hover:underline break-all"
+                        >
+                          {primaryPublicURL.replace(/^https?:\/\//, '')}
+                        </a>
+                      ) : (
+                        <span className="text-lazyops-muted">{dep.public_url_reason || '—'}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-xs text-lazyops-muted">
                       <StatusBadge label={dep.trigger_kind} variant="neutral" size="sm" dot={false} />
                     </td>
@@ -126,7 +144,8 @@ export default function DeploymentsPage() {
                       {dep.completed_at ? new Date(dep.completed_at).toLocaleString() : '—'}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

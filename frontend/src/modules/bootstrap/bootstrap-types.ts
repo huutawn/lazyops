@@ -37,6 +37,8 @@ export type ProjectBootstrapStatus = {
   steps: BootstrapStep[];
   auto_mode: BootstrapAutoMode;
   inventory: BootstrapInventory;
+  public_urls?: string[];
+  public_url_reason?: string;
   updated_at: string;
 };
 
