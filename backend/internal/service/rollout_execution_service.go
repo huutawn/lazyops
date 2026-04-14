@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ type RolloutExecutionService struct {
 	operatorHub         OperatorEventBroadcaster
 	healthGateEvaluator HealthGateEvaluator
 	correlationID       func() string
+	recoveryMu          sync.Mutex
+	recovering          map[string]struct{}
 }
 
 type RolloutExecutionResult struct {
@@ -65,12 +68,57 @@ func NewRolloutExecutionService(
 		correlationID: func() string {
 			return utils.NewCorrelationID()
 		},
+		recovering: make(map[string]struct{}),
 	}
 }
 
 func (s *RolloutExecutionService) WithHealthGateEvaluator(evaluator HealthGateEvaluator) *RolloutExecutionService {
 	s.healthGateEvaluator = evaluator
 	return s
+}
+
+func (s *RolloutExecutionService) RecoverRunningDeploymentsForAgent(ctx context.Context, userID, agentID string) error {
+	if s == nil || s.deployments == nil || s.planner == nil || s.instances == nil || s.dispatcher == nil {
+		return ErrInvalidInput
+	}
+
+	userID = strings.TrimSpace(userID)
+	agentID = strings.TrimSpace(agentID)
+	if userID == "" || agentID == "" {
+		return ErrInvalidInput
+	}
+
+	instances, err := s.instances.ListByUser(userID)
+	if err != nil {
+		return err
+	}
+
+	targetInstanceIDs := make(map[string]struct{})
+	for _, instance := range instances {
+		if instance.AgentID == nil {
+			continue
+		}
+		if strings.TrimSpace(*instance.AgentID) == agentID {
+			targetInstanceIDs[instance.ID] = struct{}{}
+		}
+	}
+	if len(targetInstanceIDs) == 0 {
+		return nil
+	}
+
+	projects, err := s.deployments.projects.ListByUser(userID)
+	if err != nil {
+		return err
+	}
+
+	var recoveryErrs []error
+	for _, project := range projects {
+		if err := s.recoverProjectDeploymentsForAgent(ctx, project.ID, agentID, targetInstanceIDs); err != nil {
+			recoveryErrs = append(recoveryErrs, err)
+		}
+	}
+
+	return errors.Join(recoveryErrs...)
 }
 
 func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID, deploymentID string) (*RolloutExecutionResult, error) {
@@ -211,6 +259,18 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 	}
 
 	for i, step := range plan.Steps {
+		if skip, err := s.shouldSkipRolloutStep(projectID, deployment.ID, revision.ID, step.Command.Type); err != nil {
+			return result, err
+		} else if skip {
+			logger.Info("rollout_command_skipped",
+				"project_id", projectID,
+				"deployment_id", deploymentID,
+				"command_type", step.Command.Type,
+				"reason", "deployment already advanced by recovery or duplicate promotion",
+			)
+			continue
+		}
+
 		cmd := enrichRolloutCommand(step.Command, projectID, revision.ID, correlationID)
 		logger.Info("rollout_command_enriched",
 			"project_id", projectID,
@@ -327,7 +387,7 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 				}
 				return result, ErrHealthGateFailed
 			}
-			if _, err := s.deployments.TransitionDeploymentStatus(projectID, deployment.ID, DeploymentStatusCandidateReady); err != nil {
+			if err := s.transitionDeploymentStatusIfNeeded(projectID, deployment.ID, DeploymentStatusCandidateReady, DeploymentStatusCandidateReady, DeploymentStatusPromoted); err != nil {
 				return result, err
 			}
 			if s.operatorHub != nil {
@@ -339,7 +399,7 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 				})
 			}
 		case runtime.CommandTypePromoteRelease:
-			promotion, err := s.planner.PromoteCandidate(ctx, projectID, deployment.ID, revision.ID)
+			promotion, err := s.promoteCandidateIfNeeded(ctx, projectID, deployment.ID, revision.ID)
 			if err != nil {
 				return result, err
 			}
@@ -358,6 +418,269 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 	)
 
 	return result, nil
+}
+
+func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.Context, projectID, agentID string, targetInstanceIDs map[string]struct{}) error {
+	bindings, err := s.planner.bindings.ListByProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	targetBindings := make(map[string]struct{})
+	for _, binding := range bindings {
+		if binding.TargetKind != "instance" || binding.RuntimeMode != runtime.RuntimeModeStandalone {
+			continue
+		}
+		if _, ok := targetInstanceIDs[binding.TargetID]; ok {
+			targetBindings[binding.ID] = struct{}{}
+		}
+	}
+	if len(targetBindings) == 0 {
+		return nil
+	}
+
+	deployments, err := s.deployments.deployments.ListByProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	var recoveryErrs []error
+	for _, deployment := range deployments {
+		status := strings.TrimSpace(deployment.Status)
+		if status != DeploymentStatusRunning && status != DeploymentStatusCandidateReady {
+			continue
+		}
+
+		revision, err := s.deployments.revisions.GetByIDForProject(projectID, deployment.RevisionID)
+		if err != nil {
+			recoveryErrs = append(recoveryErrs, err)
+			continue
+		}
+		if revision == nil {
+			continue
+		}
+
+		compiled, err := parseCompiledRevision(revision.CompiledRevisionJSON)
+		if err != nil {
+			recoveryErrs = append(recoveryErrs, fmt.Errorf("parse compiled revision %s: %w", revision.ID, err))
+			continue
+		}
+		if _, ok := targetBindings[compiled.DeploymentBindingID]; !ok {
+			continue
+		}
+		if !s.beginRecovery(deployment.ID) {
+			continue
+		}
+
+		logger.Info("rollout_recovery_candidate_detected",
+			"project_id", projectID,
+			"deployment_id", deployment.ID,
+			"revision_id", revision.ID,
+			"agent_id", agentID,
+			"deployment_status", deployment.Status,
+		)
+
+		err = s.recoverDeploymentAfterReconnect(ctx, projectID, deployment.ID, revision.ID, agentID)
+		s.endRecovery(deployment.ID)
+		if err != nil {
+			recoveryErrs = append(recoveryErrs, err)
+		}
+	}
+
+	return errors.Join(recoveryErrs...)
+}
+
+func (s *RolloutExecutionService) recoverDeploymentAfterReconnect(ctx context.Context, projectID, deploymentID, revisionID, agentID string) error {
+	plan, err := s.planner.PlanCandidate(ctx, projectID, revisionID)
+	if err != nil {
+		return fmt.Errorf("plan candidate recovery for deployment %s: %w", deploymentID, err)
+	}
+
+	promoteCmd, ok := findRolloutCommand(plan, runtime.CommandTypePromoteRelease)
+	if !ok {
+		return fmt.Errorf("recovery promote command missing for deployment %s", deploymentID)
+	}
+
+	correlationID := s.correlationID()
+	promoteCmd = enrichRolloutCommand(promoteCmd, projectID, revisionID, correlationID)
+	if _, err := s.executeRecoverableCommand(ctx, agentID, promoteCmd, 2*time.Minute); err != nil {
+		if !isRetryablePromotionRecovery(err) {
+			return fmt.Errorf("recover deployment %s promotion: %w", deploymentID, err)
+		}
+
+		healthCmd, ok := findRolloutCommand(plan, runtime.CommandTypeRunHealthGate)
+		if !ok {
+			return fmt.Errorf("recovery health gate command missing for deployment %s", deploymentID)
+		}
+		healthCmd = enrichRolloutCommand(healthCmd, projectID, revisionID, correlationID)
+		if _, err := s.executeRecoverableCommand(ctx, agentID, healthCmd, 3*time.Minute); err != nil {
+			return fmt.Errorf("recover deployment %s health gate: %w", deploymentID, err)
+		}
+		if _, err := s.executeRecoverableCommand(ctx, agentID, promoteCmd, 2*time.Minute); err != nil {
+			return fmt.Errorf("recover deployment %s promotion after health gate: %w", deploymentID, err)
+		}
+	}
+
+	if _, err := s.promoteCandidateIfNeeded(ctx, projectID, deploymentID, revisionID); err != nil {
+		return fmt.Errorf("finalize recovered promotion for deployment %s: %w", deploymentID, err)
+	}
+
+	result := &RolloutExecutionResult{
+		DeploymentID:  deploymentID,
+		RevisionID:    revisionID,
+		AgentID:       agentID,
+		CorrelationID: correlationID,
+	}
+	if err := s.dispatchGarbageCollect(ctx, projectID, revisionID, agentID, correlationID, result); err != nil {
+		return fmt.Errorf("recover deployment %s garbage collect: %w", deploymentID, err)
+	}
+
+	logger.Info("rollout_recovery_completed",
+		"project_id", projectID,
+		"deployment_id", deploymentID,
+		"revision_id", revisionID,
+		"agent_id", agentID,
+	)
+
+	return nil
+}
+
+func (s *RolloutExecutionService) executeRecoverableCommand(ctx context.Context, agentID string, cmd runtime.AgentCommand, timeout time.Duration) (*TrackedCommand, error) {
+	cmdResult, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	waitCtx, waitCancel := context.WithTimeout(ctx, timeout)
+	defer waitCancel()
+
+	tracked, err := s.dispatcher.WaitForCommand(waitCtx, cmdResult.RequestID)
+	if err != nil {
+		return nil, err
+	}
+	if tracked == nil {
+		return nil, fmt.Errorf("command %q returned empty result", cmd.Type)
+	}
+
+	switch tracked.State {
+	case CommandStateDone:
+		return tracked, nil
+	case CommandStateFailed:
+		code, _ := tracked.Output["code"].(string)
+		if code != "" {
+			return tracked, fmt.Errorf("command %q failed: %s (%s)", cmd.Type, tracked.Error, code)
+		}
+		return tracked, fmt.Errorf("command %q failed: %s", cmd.Type, tracked.Error)
+	case CommandStateCancelled:
+		return tracked, fmt.Errorf("command %q timed out waiting for recovery completion", cmd.Type)
+	default:
+		return tracked, fmt.Errorf("command %q returned unexpected state %q", cmd.Type, tracked.State)
+	}
+}
+
+func (s *RolloutExecutionService) shouldSkipRolloutStep(projectID, deploymentID, revisionID, commandType string) (bool, error) {
+	deployment, err := s.deployments.deployments.GetByIDForProject(projectID, deploymentID)
+	if err != nil {
+		return false, err
+	}
+	revision, err := s.deployments.revisions.GetByIDForProject(projectID, revisionID)
+	if err != nil {
+		return false, err
+	}
+	if deployment == nil || revision == nil {
+		return false, nil
+	}
+
+	switch commandType {
+	case runtime.CommandTypeRunHealthGate:
+		return deployment.Status == DeploymentStatusCandidateReady || deployment.Status == DeploymentStatusPromoted, nil
+	case runtime.CommandTypePromoteRelease:
+		return deployment.Status == DeploymentStatusPromoted && revision.Status == RevisionStatusPromoted, nil
+	default:
+		return false, nil
+	}
+}
+
+func (s *RolloutExecutionService) transitionDeploymentStatusIfNeeded(projectID, deploymentID, nextStatus string, alreadySatisfiedStatuses ...string) error {
+	if _, err := s.deployments.TransitionDeploymentStatus(projectID, deploymentID, nextStatus); err != nil {
+		if !errors.Is(err, ErrInvalidDeploymentStateTransition) {
+			return err
+		}
+		deployment, getErr := s.deployments.deployments.GetByIDForProject(projectID, deploymentID)
+		if getErr != nil {
+			return getErr
+		}
+		if deployment == nil {
+			return ErrDeploymentNotFound
+		}
+		current := strings.TrimSpace(deployment.Status)
+		for _, allowed := range alreadySatisfiedStatuses {
+			if current == allowed {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *RolloutExecutionService) promoteCandidateIfNeeded(ctx context.Context, projectID, deploymentID, revisionID string) (*PromotionResult, error) {
+	deployment, err := s.deployments.deployments.GetByIDForProject(projectID, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	revision, err := s.deployments.revisions.GetByIDForProject(projectID, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	if deployment != nil && revision != nil &&
+		strings.TrimSpace(deployment.Status) == DeploymentStatusPromoted &&
+		strings.TrimSpace(revision.Status) == RevisionStatusPromoted {
+		return &PromotionResult{
+			RevisionID:   revisionID,
+			DeploymentID: deploymentID,
+			PromotedAt:   deployment.UpdatedAt,
+		}, nil
+	}
+	return s.planner.PromoteCandidate(ctx, projectID, deploymentID, revisionID)
+}
+
+func (s *RolloutExecutionService) beginRecovery(deploymentID string) bool {
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	if _, exists := s.recovering[deploymentID]; exists {
+		return false
+	}
+	s.recovering[deploymentID] = struct{}{}
+	return true
+}
+
+func (s *RolloutExecutionService) endRecovery(deploymentID string) {
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	delete(s.recovering, deploymentID)
+}
+
+func findRolloutCommand(plan *RolloutPlan, commandType string) (runtime.AgentCommand, bool) {
+	if plan == nil {
+		return runtime.AgentCommand{}, false
+	}
+	for _, step := range plan.Steps {
+		if step.Command.Type == commandType {
+			return step.Command, true
+		}
+	}
+	return runtime.AgentCommand{}, false
+}
+
+func isRetryablePromotionRecovery(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "promotion_candidate_not_ready") ||
+		strings.Contains(message, "promotion_candidate_missing") ||
+		strings.Contains(message, "timed out")
 }
 
 func (s *RolloutExecutionService) evaluateHealthGate(ctx context.Context, projectID, deploymentID, revisionID string) (*HealthGateResult, error) {

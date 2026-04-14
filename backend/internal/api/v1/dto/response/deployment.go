@@ -62,6 +62,8 @@ type DeploymentOverviewResponse struct {
 	RuntimeMode          string                        `json:"runtime_mode"`
 	Services             []ProjectServiceResponse      `json:"services"`
 	PlacementAssignments []PlacementAssignmentResponse `json:"placement_assignments"`
+	PublicURLs           []string                      `json:"public_urls"`
+	PublicURLReason      string                        `json:"public_url_reason,omitempty"`
 	StartedAt            *time.Time                    `json:"started_at,omitempty"`
 	CompletedAt          *time.Time                    `json:"completed_at,omitempty"`
 	CreatedAt            time.Time                     `json:"created_at"`

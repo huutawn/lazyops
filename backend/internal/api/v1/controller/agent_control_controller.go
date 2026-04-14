@@ -20,15 +20,21 @@ type AgentControlController struct {
 	controlHub     *service.ControlHub
 	commandTracker *service.CommandTracker
 	observability  *service.ObservabilityService
+	recoverer      agentReconnectRecoverer
 	cfg            config.Config
 	upgrader       websocket.Upgrader
 }
 
-func NewAgentControlController(hub *service.ControlHub, commandTracker *service.CommandTracker, observability *service.ObservabilityService, cfg config.Config) *AgentControlController {
+type agentReconnectRecoverer interface {
+	RecoverRunningDeploymentsForAgent(ctx context.Context, userID, agentID string) error
+}
+
+func NewAgentControlController(hub *service.ControlHub, commandTracker *service.CommandTracker, observability *service.ObservabilityService, recoverer agentReconnectRecoverer, cfg config.Config) *AgentControlController {
 	return &AgentControlController{
 		controlHub:     hub,
 		commandTracker: commandTracker,
 		observability:  observability,
+		recoverer:      recoverer,
 		cfg:            cfg,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.WebSocket.ReadBufferSize,
@@ -68,6 +74,7 @@ func (ctl *AgentControlController) ControlStream(c *gin.Context) {
 		"message":  "agent control channel connected",
 		"agent_id": agentID,
 	})
+	ctl.triggerReconnectRecovery(claims.UserID, agentID)
 
 	// Block the HTTP handler goroutine so the WebSocket stays open.
 	// runControlLoop runs in a separate goroutine and will close the
@@ -78,6 +85,31 @@ func (ctl *AgentControlController) ControlStream(c *gin.Context) {
 		ctl.runControlLoop(client, claims.UserID)
 	}()
 	<-done
+}
+
+func (ctl *AgentControlController) triggerReconnectRecovery(userID, agentID string) {
+	if ctl == nil || ctl.recoverer == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+
+		if err := ctl.recoverer.RecoverRunningDeploymentsForAgent(ctx, userID, agentID); err != nil {
+			slog.Warn("control_reconnect_recovery_failed",
+				"agent_id", agentID,
+				"user_id", userID,
+				"error", err.Error(),
+			)
+			return
+		}
+
+		slog.Info("control_reconnect_recovery_completed",
+			"agent_id", agentID,
+			"user_id", userID,
+		)
+	}()
 }
 
 func (ctl *AgentControlController) runControlLoop(client *service.ControlClient, userID string) {

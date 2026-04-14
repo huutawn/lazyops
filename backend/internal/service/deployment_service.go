@@ -60,11 +60,13 @@ type desiredStateRevisionCompiledRecord struct {
 }
 
 type DeploymentService struct {
-	projects    ProjectStore
-	blueprints  BlueprintStore
-	revisions   DesiredStateRevisionStore
-	deployments DeploymentStore
-	incidents   RuntimeIncidentStore
+	projects      ProjectStore
+	blueprints    BlueprintStore
+	revisions     DesiredStateRevisionStore
+	deployments   DeploymentStore
+	incidents     RuntimeIncidentStore
+	bindings      DeploymentBindingStore
+	publicDomains *PublicDomainResolver
 }
 
 func NewDeploymentService(
@@ -86,6 +88,15 @@ func (s *DeploymentService) WithIncidentStore(incidents RuntimeIncidentStore) *D
 		return s
 	}
 	s.incidents = incidents
+	return s
+}
+
+func (s *DeploymentService) WithPublicDomainSupport(bindings DeploymentBindingStore, instances InstanceStore) *DeploymentService {
+	if s == nil {
+		return s
+	}
+	s.bindings = bindings
+	s.publicDomains = NewPublicDomainResolver(instances)
 	return s
 }
 
@@ -183,7 +194,8 @@ func (s *DeploymentService) List(requesterUserID, requesterRole, projectID strin
 	out := make([]DeploymentOverviewRecord, 0, len(deployments))
 	for _, item := range deployments {
 		revisionRecord, ok := revisionRecords[item.RevisionID]
-		out = append(out, buildDeploymentOverview(item, revisionRecord, ok, revisionNumbers[item.RevisionID]))
+		publicDomain := s.resolveDeploymentPublicDomains(project.ID, revisionRecord, ok)
+		out = append(out, buildDeploymentOverview(item, revisionRecord, ok, revisionNumbers[item.RevisionID], publicDomain))
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -232,7 +244,8 @@ func (s *DeploymentService) Get(requesterUserID, requesterRole, projectID, deplo
 		revisionNumbers[deployment.RevisionID] = len(revisionNumbers) + 1
 	}
 
-	overview := buildDeploymentOverview(*deployment, revisionRecord, true, revisionNumbers[deployment.RevisionID])
+	publicDomain := s.resolveDeploymentPublicDomains(project.ID, revisionRecord, true)
+	overview := buildDeploymentOverview(*deployment, revisionRecord, true, revisionNumbers[deployment.RevisionID], publicDomain)
 	incidentRecords := []models.RuntimeIncident{}
 	if s.incidents != nil {
 		items, listErr := s.incidents.ListByDeployment(project.ID, deployment.ID)
@@ -572,11 +585,36 @@ func buildRevisionIndex(revisions []models.DesiredStateRevision) (map[string]Des
 	return records, numbers, nil
 }
 
+func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, revision DesiredStateRevisionRecord, hasRevision bool) PublicDomainResult {
+	if s == nil || s.bindings == nil || s.publicDomains == nil || !hasRevision {
+		return PublicDomainResult{PublicURLs: []string{}}
+	}
+
+	bindingID := strings.TrimSpace(revision.DeploymentBindingID)
+	if bindingID == "" {
+		return PublicDomainResult{PublicURLs: []string{}}
+	}
+
+	binding, err := s.bindings.GetByIDForProject(projectID, bindingID)
+	if err != nil || binding == nil {
+		return PublicDomainResult{PublicURLs: []string{}}
+	}
+
+	return s.publicDomains.Resolve(PublicDomainResolveInput{
+		RuntimeMode:          revision.RuntimeMode,
+		TargetKind:           binding.TargetKind,
+		TargetID:             binding.TargetID,
+		Services:             revision.Services,
+		PlacementAssignments: revision.PlacementAssignments,
+	})
+}
+
 func buildDeploymentOverview(
 	deployment models.Deployment,
 	revision DesiredStateRevisionRecord,
 	hasRevision bool,
 	revisionNumber int,
+	publicDomain PublicDomainResult,
 ) DeploymentOverviewRecord {
 	buildState := RevisionStatusQueued
 	rolloutState := strings.TrimSpace(deployment.Status)
@@ -630,6 +668,8 @@ func buildDeploymentOverview(
 		RuntimeMode:          runtimeMode,
 		Services:             services,
 		PlacementAssignments: placements,
+		PublicURLs:           append([]string{}, publicDomain.PublicURLs...),
+		PublicURLReason:      publicDomain.Reason,
 		StartedAt:            deployment.StartedAt,
 		CompletedAt:          deployment.CompletedAt,
 		CreatedAt:            deployment.CreatedAt,

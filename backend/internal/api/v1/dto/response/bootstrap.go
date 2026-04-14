@@ -47,6 +47,8 @@ type BootstrapStatusResponse struct {
 	Steps        []BootstrapStepResponse    `json:"steps"`
 	AutoMode     BootstrapAutoModeResponse  `json:"auto_mode"`
 	Inventory    BootstrapInventoryResponse `json:"inventory"`
+	PublicURLs   []string                   `json:"public_urls"`
+	PublicURLReason string                  `json:"public_url_reason,omitempty"`
 	UpdatedAt    time.Time                  `json:"updated_at"`
 }
 

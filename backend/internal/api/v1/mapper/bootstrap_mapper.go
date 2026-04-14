@@ -131,6 +131,8 @@ func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) resp
 			HealthyMeshNetworks: record.Inventory.HealthyMeshNetworks,
 			HealthyK3sClusters:  record.Inventory.HealthyK3sClusters,
 		},
-		UpdatedAt: record.UpdatedAt,
+		PublicURLs:      append([]string{}, record.PublicURLs...),
+		PublicURLReason: record.PublicURLReason,
+		UpdatedAt:       record.UpdatedAt,
 	}
 }

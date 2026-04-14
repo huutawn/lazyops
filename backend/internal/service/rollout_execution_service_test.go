@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,21 +12,50 @@ import (
 )
 
 type fakeRolloutDispatcher struct {
-	commands []runtime.AgentCommand
-	agentIDs []string
-	err      error
+	commands               []runtime.AgentCommand
+	agentIDs               []string
+	err                    error
+	requestSeq             int
+	requestToCommand       map[string]runtime.AgentCommand
+	waitResultsByType      map[string][]*TrackedCommand
+	waitErrorsByType       map[string][]error
 }
 
 func (f *fakeRolloutDispatcher) DispatchCommand(_ context.Context, agentID string, cmd runtime.AgentCommand) (*runtime.CommandResult, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+	if f.requestToCommand == nil {
+		f.requestToCommand = make(map[string]runtime.AgentCommand)
+	}
+	if cmd.RequestID == "" {
+		f.requestSeq++
+		cmd.RequestID = fmt.Sprintf("req_%d", f.requestSeq)
+	}
 	f.agentIDs = append(f.agentIDs, agentID)
 	f.commands = append(f.commands, cmd)
+	f.requestToCommand[cmd.RequestID] = cmd
 	return &runtime.CommandResult{RequestID: cmd.RequestID, Status: "dispatched"}, nil
 }
 
 func (f *fakeRolloutDispatcher) WaitForCommand(_ context.Context, requestID string) (*TrackedCommand, error) {
+	if f.requestToCommand != nil {
+		if cmd, ok := f.requestToCommand[requestID]; ok {
+			if len(f.waitErrorsByType[cmd.Type]) > 0 {
+				err := f.waitErrorsByType[cmd.Type][0]
+				f.waitErrorsByType[cmd.Type] = f.waitErrorsByType[cmd.Type][1:]
+				if err != nil {
+					return nil, err
+				}
+			}
+			if len(f.waitResultsByType[cmd.Type]) > 0 {
+				result := *f.waitResultsByType[cmd.Type][0]
+				f.waitResultsByType[cmd.Type] = f.waitResultsByType[cmd.Type][1:]
+				result.RequestID = requestID
+				return &result, nil
+			}
+		}
+	}
 	return &TrackedCommand{RequestID: requestID, State: CommandStateDone}, nil
 }
 
@@ -279,5 +309,168 @@ func TestRolloutExecutionServiceIsRetrySafe(t *testing.T) {
 	}
 	if len(dispatcher.commands) != 0 {
 		t.Fatalf("expected no commands to be redispatched, got %d", len(dispatcher.commands))
+	}
+}
+
+func TestRolloutExecutionServiceRecoversRunningDeploymentAfterReconnect(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewStandaloneDriver())
+
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123",
+		TriggerKind:          "push",
+		Status:               RevisionStatusApplying,
+		CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusRunning,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Production",
+		TargetRef:   "prod-main",
+		RuntimeMode: runtime.RuntimeModeStandalone,
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:      "inst_123",
+		UserID:  "usr_123",
+		Name:    "edge-1",
+		Status:  "online",
+		AgentID: ptrString("agt_123"),
+	})
+	dispatcher := &fakeRolloutDispatcher{
+		waitResultsByType: map[string][]*TrackedCommand{
+			runtime.CommandTypePromoteRelease: {
+				{State: CommandStateDone},
+			},
+		},
+	}
+	deployments := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore)
+	planner := newTestRolloutPlanner(registry, revisionStore, deploymentStore, newFakeRuntimeIncidentStore(), bindingStore, &fakeOperatorEventBroadcaster{})
+	service := NewRolloutExecutionService(deployments, planner, instanceStore, dispatcher, &fakeOperatorEventBroadcaster{})
+
+	if err := service.RecoverRunningDeploymentsForAgent(context.Background(), "usr_123", "agt_123"); err != nil {
+		t.Fatalf("recover running deployment: %v", err)
+	}
+
+	if got := dispatchedTypes(dispatcher.commands); len(got) != 2 {
+		t.Fatalf("expected 2 recovery commands, got %d (%v)", len(got), got)
+	}
+	if dispatcher.commands[0].Type != runtime.CommandTypePromoteRelease {
+		t.Fatalf("expected first recovery command to be promote_release, got %q", dispatcher.commands[0].Type)
+	}
+	if dispatcher.commands[1].Type != runtime.CommandTypeGarbageCollectRuntime {
+		t.Fatalf("expected second recovery command to be garbage_collect_runtime, got %q", dispatcher.commands[1].Type)
+	}
+
+	deployment, _ := deploymentStore.GetByIDForProject("prj_123", "dep_123")
+	if deployment.Status != DeploymentStatusPromoted {
+		t.Fatalf("expected deployment promoted after recovery, got %q", deployment.Status)
+	}
+	revision, _ := revisionStore.GetByIDForProject("prj_123", "rev_123")
+	if revision.Status != RevisionStatusPromoted {
+		t.Fatalf("expected revision promoted after recovery, got %q", revision.Status)
+	}
+}
+
+func TestRolloutExecutionServiceRecoveryFallsBackToHealthGate(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewStandaloneDriver())
+
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123",
+		TriggerKind:          "push",
+		Status:               RevisionStatusApplying,
+		CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusRunning,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Production",
+		TargetRef:   "prod-main",
+		RuntimeMode: runtime.RuntimeModeStandalone,
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:      "inst_123",
+		UserID:  "usr_123",
+		Name:    "edge-1",
+		Status:  "online",
+		AgentID: ptrString("agt_123"),
+	})
+	dispatcher := &fakeRolloutDispatcher{
+		waitResultsByType: map[string][]*TrackedCommand{
+			runtime.CommandTypePromoteRelease: {
+				{
+					State: CommandStateFailed,
+					Error: "candidate is not promotable yet",
+					Output: map[string]any{
+						"code": "promotion_candidate_not_ready",
+					},
+				},
+				{State: CommandStateDone},
+			},
+			runtime.CommandTypeRunHealthGate: {
+				{State: CommandStateDone},
+			},
+		},
+	}
+	deployments := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore)
+	planner := newTestRolloutPlanner(registry, revisionStore, deploymentStore, newFakeRuntimeIncidentStore(), bindingStore, &fakeOperatorEventBroadcaster{})
+	service := NewRolloutExecutionService(deployments, planner, instanceStore, dispatcher, &fakeOperatorEventBroadcaster{})
+
+	if err := service.RecoverRunningDeploymentsForAgent(context.Background(), "usr_123", "agt_123"); err != nil {
+		t.Fatalf("recover running deployment with health fallback: %v", err)
+	}
+
+	expected := []string{
+		runtime.CommandTypePromoteRelease,
+		runtime.CommandTypeRunHealthGate,
+		runtime.CommandTypePromoteRelease,
+		runtime.CommandTypeGarbageCollectRuntime,
+	}
+	got := dispatchedTypes(dispatcher.commands)
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d recovery commands, got %d (%v)", len(expected), len(got), got)
+	}
+	for index, want := range expected {
+		if got[index] != want {
+			t.Fatalf("expected recovery command %d to be %q, got %q", index, want, got[index])
+		}
 	}
 }

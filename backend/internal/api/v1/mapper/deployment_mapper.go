@@ -78,6 +78,8 @@ func ToDeploymentOverviewResponse(record service.DeploymentOverviewRecord) respo
 		RuntimeMode:          record.RuntimeMode,
 		Services:             services,
 		PlacementAssignments: toPlacementAssignmentResponses(record.PlacementAssignments),
+		PublicURLs:           append([]string{}, record.PublicURLs...),
+		PublicURLReason:      record.PublicURLReason,
 		StartedAt:            record.StartedAt,
 		CompletedAt:          record.CompletedAt,
 		CreatedAt:            record.CreatedAt,

@@ -132,6 +132,8 @@ type ProjectBootstrapStatusRecord struct {
 	Steps        []BootstrapStepRecord
 	AutoMode     BootstrapAutoModeRecord
 	Inventory    BootstrapInventoryRecord
+	PublicURLs   []string
+	PublicURLReason string
 	UpdatedAt    time.Time
 }
 
@@ -469,6 +471,10 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 	if err != nil {
 		return nil, err
 	}
+	publicURLs, publicURLReason, err := s.resolveStatusPublicURLs(requesterUserID, requesterRole, project.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	autoEnabled := true
 	decision := inferBootstrapMode(inventory, autoEnabled, "")
@@ -523,7 +529,9 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			HealthyMeshNetworks: healthyMeshCount(inventory),
 			HealthyK3sClusters:  healthyClusterCount(inventory),
 		},
-		UpdatedAt: time.Now().UTC(),
+		PublicURLs:      publicURLs,
+		PublicURLReason: publicURLReason,
+		UpdatedAt:       time.Now().UTC(),
 	}
 
 	return status, nil

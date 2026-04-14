@@ -70,6 +70,8 @@ type DeploymentOverviewRecord struct {
 	RuntimeMode          string
 	Services             []BlueprintServiceContractRecord
 	PlacementAssignments []PlacementAssignmentRecord
+	PublicURLs           []string
+	PublicURLReason      string
 	StartedAt            *time.Time
 	CompletedAt          *time.Time
 	CreatedAt            time.Time
