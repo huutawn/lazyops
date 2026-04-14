@@ -418,6 +418,42 @@ func TestLogCollectorHandleReportLogBatch(t *testing.T) {
 	}
 }
 
+func TestLogCollectorHandleReportLogBatchUsesEntryLabelsAsRoutingIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime-root")
+	c := testLogCollector()
+	c.Ingest(contracts.LogEntry{
+		Timestamp: c.now(),
+		Severity:  contracts.SeverityInfo,
+		Source:    "gateway:caddy:access",
+		Message:   `{"status":200,"path":"/health"}`,
+		Labels: map[string]string{
+			"project_id":  "prj_456",
+			"binding_id":  "bind_456",
+			"revision_id": "rev_456",
+			"service":     "app",
+		},
+	})
+
+	c.now = func() time.Time {
+		return time.Date(2026, 4, 4, 10, 0, 5, 0, time.UTC)
+	}
+
+	reported, err := c.HandleReportLogBatch(context.Background(), nil, ReportLogBatchPayload{
+		WorkspaceRoot: root,
+	})
+	if err != nil {
+		t.Fatalf("handle report log batch: %v", err)
+	}
+	if reported != 1 {
+		t.Fatalf("expected 1 reported batch, got %d", reported)
+	}
+
+	logPath := filepath.Join(root, "projects", "prj_456", "bindings", "bind_456", "logs", "gateway_caddy_access_20260404T100005Z.json")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected log file at %s: %v", logPath, err)
+	}
+}
+
 func TestLogCollectorHandleReportLogBatchNoBatches(t *testing.T) {
 	c := testLogCollector()
 

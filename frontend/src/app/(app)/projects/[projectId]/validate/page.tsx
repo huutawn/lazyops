@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { useParams } from 'next/navigation';
 import { useDeploymentBindings } from '@/modules/deployment-bindings/binding-hooks';
 import { validateLazyopsYaml } from '@/modules/validate-lazyops/validate-api';
 import type { ValidateLazyopsResponse, LazyopsYAMLDraft } from '@/modules/validate-lazyops/validate-types';
@@ -10,8 +10,7 @@ import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { LoadingPage } from '@/components/primitives/loading';
 import { ErrorState } from '@/components/primitives/error-state';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
-import { useSession } from '@/lib/auth/auth-hooks';
+import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
 
 const EXPLANATION = {
   title: 'What is the deploy contract?',
@@ -36,17 +35,8 @@ const ALLOWED_PROTOCOLS = ['http', 'https', 'tcp', 'grpc'];
 
 export default function ValidateContractPage() {
   const params = useParams();
-  const router = useRouter();
   const projectId = params?.projectId as string;
-  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
-  const { data: session, isLoading: sessionLoading } = useSession();
-  const isAdmin = session?.role === 'admin';
-
-  useEffect(() => {
-    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
-      router.replace(`/projects/${projectId}`);
-    }
-  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
+  const { shouldBlock } = useProjectExpertRouteGuard(projectId);
 
   const { data: bindingsData, isLoading: bindingsLoading } = useDeploymentBindings(projectId);
   const [validationResult, setValidationResult] = useState<ValidateLazyopsResponse | null>(null);
@@ -54,7 +44,7 @@ export default function ValidateContractPage() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [selectedBindingIdx, setSelectedBindingIdx] = useState(0);
 
-  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
+  if (shouldBlock) {
     return <LoadingPage label="Redirecting to 3-step setup…" />;
   }
 

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { useParams } from 'next/navigation';
 import { compileBlueprint } from '@/modules/blueprint/blueprint-api';
 import type { CompileBlueprintResponse, BlueprintService, PlacementAssignment } from '@/modules/blueprint/blueprint-types';
 import { PageHeader } from '@/components/primitives/page-header';
@@ -11,8 +11,7 @@ import { HealthChip } from '@/components/primitives/health-chip';
 import { LoadingPage } from '@/components/primitives/loading';
 import { ErrorState } from '@/components/primitives/error-state';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
-import { useSession } from '@/lib/auth/auth-hooks';
+import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
 
 const EXPLANATION = {
   title: 'What is a blueprint?',
@@ -22,17 +21,8 @@ const EXPLANATION = {
 
 export default function BlueprintReviewPage() {
   const params = useParams();
-  const router = useRouter();
   const projectId = params?.projectId as string;
-  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
-  const { data: session, isLoading: sessionLoading } = useSession();
-  const isAdmin = session?.role === 'admin';
-
-  useEffect(() => {
-    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
-      router.replace(`/projects/${projectId}`);
-    }
-  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
+  const { shouldBlock } = useProjectExpertRouteGuard(projectId);
 
   const [result, setResult] = useState<CompileBlueprintResponse | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
@@ -47,7 +37,7 @@ export default function BlueprintReviewPage() {
     trigger_kind: 'api_blueprint_compile',
   });
 
-  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
+  if (shouldBlock) {
     return <LoadingPage label="Redirecting to 3-step setup…" />;
   }
 

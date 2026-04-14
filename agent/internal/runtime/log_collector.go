@@ -47,6 +47,8 @@ type cooldownKey struct {
 	Message  string
 }
 
+const logBufferKeySeparator = "\x1f"
+
 type LogCollector struct {
 	logger *slog.Logger
 	cfg    LogCollectorConfig
@@ -97,13 +99,19 @@ func (c *LogCollector) Ingest(entry contracts.LogEntry) {
 
 	c.total++
 
-	if len(c.buffers[entry.Source]) >= c.cfg.MaxBufferSize {
+	bufferKey := buildLogBufferKey(entry)
+	if bufferKey == "" {
+		c.dropped++
+		return
+	}
+
+	if len(c.buffers[bufferKey]) >= c.cfg.MaxBufferSize {
 		c.dropped++
 		return
 	}
 
 	key := cooldownKey{
-		Source:   entry.Source,
+		Source:   bufferKey,
 		Severity: string(entry.Severity),
 		Message:  entry.Message,
 	}
@@ -111,7 +119,7 @@ func (c *LogCollector) Ingest(entry contracts.LogEntry) {
 		return
 	}
 
-	c.buffers[entry.Source] = append(c.buffers[entry.Source], logBufferEntry{
+	c.buffers[bufferKey] = append(c.buffers[bufferKey], logBufferEntry{
 		entry:    entry,
 		ingested: c.now(),
 	})
@@ -202,10 +210,27 @@ func (c *LogCollector) CollectExpiredBatches() map[string][]contracts.LogEntry {
 }
 
 func (c *LogCollector) BuildLogBatch(projectID, bindingID, revisionID string, entries []contracts.LogEntry) contracts.LogBatchPayload {
+	serviceName := ""
+	if len(entries) > 0 {
+		serviceName = firstNonEmptyString(logLabel(entries[0].Labels, "service"), logLabel(entries[0].Labels, "service_name"))
+	}
 	return contracts.LogBatchPayload{
 		ProjectID:   projectID,
 		BindingID:   bindingID,
 		RevisionID:  revisionID,
+		ServiceName: serviceName,
+		Entries:     entries,
+		CollectedAt: c.now(),
+	}
+}
+
+func (c *LogCollector) BuildLogBatchForBufferKey(bufferKey string, fallback ReportLogBatchPayload, entries []contracts.LogEntry) contracts.LogBatchPayload {
+	meta := parseLogBufferKey(bufferKey)
+	return contracts.LogBatchPayload{
+		ProjectID:   firstNonEmptyString(meta.ProjectID, strings.TrimSpace(fallback.ProjectID)),
+		BindingID:   firstNonEmptyString(meta.BindingID, strings.TrimSpace(fallback.BindingID)),
+		RevisionID:  firstNonEmptyString(meta.RevisionID, strings.TrimSpace(fallback.RevisionID)),
+		ServiceName: firstNonEmptyString(meta.ServiceName, strings.TrimSpace(fallback.ServiceName)),
 		Entries:     entries,
 		CollectedAt: c.now(),
 	}
@@ -247,6 +272,7 @@ type ReportLogBatchPayload struct {
 	ProjectID     string                `json:"project_id"`
 	BindingID     string                `json:"binding_id"`
 	RevisionID    string                `json:"revision_id"`
+	ServiceName   string                `json:"service_name,omitempty"`
 	RuntimeMode   contracts.RuntimeMode `json:"runtime_mode"`
 	WorkspaceRoot string                `json:"workspace_root"`
 	LogSender     LogSender             `json:"-"`
@@ -267,13 +293,23 @@ func (c *LogCollector) HandleReportLogBatch(ctx context.Context, logger *slog.Lo
 	}
 
 	reported := 0
-	for source, entries := range batches {
-		batch := c.BuildLogBatch(payload.ProjectID, payload.BindingID, payload.RevisionID, entries)
+	for bufferKey, entries := range batches {
+		meta := parseLogBufferKey(bufferKey)
+		batch := c.BuildLogBatchForBufferKey(bufferKey, payload, entries)
+		if strings.TrimSpace(batch.ProjectID) == "" || strings.TrimSpace(batch.BindingID) == "" {
+			logger.Warn("skipping log batch without routing identity",
+				"source", meta.Source,
+				"project_id", batch.ProjectID,
+				"binding_id", batch.BindingID,
+				"entries", len(entries),
+			)
+			continue
+		}
 
 		if payload.LogSender != nil {
 			if err := payload.LogSender.SendLogBatch(ctx, batch); err != nil {
 				logger.Warn("could not send log batch to backend",
-					"source", source,
+					"source", meta.Source,
 					"entries", len(entries),
 					"error", err,
 				)
@@ -283,26 +319,23 @@ func (c *LogCollector) HandleReportLogBatch(ctx context.Context, logger *slog.Lo
 
 		workspaceRoot := payload.WorkspaceRoot
 		if workspaceRoot == "" {
-			workspaceRoot = filepath.Join(
-				"/var/lib/lazyops",
-				"projects", payload.ProjectID,
-				"bindings", payload.BindingID,
-				"revisions", payload.RevisionID,
-			)
+			workspaceRoot = "/var/lib/lazyops"
 		}
 
-		logPath, err := c.PersistLogBatch(workspaceRoot, payload.ProjectID, payload.BindingID, source, batch)
+		logPath, err := c.PersistLogBatch(workspaceRoot, batch.ProjectID, batch.BindingID, firstNonEmptyString(meta.Source, batch.ServiceName, "logs"), batch)
 		if err != nil {
 			logger.Warn("could not persist log batch",
-				"source", source,
+				"source", meta.Source,
 				"error", err,
 			)
 			continue
 		}
 
 		logger.Info("log batch collected",
-			"source", source,
-			"project_id", payload.ProjectID,
+			"source", meta.Source,
+			"project_id", batch.ProjectID,
+			"binding_id", batch.BindingID,
+			"revision_id", batch.RevisionID,
 			"entries", len(entries),
 			"log_path", logPath,
 		)
@@ -320,6 +353,74 @@ func (c *LogCollector) HandleReportLogBatch(ctx context.Context, logger *slog.Lo
 	)
 
 	return reported, nil
+}
+
+type logBufferMeta struct {
+	ProjectID   string
+	BindingID   string
+	RevisionID  string
+	ServiceName string
+	Source      string
+}
+
+func buildLogBufferKey(entry contracts.LogEntry) string {
+	source := strings.TrimSpace(entry.Source)
+	if source == "" {
+		source = strings.TrimSpace(logLabel(entry.Labels, "source"))
+	}
+	if source == "" {
+		return ""
+	}
+
+	projectID := strings.TrimSpace(logLabel(entry.Labels, "project_id"))
+	bindingID := strings.TrimSpace(logLabel(entry.Labels, "binding_id"))
+	revisionID := strings.TrimSpace(logLabel(entry.Labels, "revision_id"))
+	serviceName := firstNonEmptyString(
+		strings.TrimSpace(logLabel(entry.Labels, "service")),
+		strings.TrimSpace(logLabel(entry.Labels, "service_name")),
+	)
+
+	if projectID == "" && bindingID == "" && revisionID == "" && serviceName == "" {
+		return source
+	}
+
+	return strings.Join([]string{
+		projectID,
+		bindingID,
+		revisionID,
+		serviceName,
+		source,
+	}, logBufferKeySeparator)
+}
+
+func parseLogBufferKey(bufferKey string) logBufferMeta {
+	parts := strings.Split(bufferKey, logBufferKeySeparator)
+	if len(parts) != 5 {
+		return logBufferMeta{Source: strings.TrimSpace(bufferKey)}
+	}
+	return logBufferMeta{
+		ProjectID:   strings.TrimSpace(parts[0]),
+		BindingID:   strings.TrimSpace(parts[1]),
+		RevisionID:  strings.TrimSpace(parts[2]),
+		ServiceName: strings.TrimSpace(parts[3]),
+		Source:      strings.TrimSpace(parts[4]),
+	}
+}
+
+func logLabel(labels map[string]string, key string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	return labels[key]
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func DetectLogPatterns(text string) []LogPattern {

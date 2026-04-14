@@ -74,6 +74,19 @@ func (d *FilesystemDriver) WithAgentImageRef(imageRef string) *FilesystemDriver 
 	return d
 }
 
+func (d *FilesystemDriver) WithLogCollector(collector *LogCollector) *FilesystemDriver {
+	if d == nil {
+		return d
+	}
+	if d.processManager != nil {
+		d.processManager.WithLogCollector(collector)
+	}
+	if d.gateway != nil {
+		d.gateway.WithLogCollector(collector)
+	}
+	return d
+}
+
 func (d *FilesystemDriver) hydrateRuntimeContextFromWorkspace(layout WorkspaceLayout, runtimeCtx RuntimeContext) RuntimeContext {
 	manifest, err := loadWorkspaceManifest(layout)
 	if err != nil || len(manifest.Services) == 0 {
@@ -575,6 +588,15 @@ func (d *FilesystemDriver) ProvisionInternalServices(ctx context.Context, reques
 			// Keep internal services warm across rollouts to avoid restarting
 			// stateful dependencies (e.g., postgres) on every deploy.
 			if running {
+				if d.processManager != nil {
+					d.processManager.startDockerLogFollower(containerName, "internal_service", map[string]string{
+						"project_id":     strings.TrimSpace(projectID),
+						"binding_id":     strings.TrimSpace(bindingID),
+						"service":        strings.TrimSpace(definition.HostDataDirName),
+						"container_name": strings.TrimSpace(containerName),
+						"source_kind":    "internal_service",
+					})
+				}
 				updated = append(updated, kind)
 				continue
 			}
@@ -787,6 +809,9 @@ func (d *FilesystemDriver) removeInternalServiceContainer(ctx context.Context, n
 	if _, err := d.runDockerCommand(ctx, "rm", "-f", name); err != nil {
 		return err
 	}
+	if d.processManager != nil {
+		d.processManager.stopLogFollower("docker:" + strings.TrimSpace(name))
+	}
 	return nil
 }
 
@@ -863,6 +888,15 @@ func (d *FilesystemDriver) recreateInternalServiceContainer(ctx context.Context,
 
 	if _, err := d.runDockerCommand(ctx, args...); err != nil {
 		return err
+	}
+	if d.processManager != nil {
+		d.processManager.startDockerLogFollower(containerName, "internal_service", map[string]string{
+			"project_id":     strings.TrimSpace(projectID),
+			"binding_id":     strings.TrimSpace(bindingID),
+			"service":        strings.TrimSpace(definition.HostDataDirName),
+			"container_name": strings.TrimSpace(containerName),
+			"source_kind":    "internal_service",
+		})
 	}
 	if definition.HostDataDirName == "postgres" {
 		if err := d.ensureInternalPostgresAuthentication(ctx, containerName, hostDataDir, credentialState, internalPostgresFreshVolume); err != nil {

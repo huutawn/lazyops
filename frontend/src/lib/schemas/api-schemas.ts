@@ -143,6 +143,12 @@ export const metricSchema = z.object({
   ram_max: z.number(),
   ram_min: z.number(),
   ram_avg: z.number(),
+  disk_p95_bytes: z.number().optional(),
+  disk_max_bytes: z.number().optional(),
+  disk_min_bytes: z.number().optional(),
+  disk_avg_bytes: z.number().optional(),
+  network_in_total_bytes: z.number().optional(),
+  network_out_total_bytes: z.number().optional(),
   request_count: z.number(),
   period: z.string(),
 });

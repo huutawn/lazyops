@@ -20,6 +20,7 @@ import { useSession } from '@/lib/auth/auth-hooks';
 type ProjectThreeStepWizardProps = {
   projectId: string;
   compact?: boolean;
+  showSummary?: boolean;
 };
 
 const STEP_ORDER = ['connect_code', 'connect_infra', 'deploy'] as const;
@@ -128,7 +129,11 @@ function normalizeActionEndpoint(endpoint: string): string {
   return endpoint;
 }
 
-export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectThreeStepWizardProps) {
+export function ProjectThreeStepWizard({
+  projectId,
+  compact = false,
+  showSummary = true,
+}: ProjectThreeStepWizardProps) {
   const queryClient = useQueryClient();
   const { data: session } = useSession();
   const { data, isLoading, isError, error, refetch } = useProjectBootstrapStatus(projectId);
@@ -310,108 +315,110 @@ export function ProjectThreeStepWizard({ projectId, compact = false }: ProjectTh
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <h2 className="text-[17px] font-bold text-white">Thiết lập 3 bước</h2>
-            <p className="text-[14px] text-[#94a3b8] mt-1">Kết nối GitHub, kết nối máy chủ, rồi triển khai. LazyOps tự xử lý phần kỹ thuật.</p>
-          </div>
-          <button
-            type="button"
-            className="rounded-lg border border-[#334155] bg-[#0F172A] px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#1e293b] disabled:opacity-60"
-            onClick={() => {
-              void autoBootstrap.mutateAsync({});
-            }}
-            disabled={autoBootstrap.isPending}
-          >
-            {autoBootstrap.isPending ? 'Đang tự sửa...' : 'Tự sửa thiết lập'}
-          </button>
-        </div>
-
-        <div className={cn('grid gap-4', compact ? 'grid-cols-1' : 'sm:grid-cols-3')}>
-          {statusCards.map((item) => (
-            <div key={item.title} className="rounded-xl border border-[#1e293b] bg-[#0B1120] p-4 flex flex-col justify-between min-h-[100px]">
-              <div className="flex items-start justify-between">
-                <span className="text-[14px] font-semibold text-[#94a3b8]">{item.title}</span>
-                <span className={cn(
-                  "text-[12px] font-medium",
-                  item.value === 'healthy' || item.value === 'ready' || item.value === 'promoted' ? "text-[#10B981]" :
-                  item.value === 'error' || item.value === 'failed' ? "text-[#EF4444]" :
-                  "text-[#0EA5E9]"
-                )}>
-                  {formatStateLabelVN(item.value)}
-                </span>
-              </div>
-              <p className="text-[13px] text-white mt-2 leading-snug line-clamp-2">{item.summary}</p>
+      {showSummary ? (
+        <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 shadow-sm">
+          <div className="mb-6 flex items-start justify-between">
+            <div>
+              <h2 className="text-[17px] font-bold text-white">Thiết lập 3 bước</h2>
+              <p className="mt-1 text-[14px] text-[#94a3b8]">Kết nối GitHub, kết nối máy chủ, rồi triển khai. LazyOps tự xử lý phần kỹ thuật.</p>
             </div>
-          ))}
-        </div>
-
-        <div className="mt-6 pt-6 border-t border-[#1e293b] flex flex-wrap items-center gap-6">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] text-[#64748b]">Tổng quan:</span>
-            <span className={cn(
-              "text-[13px] font-medium",
-              data.overall_state === 'running' ? "text-[#10B981]" : "text-[#EF4444]"
-            )}>
-              {formatStateLabelVN(data.overall_state)}
-            </span>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] text-[#64748b]">Chế độ:</span>
-            <span className="text-[13px] text-white font-medium">{data.auto_mode.selected_mode}</span>
+            <button
+              type="button"
+              className="rounded-lg border border-[#334155] bg-[#0F172A] px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#1e293b] disabled:opacity-60"
+              onClick={() => {
+                void autoBootstrap.mutateAsync({});
+              }}
+              disabled={autoBootstrap.isPending}
+            >
+              {autoBootstrap.isPending ? 'Đang tự sửa...' : 'Tự sửa thiết lập'}
+            </button>
           </div>
 
-          <div className="text-[13px] text-[#64748b]">
-            {data.auto_mode.mode_reason_human}
-          </div>
-
-          <Link
-            href={`/projects/${projectId}/internal-services`}
-            className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
-          >
-            Dịch vụ nội bộ
-          </Link>
-        </div>
-
-        <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
-          <div className="flex flex-col gap-2">
-            <span className="text-[13px] font-semibold text-[#94a3b8]">Domain công khai</span>
-            {primaryPublicURL ? (
-              <div className="flex flex-col gap-2">
-                <a
-                  href={primaryPublicURL}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[14px] font-medium text-[#38BDF8] underline-offset-4 hover:underline break-all"
-                >
-                  {primaryPublicURL}
-                </a>
-                {fallbackPublicURLs.length > 0 ? (
-                  <div className="flex flex-col gap-1">
-                    {fallbackPublicURLs.map((url) => (
-                      <a
-                        key={url}
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[12px] text-[#94a3b8] underline-offset-4 hover:text-white hover:underline break-all"
-                      >
-                        {url}
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
+          <div className={cn('grid gap-4', compact ? 'grid-cols-1' : 'sm:grid-cols-3')}>
+            {statusCards.map((item) => (
+              <div key={item.title} className="min-h-[100px] rounded-xl border border-[#1e293b] bg-[#0B1120] p-4 flex flex-col justify-between">
+                <div className="flex items-start justify-between">
+                  <span className="text-[14px] font-semibold text-[#94a3b8]">{item.title}</span>
+                  <span className={cn(
+                    'text-[12px] font-medium',
+                    item.value === 'healthy' || item.value === 'ready' || item.value === 'promoted' ? 'text-[#10B981]' :
+                    item.value === 'error' || item.value === 'failed' ? 'text-[#EF4444]' :
+                    'text-[#0EA5E9]'
+                  )}>
+                    {formatStateLabelVN(item.value)}
+                  </span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-[13px] leading-snug text-white">{item.summary}</p>
               </div>
-            ) : (
-              <p className="text-[13px] text-[#94a3b8]">
-                {data.public_url_reason || 'Chưa có domain công khai cho project này.'}
-              </p>
-            )}
+            ))}
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-center gap-6 border-t border-[#1e293b] pt-6">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] text-[#64748b]">Tổng quan:</span>
+              <span className={cn(
+                'text-[13px] font-medium',
+                data.overall_state === 'running' ? 'text-[#10B981]' : 'text-[#EF4444]'
+              )}>
+                {formatStateLabelVN(data.overall_state)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] text-[#64748b]">Chế độ:</span>
+              <span className="text-[13px] font-medium text-white">{data.auto_mode.selected_mode}</span>
+            </div>
+
+            <div className="text-[13px] text-[#64748b]">
+              {data.auto_mode.mode_reason_human}
+            </div>
+
+            <Link
+              href={`/projects/${projectId}/internal-services`}
+              className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
+            >
+              Dịch vụ nội bộ
+            </Link>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
+            <div className="flex flex-col gap-2">
+              <span className="text-[13px] font-semibold text-[#94a3b8]">Domain công khai</span>
+              {primaryPublicURL ? (
+                <div className="flex flex-col gap-2">
+                  <a
+                    href={primaryPublicURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="break-all text-[14px] font-medium text-[#38BDF8] underline-offset-4 hover:underline"
+                  >
+                    {primaryPublicURL}
+                  </a>
+                  {fallbackPublicURLs.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {fallbackPublicURLs.map((url) => (
+                        <a
+                          key={url}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="break-all text-[12px] text-[#94a3b8] underline-offset-4 hover:text-white hover:underline"
+                        >
+                          {url}
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-[13px] text-[#94a3b8]">
+                  {data.public_url_reason || 'Chưa có domain công khai cho project này.'}
+                </p>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="grid gap-6 px-2">
         {orderedSteps.map((step) => (

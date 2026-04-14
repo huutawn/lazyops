@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, useWatch } from 'react-hook-form';
 import { useDeploymentBindings, useCreateDeploymentBinding } from '@/modules/deployment-bindings/binding-hooks';
@@ -22,8 +22,7 @@ import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
-import { useSession } from '@/lib/auth/auth-hooks';
+import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
 
 const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
   standalone: 'Standalone',
@@ -67,22 +66,13 @@ function buildAutoBindingName(targetID: string, fallbackKind: TargetKind): strin
 
 export default function DeploymentBindingsPage() {
   const params = useParams();
-  const router = useRouter();
   const projectId = params?.projectId as string;
-  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
-  const { data: session, isLoading: sessionLoading } = useSession();
-  const isAdmin = session?.role === 'admin';
-
-  useEffect(() => {
-    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
-      router.replace(`/projects/${projectId}`);
-    }
-  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
+  const { shouldBlock } = useProjectExpertRouteGuard(projectId);
 
   const { data, isLoading, isError } = useDeploymentBindings(projectId);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
+  if (shouldBlock) {
     return <SkeletonPage title cards={1} />;
   }
 

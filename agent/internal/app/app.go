@@ -32,6 +32,7 @@ type App struct {
 	dispatcher *dispatcher.CommandDispatcher
 	enroll     *enroll.Service
 	reporter   *reporting.Reporter
+	runtime    *agentruntime.Service
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -67,8 +68,13 @@ func New(cfg config.Config) (*App, error) {
 		WithStateEncryptionKey(cfg.StateEncryptionKey).
 		WithAgentImageRef(cfg.AgentImageRef)
 	runtimeService := agentruntime.NewService(logger, store, runtimeDriver)
+	logCollector := agentruntime.NewLogCollector(logger, agentruntime.DefaultLogCollectorConfig())
+	runtimeDriver.WithLogCollector(logCollector)
+	runtimeService.WithLogCollector(logCollector)
+	runtimeService.WithLogSender(client)
 	metricAggregator := agentruntime.NewMetricAggregator(logger, agentruntime.DefaultMetricAggregatorConfig())
 	nodeMetricsCollector := agentruntime.NewNodeMetricsCollector(logger, agentruntime.DefaultNodeMetricsConfig())
+	_ = nodeMetricsCollector.Collect()
 	runtimeService.WithMetricAggregator(metricAggregator)
 	runtimeService.WithNodeMetrics(nodeMetricsCollector)
 	runtimeService.WithMetricSender(client)
@@ -90,6 +96,7 @@ func New(cfg config.Config) (*App, error) {
 		dispatcher: commandDispatcher,
 		enroll:     enroll.New(store, client, logger, cfg.StateEncryptionKey),
 		reporter:   reporting.New(logger, cfg.HeartbeatInterval),
+		runtime:    runtimeService,
 	}, nil
 }
 
@@ -206,6 +213,12 @@ func (a *App) Run(ctx context.Context) error {
 				return nil
 			}); err != nil {
 				return fmt.Errorf("persist heartbeat reporting state: %w", err)
+			}
+
+			if a.runtime != nil {
+				if err := a.runtime.FlushLogBatches(ctx); err != nil {
+					a.logger.Warn("failed to flush runtime log batches", "error", err)
+				}
 			}
 
 			a.logger.Debug("heartbeat sent",

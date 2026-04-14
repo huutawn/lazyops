@@ -112,6 +112,20 @@ func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) resp
 		})
 	}
 
+	internalServices := make([]responsedto.BootstrapRuntimeInternalServiceResponse, 0, len(record.RuntimeInventory.InternalServices))
+	for _, item := range record.RuntimeInventory.InternalServices {
+		internalServices = append(internalServices, responsedto.BootstrapRuntimeInternalServiceResponse{
+			ID:            item.ID,
+			Alias:         item.Alias,
+			Kind:          item.Kind,
+			Protocol:      item.Protocol,
+			LocalEndpoint: item.LocalEndpoint,
+			ContainerName: item.ContainerName,
+			Status:        item.Status,
+			StatusReason:  item.StatusReason,
+		})
+	}
+
 	return responsedto.BootstrapStatusResponse{
 		ProjectID:    record.ProjectID,
 		OverallState: record.OverallState,
@@ -130,6 +144,32 @@ func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) resp
 			HealthyInstances:    record.Inventory.HealthyInstances,
 			HealthyMeshNetworks: record.Inventory.HealthyMeshNetworks,
 			HealthyK3sClusters:  record.Inventory.HealthyK3sClusters,
+		},
+		RuntimeInventory: responsedto.BootstrapRuntimeInventoryResponse{
+			SyncState:        record.RuntimeInventory.SyncState,
+			SyncReason:       record.RuntimeInventory.SyncReason,
+			RuntimeMode:      record.RuntimeInventory.RuntimeMode,
+			LiveRevisionID:   record.RuntimeInventory.LiveRevisionID,
+			LiveRevision:     record.RuntimeInventory.LiveRevision,
+			StableRevisionID: record.RuntimeInventory.StableRevisionID,
+			StableRevision:   record.RuntimeInventory.StableRevision,
+			AppRuntime: responsedto.BootstrapRuntimeWorkloadResponse{
+				ServiceName:   record.RuntimeInventory.AppRuntime.ServiceName,
+				ContainerName: record.RuntimeInventory.AppRuntime.ContainerName,
+				ImageRef:      record.RuntimeInventory.AppRuntime.ImageRef,
+				CommitSHA:     record.RuntimeInventory.AppRuntime.CommitSHA,
+				Status:        record.RuntimeInventory.AppRuntime.Status,
+				StatusReason:  record.RuntimeInventory.AppRuntime.StatusReason,
+				TargetIDs:     append([]string{}, record.RuntimeInventory.AppRuntime.TargetIDs...),
+			},
+			SidecarRuntime: responsedto.BootstrapRuntimeSidecarResponse{
+				Enabled:       record.RuntimeInventory.SidecarRuntime.Enabled,
+				ServiceName:   record.RuntimeInventory.SidecarRuntime.ServiceName,
+				ContainerName: record.RuntimeInventory.SidecarRuntime.ContainerName,
+				Status:        record.RuntimeInventory.SidecarRuntime.Status,
+				StatusReason:  record.RuntimeInventory.SidecarRuntime.StatusReason,
+			},
+			InternalServices: internalServices,
 		},
 		PublicURLs:      append([]string{}, record.PublicURLs...),
 		PublicURLReason: record.PublicURLReason,

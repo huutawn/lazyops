@@ -444,6 +444,34 @@ func (ctl *AgentControlController) handleMetricRollup(client *service.ControlCli
 			Avg   float64 `json:"avg"`
 			Count int64   `json:"count"`
 		} `json:"ram"`
+		Disk struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"disk"`
+		NetworkIn struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"network_in"`
+		NetworkOut struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"network_out"`
+		RequestCount struct {
+			P95   float64 `json:"p95"`
+			Max   float64 `json:"max"`
+			Min   float64 `json:"min"`
+			Avg   float64 `json:"avg"`
+			Count int64   `json:"count"`
+		} `json:"request_count"`
 		Latency struct {
 			P95   float64 `json:"p95"`
 			Max   float64 `json:"max"`
@@ -476,6 +504,34 @@ func (ctl *AgentControlController) handleMetricRollup(client *service.ControlCli
 			Min:   payload.RAM.Min,
 			Avg:   payload.RAM.Avg,
 			Count: payload.RAM.Count,
+		},
+		Disk: service.AgentMetricAggregate{
+			P95:   payload.Disk.P95,
+			Max:   payload.Disk.Max,
+			Min:   payload.Disk.Min,
+			Avg:   payload.Disk.Avg,
+			Count: payload.Disk.Count,
+		},
+		NetworkIn: service.AgentMetricAggregate{
+			P95:   payload.NetworkIn.P95,
+			Max:   payload.NetworkIn.Max,
+			Min:   payload.NetworkIn.Min,
+			Avg:   payload.NetworkIn.Avg,
+			Count: payload.NetworkIn.Count,
+		},
+		NetworkOut: service.AgentMetricAggregate{
+			P95:   payload.NetworkOut.P95,
+			Max:   payload.NetworkOut.Max,
+			Min:   payload.NetworkOut.Min,
+			Avg:   payload.NetworkOut.Avg,
+			Count: payload.NetworkOut.Count,
+		},
+		RequestCount: service.AgentMetricAggregate{
+			P95:   payload.RequestCount.P95,
+			Max:   payload.RequestCount.Max,
+			Min:   payload.RequestCount.Min,
+			Avg:   payload.RequestCount.Avg,
+			Count: payload.RequestCount.Count,
 		},
 		Latency: service.AgentMetricAggregate{
 			P95:   payload.Latency.P95,

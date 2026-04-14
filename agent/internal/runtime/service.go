@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,6 +134,45 @@ func (s *Service) WithScaleToZeroGuard(guard *ScaleToZeroGuard) *Service {
 func (s *Service) WithNodeAgentGuard(guard *NodeAgentGuard) *Service {
 	s.nodeAgentGuard = guard
 	return s
+}
+
+func (s *Service) FlushLogBatches(ctx context.Context) error {
+	if s.logCollector == nil {
+		return nil
+	}
+	_, err := s.logCollector.HandleReportLogBatch(ctx, s.logger, ReportLogBatchPayload{
+		LogSender: s.logSender,
+	})
+	return err
+}
+
+func (s *Service) emitRuntimeEvent(runtimeCtx RuntimeContext, source string, severity contracts.Severity, message string, labels map[string]string) {
+	if s == nil || s.logCollector == nil || strings.TrimSpace(message) == "" {
+		return
+	}
+
+	merged := map[string]string{
+		"project_id":  strings.TrimSpace(runtimeCtx.Project.ProjectID),
+		"binding_id":  strings.TrimSpace(runtimeCtx.Binding.BindingID),
+		"revision_id": strings.TrimSpace(runtimeCtx.Revision.RevisionID),
+		"service":     primaryMetricServiceName(runtimeCtx.Services),
+		"source_kind": "agent",
+	}
+	for key, value := range labels {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		merged[key] = value
+	}
+
+	s.logCollector.Ingest(contracts.LogEntry{
+		Timestamp: s.now(),
+		Severity:  severity,
+		Source:    firstNonEmptyString(source, "agent"),
+		Message:   strings.TrimSpace(message),
+		Excerpt:   truncateLogExcerpt(message, s.logCollector.cfg.ExcerptMaxLength),
+		Labels:    merged,
+	})
 }
 
 func (s *Service) Register(registry *dispatcher.Registry) {
@@ -282,6 +322,10 @@ func (s *Service) handlePrepareReleaseWorkspace(ctx context.Context, envelope co
 			"workspace_root", prepared.Layout.Root,
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, "release workspace prepared", map[string]string{
+		"operation":      "prepare_release_workspace",
+		"workspace_root": prepared.Layout.Root,
+	})
 
 	return dispatcher.Done("release workspace prepared")
 }
@@ -399,6 +443,10 @@ func (s *Service) handleRenderGatewayConfig(ctx context.Context, envelope contra
 			"public_urls", len(rendered.PublicURLs),
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, fmt.Sprintf("gateway config rendered as %s", rendered.Version), map[string]string{
+		"operation":       "render_gateway_config",
+		"gateway_version": rendered.Version,
+	})
 
 	return dispatcher.Done(fmt.Sprintf("gateway config rendered and applied as %s", rendered.Version))
 }
@@ -459,6 +507,10 @@ func (s *Service) handleRenderSidecars(ctx context.Context, envelope contracts.C
 			"enabled_services", len(rendered.Services),
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, fmt.Sprintf("sidecar config rendered as %s", rendered.Version), map[string]string{
+		"operation":       "render_sidecars",
+		"sidecar_version": rendered.Version,
+	})
 
 	return dispatcher.Done(fmt.Sprintf("sidecar config rendered and applied as %s", rendered.Version))
 }
@@ -501,6 +553,10 @@ func (s *Service) handleReconcileRevision(ctx context.Context, envelope contract
 			"applied_steps", len(result.AppliedSteps),
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, fmt.Sprintf("revision %s reconciled", result.RevisionID), map[string]string{
+		"operation":     "reconcile_revision",
+		"applied_steps": strconv.Itoa(len(result.AppliedSteps)),
+	})
 
 	return dispatcher.Done(fmt.Sprintf("revision %s reconciled with %d steps", result.RevisionID, len(result.AppliedSteps)))
 }
@@ -575,7 +631,7 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 			TargetID:      runtimeCtx.Binding.TargetID,
 			ServiceName:   serviceName,
 			Force:         true,
-			WorkspaceRoot: "",
+			WorkspaceRoot: s.workspaceRootForRuntimeContext(runtimeCtx),
 			MetricSender:  s.metricSender,
 		}); err != nil && s.logger != nil {
 			s.logger.Warn("health gate metric rollup failed",
@@ -616,6 +672,12 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 			"policy_action", report.PolicyAction,
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, report.Summary, map[string]string{
+		"operation":         "run_health_gate",
+		"candidate_state":   string(report.CandidateState),
+		"policy_action":     string(report.PolicyAction),
+		"health_promotable": strconv.FormatBool(report.Promotable),
+	})
 
 	if !report.Promotable {
 		details := map[string]any{
@@ -638,6 +700,14 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 	}
 
 	return dispatcher.Done(report.Summary)
+}
+
+func (s *Service) workspaceRootForRuntimeContext(runtimeCtx RuntimeContext) string {
+	driver, ok := s.driver.(*FilesystemDriver)
+	if !ok || driver == nil {
+		return ""
+	}
+	return workspaceLayout(driver.root, runtimeCtx).Root
 }
 
 func primaryMetricServiceName(services []ServiceRuntimeContext) string {
@@ -729,6 +799,12 @@ func (s *Service) handlePromoteRelease(ctx context.Context, envelope contracts.C
 			"sidecar_version", promoted.SidecarVersion,
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, promoted.Summary.Summary, map[string]string{
+		"operation":                   "promote_release",
+		"previous_stable_revision_id": promoted.PreviousStableRevisionID,
+		"gateway_version":             promoted.GatewayVersion,
+		"sidecar_version":             promoted.SidecarVersion,
+	})
 
 	return dispatcher.Done(promoted.Summary.Summary)
 }
@@ -804,6 +880,11 @@ func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.
 			"incident_severity", nonNilIncidentSeverity(rolledBack.Incident),
 		)
 	}
+	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityWarning, rolledBack.Summary.Summary, map[string]string{
+		"operation":            "rollback_release",
+		"failed_revision_id":   rolledBack.FailedRevisionID,
+		"restored_revision_id": rolledBack.RestoredRevisionID,
+	})
 
 	return dispatcher.Done(rolledBack.Summary.Summary)
 }

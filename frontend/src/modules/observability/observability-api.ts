@@ -16,10 +16,11 @@ export type ObservabilityMetricListResponse = {
 
 export async function listProjectLogs(
   projectID: string,
-  filters: { service?: string; level?: string; contains?: string; limit?: number } = {},
+  filters: { service?: string; source?: string; level?: string; contains?: string; limit?: number } = {},
 ): Promise<ApiResponse<ObservabilityLogListResponse>> {
   const params: Record<string, string> = {};
   if (filters.service) params.service = filters.service;
+  if (filters.source) params.source = filters.source;
   if (filters.level) params.level = filters.level;
   if (filters.contains) params.contains = filters.contains;
   if (filters.limit && filters.limit > 0) params.limit = String(filters.limit);

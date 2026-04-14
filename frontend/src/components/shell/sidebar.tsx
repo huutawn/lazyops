@@ -31,13 +31,13 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[260px] flex-col border-r border-[#1e293b] bg-[#090E17] transition-all duration-300 ease-in-out lg:static lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-[300px] flex-col border-r border-[#1e293b] bg-[#090E17] transition-all duration-300 ease-in-out lg:static lg:translate-x-0',
           mobileOpen ? 'translate-x-0 shadow-2xl shadow-primary/10' : '-translate-x-full',
         )}
       >
-        <div className="flex h-20 shrink-0 items-center px-6 mt-4">
+        <div className="flex h-24 shrink-0 items-center px-6 mt-4">
           {!logoError ? (
-            <div className="relative h-8 w-32">
+            <div className="relative h-12 w-40">
               <Image
                 src="/logo.png"
                 alt="LazyOps Logo"
@@ -66,7 +66,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                   <Link
                     href={item.href}
                     className={cn(
-                      'group flex items-center gap-3 rounded-lg px-4 py-3 text-[15px] font-medium transition-all duration-200 relative overflow-hidden',
+                      'group flex items-center gap-4 rounded-lg px-5 py-4 text-[17px] font-semibold transition-all duration-200 relative overflow-hidden',
                       isActive
                         ? 'text-[#38BDF8] bg-[#0c1a2c]'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-[#111c2e]',
@@ -74,7 +74,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                     onClick={onClose}
                   >
                     {Icon && (
-                      <Icon className={cn("size-[18px]", isActive ? "text-[#38BDF8]" : "text-slate-400")} />
+                      <Icon className={cn("size-[22px]", isActive ? "text-[#38BDF8]" : "text-slate-400")} />
                     )}
                     {item.label}
                   </Link>
@@ -87,9 +87,9 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
         <div className="p-4 border-t border-[#1e293b]">
           <button
             onClick={() => logout.mutate()}
-            className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-[15px] font-medium text-slate-400 transition-all hover:text-slate-200 hover:bg-[#111c2e]"
+            className="flex w-full items-center gap-4 rounded-lg px-5 py-4 text-[17px] font-semibold text-slate-400 transition-all hover:text-slate-200 hover:bg-[#111c2e]"
           >
-            <LogOut className="size-[18px]" />
+            <LogOut className="size-[22px]" />
             Đăng xuất
           </button>
         </div>

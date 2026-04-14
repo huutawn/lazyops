@@ -4,6 +4,7 @@ export type LogEntry = {
   id: string;
   deployment_id?: string;
   service: string;
+  source?: string;
   revision_id?: string;
   correlation_id?: string;
   level: LogLevel;
@@ -55,6 +56,12 @@ export type MetricRecord = {
   ram_max: number;
   ram_min: number;
   ram_avg: number;
+  disk_p95_bytes?: number;
+  disk_max_bytes?: number;
+  disk_min_bytes?: number;
+  disk_avg_bytes?: number;
+  network_in_total_bytes?: number;
+  network_out_total_bytes?: number;
   request_count: number;
   period: string;
 };

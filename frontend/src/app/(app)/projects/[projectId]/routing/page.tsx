@@ -9,10 +9,12 @@ import { SkeletonPage } from '@/components/primitives/skeleton';
 import { FormButton, FormField, FormInput } from '@/components/forms/form-fields';
 import { useProjectRouting, useUpdateProjectRouting } from '@/modules/project-routing/project-routing-hooks';
 import type { RoutingRoute } from '@/modules/project-routing/project-routing-types';
+import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
 
 export default function RoutingPage() {
   const params = useParams();
   const projectId = params.projectId as string;
+  const { shouldBlock } = useProjectExpertRouteGuard(projectId);
 
   const { data, isLoading, error } = useProjectRouting(projectId);
   const update = useUpdateProjectRouting(projectId);
@@ -22,6 +24,10 @@ export default function RoutingPage() {
     data?.routing_policy?.routes ?? [],
   );
   const [isDirty, setIsDirty] = useState(false);
+
+  if (shouldBlock) {
+    return <SkeletonPage title cards={2} />;
+  }
 
   const availableServices = useMemo(() => {
     return data?.available_services ?? [];

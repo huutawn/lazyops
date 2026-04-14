@@ -30,14 +30,18 @@ type IncidentPayload struct {
 }
 
 type MetricRollupPayload struct {
-	ProjectID   string          `json:"project_id"`
-	TargetKind  TargetKind      `json:"target_kind"`
-	TargetID    string          `json:"target_id"`
-	ServiceName string          `json:"service_name,omitempty"`
-	Window      MetricWindow    `json:"window"`
-	CPU         MetricAggregate `json:"cpu"`
-	RAM         MetricAggregate `json:"ram"`
-	Latency     MetricAggregate `json:"latency,omitempty"`
+	ProjectID    string          `json:"project_id"`
+	TargetKind   TargetKind      `json:"target_kind"`
+	TargetID     string          `json:"target_id"`
+	ServiceName  string          `json:"service_name,omitempty"`
+	Window       MetricWindow    `json:"window"`
+	CPU          MetricAggregate `json:"cpu"`
+	RAM          MetricAggregate `json:"ram"`
+	Disk         MetricAggregate `json:"disk"`
+	NetworkIn    MetricAggregate `json:"network_in"`
+	NetworkOut   MetricAggregate `json:"network_out"`
+	RequestCount MetricAggregate `json:"request_count"`
+	Latency      MetricAggregate `json:"latency,omitempty"`
 }
 
 type TopologyPayload struct {

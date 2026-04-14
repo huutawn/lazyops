@@ -27,6 +27,9 @@ func (r *LogStreamRepository) ListByQuery(query models.LogStreamQuery) ([]models
 	if query.ServiceName != "" {
 		tx = tx.Where("service_name = ?", query.ServiceName)
 	}
+	if query.Source != "" {
+		tx = tx.Where("source = ?", query.Source)
+	}
 	if query.Level != "" {
 		tx = tx.Where("level = ?", query.Level)
 	}

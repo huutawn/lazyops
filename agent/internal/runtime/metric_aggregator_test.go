@@ -174,9 +174,13 @@ func TestMetricAggregatorBuildMetricRollup(t *testing.T) {
 	a := testMetricAggregator()
 	cpu := contracts.MetricAggregate{P95: 80, Max: 95, Min: 10, Avg: 50, Count: 100}
 	ram := contracts.MetricAggregate{P95: 4096, Max: 8192, Min: 1024, Avg: 3072, Count: 100}
+	disk := contracts.MetricAggregate{P95: 10_000, Max: 12_000, Min: 8_000, Avg: 9_500, Count: 6}
+	networkIn := contracts.MetricAggregate{P95: 600, Max: 900, Min: 100, Avg: 450, Count: 6}
+	networkOut := contracts.MetricAggregate{P95: 500, Max: 700, Min: 120, Avg: 390, Count: 6}
+	requestCount := contracts.MetricAggregate{P95: 42, Max: 42, Min: 42, Avg: 42, Count: 42}
 	latency := contracts.MetricAggregate{P95: 200, Max: 500, Min: 5, Avg: 50, Count: 1000}
 
-	rollup := a.BuildMetricRollup("prj_123", contracts.TargetKindInstance, "inst_123", "api", contracts.MetricWindow1Min, cpu, ram, &latency)
+	rollup := a.BuildMetricRollup("prj_123", contracts.TargetKindInstance, "inst_123", "api", contracts.MetricWindow1Min, cpu, ram, disk, networkIn, networkOut, &requestCount, &latency)
 
 	if rollup.ProjectID != "prj_123" {
 		t.Fatalf("expected project_id prj_123, got %q", rollup.ProjectID)
@@ -190,6 +194,15 @@ func TestMetricAggregatorBuildMetricRollup(t *testing.T) {
 	if rollup.RAM.Avg != 3072 {
 		t.Fatalf("expected ram avg 3072, got %f", rollup.RAM.Avg)
 	}
+	if rollup.Disk.Avg != 9500 {
+		t.Fatalf("expected disk avg 9500, got %f", rollup.Disk.Avg)
+	}
+	if rollup.NetworkIn.Avg != 450 {
+		t.Fatalf("expected network_in avg 450, got %f", rollup.NetworkIn.Avg)
+	}
+	if rollup.RequestCount.Count != 42 {
+		t.Fatalf("expected request_count 42, got %d", rollup.RequestCount.Count)
+	}
 	if rollup.Latency.Avg != 50 {
 		t.Fatalf("expected latency avg 50, got %f", rollup.Latency.Avg)
 	}
@@ -199,8 +212,9 @@ func TestMetricAggregatorBuildMetricRollupNoLatency(t *testing.T) {
 	a := testMetricAggregator()
 	cpu := contracts.MetricAggregate{P95: 80, Max: 95, Min: 10, Avg: 50, Count: 100}
 	ram := contracts.MetricAggregate{P95: 4096, Max: 8192, Min: 1024, Avg: 3072, Count: 100}
+	disk := contracts.MetricAggregate{P95: 10_000, Max: 12_000, Min: 8_000, Avg: 9_500, Count: 6}
 
-	rollup := a.BuildMetricRollup("prj_123", contracts.TargetKindInstance, "inst_123", "", contracts.MetricWindow1Min, cpu, ram, nil)
+	rollup := a.BuildMetricRollup("prj_123", contracts.TargetKindInstance, "inst_123", "", contracts.MetricWindow1Min, cpu, ram, disk, contracts.MetricAggregate{}, contracts.MetricAggregate{}, nil, nil)
 
 	if rollup.Latency.Count != 0 {
 		t.Fatalf("expected no latency data, got count %d", rollup.Latency.Count)
@@ -211,7 +225,7 @@ func TestMetricAggregatorPersistMetricRollup(t *testing.T) {
 	a := testMetricAggregator()
 	cpu := contracts.MetricAggregate{P95: 80, Max: 95, Min: 10, Avg: 50, Count: 100}
 	ram := contracts.MetricAggregate{P95: 4096, Max: 8192, Min: 1024, Avg: 3072, Count: 100}
-	rollup := a.BuildMetricRollup("prj_123", contracts.TargetKindInstance, "inst_123", "api", contracts.MetricWindow1Min, cpu, ram, nil)
+	rollup := a.BuildMetricRollup("prj_123", contracts.TargetKindInstance, "inst_123", "api", contracts.MetricWindow1Min, cpu, ram, contracts.MetricAggregate{}, contracts.MetricAggregate{}, contracts.MetricAggregate{}, nil, nil)
 
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	metricPath, err := a.PersistMetricRollup(root, "prj_123", "bind_123", rollup)
@@ -237,9 +251,23 @@ func TestMetricAggregatorPersistMetricRollup(t *testing.T) {
 }
 
 func TestComputeAggregateEmptySamples(t *testing.T) {
-	agg := computeAggregate(nil)
+	agg := computeAggregate(MetricNameCPU, nil)
 	if agg.Count != 0 {
 		t.Fatalf("expected count 0 for empty samples, got %d", agg.Count)
+	}
+}
+
+func TestComputeAggregateRequestCountUsesSampleSum(t *testing.T) {
+	agg := computeAggregate(MetricNameRequestCount, []metricSample{
+		{value: 3},
+		{value: 5},
+		{value: 7},
+	})
+	if agg.Count != 15 {
+		t.Fatalf("expected request_count 15, got %d", agg.Count)
+	}
+	if agg.Avg != 5 {
+		t.Fatalf("expected avg 5, got %f", agg.Avg)
 	}
 }
 
@@ -371,5 +399,54 @@ func TestMetricAggregatorHandleReportMetricRollupWithSender(t *testing.T) {
 	}
 	if sender.sent[0].Latency.Count != 1 {
 		t.Fatalf("expected latency count 1, got %d", sender.sent[0].Latency.Count)
+	}
+}
+
+func TestMetricAggregatorConsumesAccessLogDelta(t *testing.T) {
+	a := testMetricAggregator()
+	root := filepath.Join(t.TempDir(), "runtime-root", "projects", "prj_123", "bindings", "bind_123", "revisions", "rev_123")
+	accessLogPath := filepath.Join(filepath.Dir(filepath.Dir(root)), "gateway", "live", "access.log")
+	if err := os.MkdirAll(filepath.Dir(accessLogPath), 0o755); err != nil {
+		t.Fatalf("mkdir access log dir: %v", err)
+	}
+	if err := os.WriteFile(accessLogPath, []byte("{\"status\":200}\n{\"status\":200}\n"), 0o644); err != nil {
+		t.Fatalf("write access log: %v", err)
+	}
+
+	first, ok, err := a.consumeAccessLogRequestCount(root)
+	if err != nil {
+		t.Fatalf("consume access log request count: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected request count aggregate on first read")
+	}
+	if first.Count != 2 {
+		t.Fatalf("expected 2 access log entries, got %d", first.Count)
+	}
+
+	second, ok, err := a.consumeAccessLogRequestCount(root)
+	if err != nil {
+		t.Fatalf("consume access log request count second pass: %v", err)
+	}
+	if ok || second.Count != 0 {
+		t.Fatalf("expected no delta on second read, got ok=%t count=%d", ok, second.Count)
+	}
+
+	file, err := os.OpenFile(accessLogPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open access log for append: %v", err)
+	}
+	if _, err := file.WriteString("{\"status\":502}\n"); err != nil {
+		_ = file.Close()
+		t.Fatalf("append access log: %v", err)
+	}
+	_ = file.Close()
+
+	third, ok, err := a.consumeAccessLogRequestCount(root)
+	if err != nil {
+		t.Fatalf("consume access log request count third pass: %v", err)
+	}
+	if !ok || third.Count != 1 {
+		t.Fatalf("expected 1 new access log entry, got ok=%t count=%d", ok, third.Count)
 	}
 }

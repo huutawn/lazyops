@@ -41,15 +41,58 @@ type BootstrapInventoryResponse struct {
 	HealthyK3sClusters  int `json:"healthy_k3s_clusters"`
 }
 
+type BootstrapRuntimeWorkloadResponse struct {
+	ServiceName   string   `json:"service_name,omitempty"`
+	ContainerName string   `json:"container_name,omitempty"`
+	ImageRef      string   `json:"image_ref,omitempty"`
+	CommitSHA     string   `json:"commit_sha,omitempty"`
+	Status        string   `json:"status"`
+	StatusReason  string   `json:"status_reason,omitempty"`
+	TargetIDs     []string `json:"target_ids,omitempty"`
+}
+
+type BootstrapRuntimeSidecarResponse struct {
+	Enabled       bool   `json:"enabled"`
+	ServiceName   string `json:"service_name,omitempty"`
+	ContainerName string `json:"container_name,omitempty"`
+	Status        string `json:"status"`
+	StatusReason  string `json:"status_reason,omitempty"`
+}
+
+type BootstrapRuntimeInternalServiceResponse struct {
+	ID            string `json:"id"`
+	Alias         string `json:"alias"`
+	Kind          string `json:"kind"`
+	Protocol      string `json:"protocol"`
+	LocalEndpoint string `json:"local_endpoint"`
+	ContainerName string `json:"container_name,omitempty"`
+	Status        string `json:"status"`
+	StatusReason  string `json:"status_reason,omitempty"`
+}
+
+type BootstrapRuntimeInventoryResponse struct {
+	SyncState        string                                    `json:"sync_state"`
+	SyncReason       string                                    `json:"sync_reason,omitempty"`
+	RuntimeMode      string                                    `json:"runtime_mode,omitempty"`
+	LiveRevisionID   string                                    `json:"live_revision_id,omitempty"`
+	LiveRevision     int                                       `json:"live_revision,omitempty"`
+	StableRevisionID string                                    `json:"stable_revision_id,omitempty"`
+	StableRevision   int                                       `json:"stable_revision,omitempty"`
+	AppRuntime       BootstrapRuntimeWorkloadResponse          `json:"app_runtime"`
+	SidecarRuntime   BootstrapRuntimeSidecarResponse           `json:"sidecar_runtime"`
+	InternalServices []BootstrapRuntimeInternalServiceResponse `json:"internal_services"`
+}
+
 type BootstrapStatusResponse struct {
-	ProjectID    string                     `json:"project_id"`
-	OverallState string                     `json:"overall_state"`
-	Steps        []BootstrapStepResponse    `json:"steps"`
-	AutoMode     BootstrapAutoModeResponse  `json:"auto_mode"`
-	Inventory    BootstrapInventoryResponse `json:"inventory"`
-	PublicURLs   []string                   `json:"public_urls"`
-	PublicURLReason string                  `json:"public_url_reason,omitempty"`
-	UpdatedAt    time.Time                  `json:"updated_at"`
+	ProjectID        string                            `json:"project_id"`
+	OverallState     string                            `json:"overall_state"`
+	Steps            []BootstrapStepResponse           `json:"steps"`
+	AutoMode         BootstrapAutoModeResponse         `json:"auto_mode"`
+	Inventory        BootstrapInventoryResponse        `json:"inventory"`
+	RuntimeInventory BootstrapRuntimeInventoryResponse `json:"runtime_inventory"`
+	PublicURLs       []string                          `json:"public_urls"`
+	PublicURLReason  string                            `json:"public_url_reason,omitempty"`
+	UpdatedAt        time.Time                         `json:"updated_at"`
 }
 
 type BootstrapPipelineEventResponse struct {

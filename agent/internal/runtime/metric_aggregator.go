@@ -1,14 +1,18 @@
 package runtime
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,9 +49,10 @@ type MetricAggregator struct {
 	cfg    MetricAggregatorConfig
 	now    func() time.Time
 
-	mu    sync.Mutex
-	slots map[string]*metricSlot
-	total int
+	mu               sync.Mutex
+	slots            map[string]*metricSlot
+	accessLogOffsets map[string]int64
+	total            int
 }
 
 func NewMetricAggregator(logger *slog.Logger, cfg MetricAggregatorConfig) *MetricAggregator {
@@ -67,7 +72,8 @@ func NewMetricAggregator(logger *slog.Logger, cfg MetricAggregatorConfig) *Metri
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-		slots: make(map[string]*metricSlot),
+		slots:            make(map[string]*metricSlot),
+		accessLogOffsets: make(map[string]int64),
 	}
 }
 
@@ -110,10 +116,10 @@ func (a *MetricAggregator) ComputeAggregate(metricName string) (contracts.Metric
 		return contracts.MetricAggregate{}, false
 	}
 
-	return computeAggregate(slot.samples), true
+	return computeAggregate(metricName, slot.samples), true
 }
 
-func computeAggregate(samples []metricSample) contracts.MetricAggregate {
+func computeAggregate(metricName string, samples []metricSample) contracts.MetricAggregate {
 	if len(samples) == 0 {
 		return contracts.MetricAggregate{}
 	}
@@ -146,8 +152,19 @@ func computeAggregate(samples []metricSample) contracts.MetricAggregate {
 		Max:   max,
 		Min:   min,
 		Avg:   avg,
-		Count: int64(len(values)),
+		Count: aggregateCount(metricName, sum, len(values)),
 	}
+}
+
+func aggregateCount(metricName string, sum float64, sampleCount int) int64 {
+	if strings.TrimSpace(metricName) == MetricNameRequestCount {
+		total := int64(math.Round(sum))
+		if total < 0 {
+			return 0
+		}
+		return total
+	}
+	return int64(sampleCount)
 }
 
 func (a *MetricAggregator) CollectExpiredWindows() map[string]contracts.MetricAggregate {
@@ -165,7 +182,7 @@ func (a *MetricAggregator) CollectExpiredWindows() map[string]contracts.MetricAg
 			continue
 		}
 
-		result[name] = computeAggregate(slot.samples)
+		result[name] = computeAggregate(name, slot.samples)
 		delete(a.slots, name)
 	}
 
@@ -181,13 +198,20 @@ func (a *MetricAggregator) CollectAllWindows() map[string]contracts.MetricAggreg
 		if len(slot.samples) == 0 {
 			continue
 		}
-		result[name] = computeAggregate(slot.samples)
+		result[name] = computeAggregate(name, slot.samples)
 		delete(a.slots, name)
 	}
 	return result
 }
 
-func (a *MetricAggregator) BuildMetricRollup(projectID string, targetKind contracts.TargetKind, targetID, serviceName string, window contracts.MetricWindow, cpu, ram contracts.MetricAggregate, latency *contracts.MetricAggregate) contracts.MetricRollupPayload {
+func (a *MetricAggregator) BuildMetricRollup(
+	projectID string,
+	targetKind contracts.TargetKind,
+	targetID, serviceName string,
+	window contracts.MetricWindow,
+	cpu, ram, disk, networkIn, networkOut contracts.MetricAggregate,
+	requestCount, latency *contracts.MetricAggregate,
+) contracts.MetricRollupPayload {
 	payload := contracts.MetricRollupPayload{
 		ProjectID:   projectID,
 		TargetKind:  targetKind,
@@ -196,6 +220,12 @@ func (a *MetricAggregator) BuildMetricRollup(projectID string, targetKind contra
 		Window:      window,
 		CPU:         cpu,
 		RAM:         ram,
+		Disk:        disk,
+		NetworkIn:   networkIn,
+		NetworkOut:  networkOut,
+	}
+	if requestCount != nil {
+		payload.RequestCount = *requestCount
 	}
 	if latency != nil {
 		payload.Latency = *latency
@@ -247,6 +277,16 @@ type ReportMetricRollupPayload struct {
 	MetricSender  MetricSender          `json:"-"`
 }
 
+const (
+	MetricNameCPU          = "cpu"
+	MetricNameRAM          = "ram"
+	MetricNameDisk         = "disk"
+	MetricNameNetworkIn    = "network_in"
+	MetricNameNetworkOut   = "network_out"
+	MetricNameRequestCount = "request_count"
+	MetricNameLatency      = "latency"
+)
+
 func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger *slog.Logger, payload ReportMetricRollupPayload) (int, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -258,7 +298,16 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 	} else {
 		aggregates = a.CollectExpiredWindows()
 	}
-	if len(aggregates) == 0 {
+	requestCount, hasRequestCount, err := a.consumeAccessLogRequestCount(payload.WorkspaceRoot)
+	if err != nil {
+		logger.Warn("could not consume gateway access log request count",
+			"project_id", payload.ProjectID,
+			"binding_id", payload.BindingID,
+			"error", err,
+		)
+	}
+
+	if len(aggregates) == 0 && !hasRequestCount {
 		logger.Info("no metric windows to report",
 			"project_id", payload.ProjectID,
 			"binding_id", payload.BindingID,
@@ -266,11 +315,21 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 		return 0, nil
 	}
 
-	cpu, hasCPU := aggregates["cpu"]
-	ram, hasRAM := aggregates["ram"]
-	latency, hasLatency := aggregates["latency"]
+	cpu, hasCPU := aggregates[MetricNameCPU]
+	ram, hasRAM := aggregates[MetricNameRAM]
+	disk, hasDisk := aggregates[MetricNameDisk]
+	networkIn, hasNetworkIn := aggregates[MetricNameNetworkIn]
+	networkOut, hasNetworkOut := aggregates[MetricNameNetworkOut]
+	latency, hasLatency := aggregates[MetricNameLatency]
 
-	if !hasCPU && !hasRAM && !hasLatency {
+	if !hasRequestCount {
+		if aggregate, ok := aggregates[MetricNameRequestCount]; ok && aggregate.Count > 0 {
+			requestCount = aggregate
+			hasRequestCount = true
+		}
+	}
+
+	if !hasCPU && !hasRAM && !hasDisk && !hasNetworkIn && !hasNetworkOut && !hasRequestCount && !hasLatency {
 		logger.Info("no relevant metric aggregates found",
 			"project_id", payload.ProjectID,
 			"binding_id", payload.BindingID,
@@ -282,6 +341,10 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 	if hasLatency {
 		latencyPtr = &latency
 	}
+	var requestCountPtr *contracts.MetricAggregate
+	if hasRequestCount {
+		requestCountPtr = &requestCount
+	}
 
 	rollup := a.BuildMetricRollup(
 		payload.ProjectID,
@@ -291,6 +354,10 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 		contracts.MetricWindow1Min,
 		cpu,
 		ram,
+		disk,
+		networkIn,
+		networkOut,
+		requestCountPtr,
 		latencyPtr,
 	)
 
@@ -327,6 +394,10 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 			"project_id", payload.ProjectID,
 			"cpu_count", cpu.Count,
 			"ram_count", ram.Count,
+			"disk_count", disk.Count,
+			"network_in_count", networkIn.Count,
+			"network_out_count", networkOut.Count,
+			"request_count", rollup.RequestCount.Count,
 			"metric_path", metricPath,
 		)
 	}
@@ -338,4 +409,103 @@ func (a *MetricAggregator) HandleReportMetricRollup(ctx context.Context, logger 
 	)
 
 	return reported, nil
+}
+
+func (a *MetricAggregator) consumeAccessLogRequestCount(workspaceRoot string) (contracts.MetricAggregate, bool, error) {
+	accessLogPath := resolveAccessLogPath(workspaceRoot)
+	if accessLogPath == "" {
+		return contracts.MetricAggregate{}, false, nil
+	}
+
+	count, err := a.countNewAccessLogEntries(accessLogPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return contracts.MetricAggregate{}, false, nil
+		}
+		return contracts.MetricAggregate{}, false, err
+	}
+	if count <= 0 {
+		return contracts.MetricAggregate{}, false, nil
+	}
+
+	value := float64(count)
+	return contracts.MetricAggregate{
+		P95:   value,
+		Max:   value,
+		Min:   value,
+		Avg:   value,
+		Count: count,
+	}, true, nil
+}
+
+func resolveAccessLogPath(workspaceRoot string) string {
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		return ""
+	}
+
+	root = filepath.Clean(root)
+	candidates := []string{
+		filepath.Join(root, "gateway", "live", "access.log"),
+		filepath.Join(filepath.Dir(filepath.Dir(root)), "gateway", "live", "access.log"),
+		filepath.Join(root, "live", "access.log"),
+	}
+
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	return candidates[1]
+}
+
+func (a *MetricAggregator) countNewAccessLogEntries(path string) (int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+
+	a.mu.Lock()
+	offset := a.accessLogOffsets[path]
+	if info.Size() < offset {
+		offset = 0
+	}
+	a.mu.Unlock()
+
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return 0, err
+	}
+
+	reader := bufio.NewReader(file)
+	var count int64
+	currentOffset := offset
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		currentOffset += int64(len(line))
+		if strings.TrimSpace(string(line)) != "" {
+			count++
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return 0, readErr
+		}
+	}
+
+	a.mu.Lock()
+	a.accessLogOffsets[path] = currentOffset
+	a.mu.Unlock()
+
+	return count, nil
 }

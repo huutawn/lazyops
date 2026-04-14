@@ -91,7 +91,10 @@ export default function DeploymentDetailPage() {
   if (isError || !data) {
     return (
       <div className="max-w-[1400px] mx-auto py-10 lg:px-8 flex flex-col gap-6">
-        <Link href="/deployments" className="flex items-center gap-2 text-[#94a3b8] hover:text-white transition-colors mb-4">
+        <Link
+          href={projectId ? `/projects/${projectId}/deployments` : '/deployments'}
+          className="mb-4 flex items-center gap-2 text-[#94a3b8] transition-colors hover:text-white"
+        >
           <ArrowLeft className="size-4" /> Quay lại danh sách
         </Link>
         <ErrorState title="Không tìm thấy bản triển khai" message={`Không thể tìm thấy thông tin cho ID: ${deploymentId}`} />
@@ -123,7 +126,12 @@ export default function DeploymentDetailPage() {
       <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2 text-[#94a3b8] text-sm font-medium mb-1">
-            <Link href="/deployments" className="hover:text-white transition-colors">Triển khai</Link>
+            <Link
+              href={projectId ? `/projects/${projectId}/deployments` : '/deployments'}
+              className="hover:text-white transition-colors"
+            >
+              Triển khai
+            </Link>
             <ChevronRight className="size-3" />
             <span className="text-[#38BDF8]">Revision {dep.revision}</span>
           </div>
@@ -258,6 +266,9 @@ export default function DeploymentDetailPage() {
                         line.level === 'error' ? 'text-[#ef4444]' : line.level === 'warn' ? 'text-[#eab308]' : 'text-[#10b981]'
                       )}>
                         [{line.level.toUpperCase()}]
+                      </span>
+                      <span className="text-[#64748b] mr-3">
+                        [{line.service}{line.source ? ` / ${line.source}` : ''}]
                       </span>
                       <span className="text-[#e2e8f0] opacity-90 group-hover:opacity-100">{line.message}</span>
                     </div>
@@ -406,7 +417,7 @@ export default function DeploymentDetailPage() {
                       <span className="text-sm font-bold text-white">{trace.data.total_latency_ms} ms</span>
                     </div>
                     <Link
-                      href="/observability"
+                      href={projectId ? `/projects/${projectId}/observability` : '/observability'}
                       className="flex items-center justify-center w-full rounded-xl bg-[#1e293b] py-3 text-xs font-bold text-[#94a3b8] transition-all hover:text-white border border-[#334155]"
                     >
                       Mở bảng giám sát &rarr;

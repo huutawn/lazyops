@@ -31,12 +31,55 @@ export type BootstrapInventory = {
   healthy_k3s_clusters: number;
 };
 
+export type BootstrapRuntimeWorkload = {
+  service_name?: string;
+  container_name?: string;
+  image_ref?: string;
+  commit_sha?: string;
+  status: string;
+  status_reason?: string;
+  target_ids?: string[];
+};
+
+export type BootstrapRuntimeSidecar = {
+  enabled: boolean;
+  service_name?: string;
+  container_name?: string;
+  status: string;
+  status_reason?: string;
+};
+
+export type BootstrapRuntimeInternalService = {
+  id: string;
+  alias: string;
+  kind: string;
+  protocol: string;
+  local_endpoint: string;
+  container_name?: string;
+  status: string;
+  status_reason?: string;
+};
+
+export type BootstrapRuntimeInventory = {
+  sync_state: string;
+  sync_reason?: string;
+  runtime_mode?: string;
+  live_revision_id?: string;
+  live_revision?: number;
+  stable_revision_id?: string;
+  stable_revision?: number;
+  app_runtime: BootstrapRuntimeWorkload;
+  sidecar_runtime: BootstrapRuntimeSidecar;
+  internal_services: BootstrapRuntimeInternalService[];
+};
+
 export type ProjectBootstrapStatus = {
   project_id: string;
   overall_state: string;
   steps: BootstrapStep[];
   auto_mode: BootstrapAutoMode;
   inventory: BootstrapInventory;
+  runtime_inventory: BootstrapRuntimeInventory;
   public_urls?: string[];
   public_url_reason?: string;
   updated_at: string;

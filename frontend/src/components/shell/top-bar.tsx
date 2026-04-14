@@ -23,7 +23,7 @@ export function TopBar({ onMenuClick, breadcrumb }: TopBarProps) {
         </button>
 
         {breadcrumb && (
-          <nav className="flex items-center text-sm font-medium text-muted-foreground animate-in fade-in">
+          <nav className="flex items-center text-base font-medium text-muted-foreground animate-in fade-in">
             {breadcrumb}
           </nav>
         )}

@@ -126,15 +126,58 @@ type BootstrapInventoryRecord struct {
 	HealthyK3sClusters  int
 }
 
+type BootstrapRuntimeWorkloadRecord struct {
+	ServiceName   string
+	ContainerName string
+	ImageRef      string
+	CommitSHA     string
+	Status        string
+	StatusReason  string
+	TargetIDs     []string
+}
+
+type BootstrapRuntimeSidecarRecord struct {
+	Enabled       bool
+	ServiceName   string
+	ContainerName string
+	Status        string
+	StatusReason  string
+}
+
+type BootstrapRuntimeInternalServiceRecord struct {
+	ID            string
+	Alias         string
+	Kind          string
+	Protocol      string
+	LocalEndpoint string
+	ContainerName string
+	Status        string
+	StatusReason  string
+}
+
+type BootstrapRuntimeInventoryRecord struct {
+	SyncState        string
+	SyncReason       string
+	RuntimeMode      string
+	LiveRevisionID   string
+	LiveRevision     int
+	StableRevisionID string
+	StableRevision   int
+	AppRuntime       BootstrapRuntimeWorkloadRecord
+	SidecarRuntime   BootstrapRuntimeSidecarRecord
+	InternalServices []BootstrapRuntimeInternalServiceRecord
+}
+
 type ProjectBootstrapStatusRecord struct {
-	ProjectID       string
-	OverallState    string
-	Steps           []BootstrapStepRecord
-	AutoMode        BootstrapAutoModeRecord
-	Inventory       BootstrapInventoryRecord
-	PublicURLs      []string
-	PublicURLReason string
-	UpdatedAt       time.Time
+	ProjectID        string
+	OverallState     string
+	Steps            []BootstrapStepRecord
+	AutoMode         BootstrapAutoModeRecord
+	Inventory        BootstrapInventoryRecord
+	RuntimeInventory BootstrapRuntimeInventoryRecord
+	PublicURLs       []string
+	PublicURLReason  string
+	UpdatedAt        time.Time
 }
 
 type bootstrapInventorySnapshot struct {
@@ -471,10 +514,23 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 	if err != nil {
 		return nil, err
 	}
-	publicURLs, publicURLReason, err := s.resolveStatusPublicURLs(requesterUserID, requesterRole, project.ID)
+	deploymentOverviews, err := s.listStatusDeployments(requesterUserID, requesterRole, project.ID)
 	if err != nil {
 		return nil, err
 	}
+	publicURLs, publicURLReason := resolveStatusPublicURLsFromOverviews(deploymentOverviews)
+	internalServices, err := s.listProjectInternalServices(project.ID)
+	if err != nil {
+		return nil, err
+	}
+	var primaryBinding *models.DeploymentBinding
+	if s.bindingStore != nil {
+		primaryBinding, err = s.resolvePrimaryBinding(project.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	runtimeInventory := buildBootstrapRuntimeInventory(project.ID, primaryBinding, deploymentOverviews, internalServices)
 
 	autoEnabled := true
 	decision := inferBootstrapMode(inventory, autoEnabled, "")
@@ -529,9 +585,10 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			HealthyMeshNetworks: healthyMeshCount(inventory),
 			HealthyK3sClusters:  healthyClusterCount(inventory),
 		},
-		PublicURLs:      publicURLs,
-		PublicURLReason: publicURLReason,
-		UpdatedAt:       time.Now().UTC(),
+		RuntimeInventory: runtimeInventory,
+		PublicURLs:       publicURLs,
+		PublicURLReason:  publicURLReason,
+		UpdatedAt:        time.Now().UTC(),
 	}
 
 	return status, nil
@@ -911,44 +968,355 @@ func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraSta
 }
 
 func (s *BootstrapOrchestrator) resolveStatusPublicURLs(requesterUserID, requesterRole, projectID string) ([]string, string, error) {
-	if s == nil || s.deployments == nil || s.deploymentSvc == nil {
-		return []string{}, "", nil
-	}
-
-	deployments, err := s.deployments.ListByProject(projectID)
+	overviews, err := s.listStatusDeployments(requesterUserID, requesterRole, projectID)
 	if err != nil {
 		return nil, "", err
 	}
-	if len(deployments) == 0 {
-		return []string{}, "", nil
+	publicURLs, reason := resolveStatusPublicURLsFromOverviews(overviews)
+	return publicURLs, reason, nil
+}
+
+func (s *BootstrapOrchestrator) listStatusDeployments(requesterUserID, requesterRole, projectID string) ([]DeploymentOverviewRecord, error) {
+	if s == nil || s.deploymentSvc == nil {
+		return []DeploymentOverviewRecord{}, nil
+	}
+	items, err := s.deploymentSvc.List(requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *BootstrapOrchestrator) listProjectInternalServices(projectID string) ([]models.ProjectInternalService, error) {
+	if s == nil || s.internalServices == nil {
+		return []models.ProjectInternalService{}, nil
+	}
+	items, err := s.internalServices.ListByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func resolveStatusPublicURLsFromOverviews(overviews []DeploymentOverviewRecord) ([]string, string) {
+	if len(overviews) == 0 {
+		return []string{}, ""
 	}
 
-	loadDetail := func(deployment models.Deployment) (*DeploymentDetailRecord, error) {
-		return s.deploymentSvc.Get(requesterUserID, requesterRole, projectID, deployment.ID)
-	}
-
-	for _, deployment := range deployments {
-		if strings.TrimSpace(strings.ToLower(deployment.Status)) != DeploymentStatusPromoted {
+	for _, deployment := range overviews {
+		if !deployment.Promoted && strings.TrimSpace(strings.ToLower(deployment.RolloutState)) != DeploymentStatusPromoted {
 			continue
 		}
-		detail, err := loadDetail(deployment)
-		if err != nil {
-			return nil, "", err
-		}
-		return append([]string{}, detail.PublicURLs...), detail.PublicURLReason, nil
+		return append([]string{}, deployment.PublicURLs...), deployment.PublicURLReason
 	}
 
-	for _, deployment := range deployments {
-		detail, err := loadDetail(deployment)
-		if err != nil {
-			return nil, "", err
-		}
-		if len(detail.PublicURLs) > 0 || strings.TrimSpace(detail.PublicURLReason) != "" {
-			return append([]string{}, detail.PublicURLs...), detail.PublicURLReason, nil
+	for _, deployment := range overviews {
+		if len(deployment.PublicURLs) > 0 || strings.TrimSpace(deployment.PublicURLReason) != "" {
+			return append([]string{}, deployment.PublicURLs...), deployment.PublicURLReason
 		}
 	}
 
-	return []string{}, "", nil
+	return []string{}, ""
+}
+
+func buildBootstrapRuntimeInventory(
+	projectID string,
+	binding *models.DeploymentBinding,
+	deployments []DeploymentOverviewRecord,
+	internalServices []models.ProjectInternalService,
+) BootstrapRuntimeInventoryRecord {
+	stable := findStableDeployment(deployments)
+	latest := findLatestDeployment(deployments)
+	live := stable
+	if live == nil {
+		live = latest
+	}
+
+	runtimeMode := ""
+	if live != nil {
+		runtimeMode = strings.TrimSpace(live.RuntimeMode)
+	}
+	if runtimeMode == "" && binding != nil {
+		runtimeMode = strings.TrimSpace(binding.RuntimeMode)
+	}
+	if runtimeMode == "" {
+		runtimeMode = bootstrapModeStandalone
+	}
+
+	syncState, syncReason := deriveRuntimeSyncState(stable, latest)
+	primaryService := selectPrimaryRuntimeService(live)
+	targetIDs := collectTargetIDsForService(live, primaryService)
+	appStatus, appReason := deriveAppRuntimeStatus(stable, latest)
+	sidecarEnabled := runtimeMode == bootstrapModeStandalone && len(internalServices) > 0 && strings.TrimSpace(primaryService) != ""
+	sidecarStatus, sidecarReason := deriveSidecarRuntimeStatus(sidecarEnabled, stable, latest)
+
+	record := BootstrapRuntimeInventoryRecord{
+		SyncState:   syncState,
+		SyncReason:  syncReason,
+		RuntimeMode: runtimeMode,
+		AppRuntime: BootstrapRuntimeWorkloadRecord{
+			ServiceName:   primaryService,
+			ContainerName: expectedWorkloadContainerName(projectID, binding, primaryService),
+			Status:        appStatus,
+			StatusReason:  appReason,
+			TargetIDs:     targetIDs,
+		},
+		SidecarRuntime: BootstrapRuntimeSidecarRecord{
+			Enabled:       sidecarEnabled,
+			ServiceName:   primaryService,
+			ContainerName: expectedSidecarContainerName(projectID, binding, primaryService),
+			Status:        sidecarStatus,
+			StatusReason:  sidecarReason,
+		},
+		InternalServices: buildInternalServiceRuntimeRecords(projectID, binding, internalServices, stable, latest),
+	}
+
+	if live != nil {
+		record.LiveRevisionID = live.RevisionID
+		record.LiveRevision = live.Revision
+		record.AppRuntime.ImageRef = live.ImageRef
+		record.AppRuntime.CommitSHA = live.CommitSHA
+	}
+	if stable != nil {
+		record.StableRevisionID = stable.RevisionID
+		record.StableRevision = stable.Revision
+	}
+
+	return record
+}
+
+func buildInternalServiceRuntimeRecords(
+	projectID string,
+	binding *models.DeploymentBinding,
+	items []models.ProjectInternalService,
+	stable, latest *DeploymentOverviewRecord,
+) []BootstrapRuntimeInternalServiceRecord {
+	records := make([]BootstrapRuntimeInternalServiceRecord, 0, len(items))
+	for _, item := range items {
+		status, reason := deriveInternalRuntimeStatus(stable, latest)
+		records = append(records, BootstrapRuntimeInternalServiceRecord{
+			ID:            item.ID,
+			Alias:         item.Alias,
+			Kind:          item.Kind,
+			Protocol:      item.Protocol,
+			LocalEndpoint: item.LocalEndpoint,
+			ContainerName: expectedInternalServiceContainerName(projectID, binding, item.Kind),
+			Status:        status,
+			StatusReason:  reason,
+		})
+	}
+	return records
+}
+
+func findLatestDeployment(items []DeploymentOverviewRecord) *DeploymentOverviewRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	latest := items[0]
+	for _, item := range items[1:] {
+		if item.CreatedAt.After(latest.CreatedAt) {
+			latest = item
+		}
+	}
+	return &latest
+}
+
+func findStableDeployment(items []DeploymentOverviewRecord) *DeploymentOverviewRecord {
+	for _, item := range items {
+		if item.Promoted || strings.TrimSpace(strings.ToLower(item.RolloutState)) == DeploymentStatusPromoted {
+			copyItem := item
+			return &copyItem
+		}
+	}
+	return nil
+}
+
+func deriveRuntimeSyncState(stable, latest *DeploymentOverviewRecord) (string, string) {
+	if stable != nil {
+		return "synced", ""
+	}
+	if latest == nil {
+		return "missing", "Chua dong bo du lieu runtime"
+	}
+
+	switch strings.TrimSpace(strings.ToLower(latest.RolloutState)) {
+	case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
+		return "progressing", "Runtime dang duoc dong bo tu deployment moi nhat."
+	default:
+		return "stale", "Chua dong bo du lieu runtime"
+	}
+}
+
+func deriveAppRuntimeStatus(stable, latest *DeploymentOverviewRecord) (string, string) {
+	if stable != nil {
+		return "live", "Revision da duoc promote va dang duoc xem la ban live."
+	}
+	if latest == nil {
+		return "unavailable", "Chua dong bo du lieu runtime"
+	}
+
+	switch strings.TrimSpace(strings.ToLower(latest.RolloutState)) {
+	case DeploymentStatusQueued:
+		return "queued", "Deployment da duoc tao nhung runtime chua san sang."
+	case DeploymentStatusRunning:
+		return "starting", "Runtime dang khoi dong theo deployment moi nhat."
+	case DeploymentStatusCandidateReady:
+		return "candidate_ready", "Candidate da san sang nhung chua duoc promote."
+	case DeploymentStatusFailed, DeploymentStatusRolledBack, DeploymentStatusCanceled:
+		return "inactive", "Deployment moi nhat khong de lai runtime live on dinh."
+	default:
+		return "unavailable", "Chua dong bo du lieu runtime"
+	}
+}
+
+func deriveSidecarRuntimeStatus(enabled bool, stable, latest *DeploymentOverviewRecord) (string, string) {
+	if !enabled {
+		return "disabled", "Project hien khong can compatibility sidecar cho runtime inventory toi thieu."
+	}
+	if stable != nil {
+		return "running", "Compatibility sidecar du kien dang song cung app live."
+	}
+	if latest == nil {
+		return "configured", "Sidecar da duoc cau hinh nhung chua co runtime duoc dong bo."
+	}
+
+	switch strings.TrimSpace(strings.ToLower(latest.RolloutState)) {
+	case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
+		return "starting", "Compatibility sidecar dang theo rollout moi nhat."
+	default:
+		return "configured", "Sidecar da duoc cau hinh nhung chua co runtime live on dinh."
+	}
+}
+
+func deriveInternalRuntimeStatus(stable, latest *DeploymentOverviewRecord) (string, string) {
+	if stable != nil {
+		return "running", "Internal service du kien dang song cung revision live."
+	}
+	if latest == nil {
+		return "configured", "Internal service da duoc cau hinh nhung chua co runtime duoc dong bo."
+	}
+
+	switch strings.TrimSpace(strings.ToLower(latest.RolloutState)) {
+	case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
+		return "starting", "Internal service dang theo rollout moi nhat."
+	default:
+		return "configured", "Internal service da duoc cau hinh nhung runtime chua on dinh."
+	}
+}
+
+func selectPrimaryRuntimeService(deployment *DeploymentOverviewRecord) string {
+	if deployment == nil {
+		return ""
+	}
+	for _, service := range deployment.Services {
+		if strings.EqualFold(strings.TrimSpace(service.Name), "app") {
+			return strings.TrimSpace(service.Name)
+		}
+	}
+	for _, service := range deployment.Services {
+		if service.Public {
+			return strings.TrimSpace(service.Name)
+		}
+	}
+	if len(deployment.Services) > 0 {
+		return strings.TrimSpace(deployment.Services[0].Name)
+	}
+	return ""
+}
+
+func collectTargetIDsForService(deployment *DeploymentOverviewRecord, serviceName string) []string {
+	if deployment == nil {
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(deployment.PlacementAssignments))
+	targetIDs := make([]string, 0, len(deployment.PlacementAssignments))
+	for _, assignment := range deployment.PlacementAssignments {
+		if serviceName != "" && assignment.ServiceName != serviceName {
+			continue
+		}
+		targetID := strings.TrimSpace(assignment.TargetID)
+		if targetID == "" {
+			continue
+		}
+		if _, exists := seen[targetID]; exists {
+			continue
+		}
+		seen[targetID] = struct{}{}
+		targetIDs = append(targetIDs, targetID)
+	}
+	return targetIDs
+}
+
+func expectedWorkloadContainerName(projectID string, binding *models.DeploymentBinding, serviceName string) string {
+	if binding == nil || strings.TrimSpace(binding.ID) == "" || strings.TrimSpace(serviceName) == "" {
+		return ""
+	}
+	return truncateContainerName(fmt.Sprintf(
+		"lazyops-app-%s-%s-%s",
+		normalizeRuntimeContainerToken(projectID),
+		normalizeRuntimeContainerToken(binding.ID),
+		normalizeRuntimeContainerToken(serviceName),
+	))
+}
+
+func expectedSidecarContainerName(projectID string, binding *models.DeploymentBinding, serviceName string) string {
+	if binding == nil || strings.TrimSpace(binding.ID) == "" || strings.TrimSpace(serviceName) == "" {
+		return ""
+	}
+	return truncateContainerName(fmt.Sprintf(
+		"lazyops-sidecar-%s-%s-%s",
+		normalizeRuntimeContainerToken(projectID),
+		normalizeRuntimeContainerToken(binding.ID),
+		normalizeRuntimeContainerToken(serviceName),
+	))
+}
+
+func expectedInternalServiceContainerName(projectID string, binding *models.DeploymentBinding, kind string) string {
+	if binding == nil || strings.TrimSpace(binding.ID) == "" || strings.TrimSpace(kind) == "" {
+		return ""
+	}
+	return truncateContainerName(fmt.Sprintf(
+		"lazyops-int-%s-%s-%s",
+		normalizeRuntimeContainerToken(projectID),
+		normalizeRuntimeContainerToken(binding.ID),
+		normalizeRuntimeContainerToken(kind),
+	))
+}
+
+func normalizeRuntimeContainerToken(input string) string {
+	raw := strings.ToLower(strings.TrimSpace(input))
+	if raw == "" {
+		return "default"
+	}
+	var builder strings.Builder
+	builder.Grow(len(raw))
+	lastDash := false
+	for _, ch := range raw {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			builder.WriteRune(ch)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(builder.String(), "-")
+	if out == "" {
+		return "default"
+	}
+	if len(out) > 40 {
+		return out[:40]
+	}
+	return out
+}
+
+func truncateContainerName(name string) string {
+	if len(name) > 63 {
+		return name[:63]
+	}
+	return name
 }
 
 func (s *BootstrapOrchestrator) resolvePrimaryBinding(projectID string) (*models.DeploymentBinding, error) {

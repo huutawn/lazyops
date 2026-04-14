@@ -141,7 +141,13 @@ func (f *fakeLogStreamStore) CreateBatch(entries []models.LogStreamEntry) error 
 func (f *fakeLogStreamStore) ListByQuery(query models.LogStreamQuery) ([]models.LogStreamEntry, error) {
 	out := make([]models.LogStreamEntry, 0, len(f.items))
 	for _, item := range f.items {
-		if item.ProjectID != query.ProjectID || item.ServiceName != query.ServiceName {
+		if item.ProjectID != query.ProjectID {
+			continue
+		}
+		if query.ServiceName != "" && item.ServiceName != query.ServiceName {
+			continue
+		}
+		if query.Source != "" && item.Source != query.Source {
 			continue
 		}
 		if query.Level != "" && item.Level != query.Level {
@@ -475,6 +481,62 @@ func TestObservabilityServiceIngestAndPreviewLogs(t *testing.T) {
 	}
 }
 
+func TestObservabilityServicePreviewLogsFiltersBySource(t *testing.T) {
+	logStore := newFakeLogStreamStore()
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(),
+		logStore,
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	)
+
+	collectedAt := time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
+	_, err := svc.IngestLogBatch(context.Background(), IngestLogBatchCommand{
+		ProjectID: "prj_123",
+		BindingID: "bind_123",
+		Entries: []LogBatchEntry{
+			{
+				Timestamp: collectedAt.Add(-1 * time.Minute),
+				Severity:  "info",
+				Source:    "gateway:caddy:access",
+				Message:   `{"status":200,"path":"/health"}`,
+				Labels:    map[string]string{"service": "app"},
+			},
+			{
+				Timestamp: collectedAt,
+				Severity:  "critical",
+				Source:    "app:container",
+				Message:   "panic: nil pointer dereference",
+				Labels:    map[string]string{"service": "app"},
+			},
+		},
+		CollectedAt: collectedAt,
+	})
+	if err != nil {
+		t.Fatalf("ingest log batch: %v", err)
+	}
+
+	preview, err := svc.PreviewLogs(context.Background(), PreviewLogsCommand{
+		ProjectID:   "prj_123",
+		ServiceName: "app",
+		Source:      "gateway:caddy:access",
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("preview logs: %v", err)
+	}
+	if len(preview.Lines) != 1 {
+		t.Fatalf("expected 1 source-filtered line, got %d", len(preview.Lines))
+	}
+	if preview.Lines[0].Source != "gateway:caddy:access" {
+		t.Fatalf("expected gateway source, got %q", preview.Lines[0].Source)
+	}
+}
+
 func TestObservabilityServicePreviewLogsRejectsInvalidLevel(t *testing.T) {
 	svc := newTestObservabilityService(
 		newFakeTraceSummaryStore(),
@@ -530,6 +592,34 @@ func TestObservabilityServiceIngestMetricRollupAndBuildSummary(t *testing.T) {
 			Avg:   420 * 1024 * 1024,
 			Count: 12,
 		},
+		Disk: AgentMetricAggregate{
+			P95:   30 * 1024 * 1024 * 1024,
+			Max:   32 * 1024 * 1024 * 1024,
+			Min:   28 * 1024 * 1024 * 1024,
+			Avg:   29 * 1024 * 1024 * 1024,
+			Count: 12,
+		},
+		NetworkIn: AgentMetricAggregate{
+			P95:   1024,
+			Max:   2048,
+			Min:   256,
+			Avg:   768,
+			Count: 12,
+		},
+		NetworkOut: AgentMetricAggregate{
+			P95:   900,
+			Max:   1800,
+			Min:   300,
+			Avg:   700,
+			Count: 12,
+		},
+		RequestCount: AgentMetricAggregate{
+			P95:   47,
+			Max:   47,
+			Min:   47,
+			Avg:   47,
+			Count: 47,
+		},
 		Latency: AgentMetricAggregate{
 			P95:   180,
 			Max:   240,
@@ -541,8 +631,8 @@ func TestObservabilityServiceIngestMetricRollupAndBuildSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ingest metric rollup: %v", err)
 	}
-	if inserted < 3 {
-		t.Fatalf("expected at least 3 metric records inserted, got %d", inserted)
+	if inserted < 7 {
+		t.Fatalf("expected at least 7 metric records inserted, got %d", inserted)
 	}
 
 	items, err := svc.BuildServiceMetricSummary(context.Background(), "prj_123", 20)
@@ -564,7 +654,49 @@ func TestObservabilityServiceIngestMetricRollupAndBuildSummary(t *testing.T) {
 	if items[0].RequestCount <= 0 {
 		t.Fatalf("expected request_count > 0, got %d", items[0].RequestCount)
 	}
+	if items[0].DiskP95Bytes <= 0 {
+		t.Fatalf("expected disk_p95_bytes > 0, got %f", items[0].DiskP95Bytes)
+	}
+	if items[0].NetworkInTotalBytes <= 0 {
+		t.Fatalf("expected network_in_total_bytes > 0, got %f", items[0].NetworkInTotalBytes)
+	}
 	if items[0].Period == "" {
 		t.Fatal("expected non-empty period")
+	}
+}
+
+func TestObservabilityServiceBuildServiceMetricSummaryDoesNotProxyFromTraces(t *testing.T) {
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(),
+		newFakeLogStreamStore(),
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	)
+
+	traceStore := svc.traces.(*fakeTraceSummaryStore)
+	if err := traceStore.Create(&models.TraceSummary{
+		ID:            "trc_123",
+		CorrelationID: "corr_123",
+		ProjectID:     "prj_123",
+		ServiceName:   "app",
+		DurationMs:    250,
+		SpanCount:     8,
+		Status:        TraceStatusOK,
+		ReceivedAt:    time.Now().UTC(),
+		CreatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create trace: %v", err)
+	}
+
+	items, err := svc.BuildServiceMetricSummary(context.Background(), "prj_123", 20)
+	if err != nil {
+		t.Fatalf("build metric summary: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no metric summary without rollups, got %d items", len(items))
 	}
 }

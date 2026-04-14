@@ -1,7 +1,5 @@
-import { redirect } from 'next/navigation';
 import { PageHeader } from '@/components/primitives/page-header';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
-import { ProjectThreeStepWizard } from '@/modules/bootstrap/project-three-step-wizard';
+import { ProjectOverviewDashboard } from '@/modules/projects/project-overview-dashboard';
 
 type ProjectRootPageProps = {
   params: Promise<{ projectId: string }>;
@@ -9,17 +7,14 @@ type ProjectRootPageProps = {
 
 export default async function ProjectRootPage({ params }: ProjectRootPageProps) {
   const { projectId } = await params;
-  if (!isFeatureEnabled('ux_three_step_flow')) {
-    redirect(`/projects/${projectId}/integrations`);
-  }
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Thiết lập dự án"
-        subtitle="3 bước: Kết nối mã nguồn, kết nối máy chủ, triển khai."
+        title="Tổng quan dự án"
+        subtitle="Public domain, runtime hiện tại, env, internal services và các đường dẫn thao tác chính cho project này."
       />
-      <ProjectThreeStepWizard projectId={projectId} />
+      <ProjectOverviewDashboard projectId={projectId} />
     </div>
   );
 }

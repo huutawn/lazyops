@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useState, useMemo } from 'react';
+import { useParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useLinkProjectRepo, repoLinkQueryKey } from '@/modules/repo-link/repo-link-hooks';
@@ -15,30 +15,14 @@ import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
 import { Modal } from '@/components/primitives/modal';
 import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
-import { isFeatureEnabled } from '@/lib/flags/feature-flags';
-import { useSession } from '@/lib/auth/auth-hooks';
 
 export default function RepoLinkPage() {
   const params = useParams();
-  const router = useRouter();
   const projectId = params?.projectId as string;
-  const threeStepFlowEnabled = isFeatureEnabled('ux_three_step_flow');
-  const { data: session, isLoading: sessionLoading } = useSession();
-  const isAdmin = session?.role === 'admin';
-
-  useEffect(() => {
-    if (!sessionLoading && threeStepFlowEnabled && projectId && !isAdmin) {
-      router.replace(`/projects/${projectId}`);
-    }
-  }, [sessionLoading, threeStepFlowEnabled, projectId, router, isAdmin]);
 
   const { data: reposData, isLoading: reposLoading, isError: reposError } = useGitHubInstallations();
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkedRepo, setLinkedRepo] = useState<ProjectRepoLink | null>(null);
-
-  if (sessionLoading || (threeStepFlowEnabled && !isAdmin)) {
-    return <SkeletonPage title cards={2} />;
-  }
 
   if (reposLoading) {
     return <SkeletonPage title cards={2} />;

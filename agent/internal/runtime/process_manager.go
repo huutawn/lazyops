@@ -48,12 +48,16 @@ type ProcessManager struct {
 	healthCheckInterval time.Duration
 	now                 func() time.Time
 
-	mu                 sync.Mutex
-	processes          map[string]*ProcessInfo
-	cmds               map[string]*exec.Cmd
-	sidecarProxy       *SidecarProxy
-	iptablesManager    *IPTablesManager
-	agentImageRef      string
+	mu                sync.Mutex
+	logWatcherMu      sync.Mutex
+	processes         map[string]*ProcessInfo
+	cmds              map[string]*exec.Cmd
+	sidecarProxy      *SidecarProxy
+	iptablesManager   *IPTablesManager
+	logCollector      *LogCollector
+	logWatcherCancels map[string]logWatcherHandle
+	logWatcherSeq     uint64
+	agentImageRef     string
 	stateEncryptionKey string
 }
 
@@ -88,11 +92,12 @@ func NewProcessManager(logger *slog.Logger, runtimeRoot string) *ProcessManager 
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-		processes:       make(map[string]*ProcessInfo),
-		cmds:            make(map[string]*exec.Cmd),
-		sidecarProxy:    NewSidecarProxy(logger),
-		iptablesManager: NewIPTablesManager(logger),
-		agentImageRef:   defaultSidecarCompanionImageRef(),
+		processes:         make(map[string]*ProcessInfo),
+		cmds:              make(map[string]*exec.Cmd),
+		sidecarProxy:      NewSidecarProxy(logger),
+		iptablesManager:   NewIPTablesManager(logger),
+		logWatcherCancels: make(map[string]logWatcherHandle),
+		agentImageRef:     defaultSidecarCompanionImageRef(),
 	}
 }
 
@@ -146,6 +151,14 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 				"config", configPath,
 			)
 		}
+		m.startDockerLogFollower(containerName, "app:container", map[string]string{
+			"project_id":     workloadCfg.ProjectID(),
+			"binding_id":     workloadCfg.BindingID(),
+			"revision_id":    workloadCfg.RevisionID(),
+			"service":        workloadCfg.Service.Name,
+			"container_name": containerName,
+			"source_kind":    "app",
+		})
 		return info, nil
 	}
 
@@ -162,6 +175,14 @@ func (m *ProcessManager) StartProcess(ctx context.Context, serviceName, configPa
 		info.StartedAt = m.now()
 		info.Runner = "docker"
 		info.Container = containerName
+		m.startDockerLogFollower(containerName, "compatibility_sidecar", map[string]string{
+			"project_id":     strings.TrimSpace(sidecarCfg.ProjectID),
+			"binding_id":     strings.TrimSpace(sidecarCfg.BindingID),
+			"revision_id":    strings.TrimSpace(sidecarCfg.RevisionID),
+			"service":        strings.TrimSpace(sidecarCfg.ServiceName),
+			"container_name": containerName,
+			"source_kind":    "compatibility_sidecar",
+		})
 		return info, nil
 	}
 
@@ -334,6 +355,7 @@ func (m *ProcessManager) StopProcess(serviceName string) error {
 	info.State = ProcessStateStopping
 
 	if strings.TrimSpace(info.Container) != "" {
+		containerName := info.Container
 		if _, err := m.runDockerCommand(context.Background(), "rm", "-f", info.Container); err != nil {
 			lowered := strings.ToLower(err.Error())
 			if !strings.Contains(lowered, "no such container") {
@@ -343,6 +365,7 @@ func (m *ProcessManager) StopProcess(serviceName string) error {
 		info.State = ProcessStateStopped
 		info.Container = ""
 		delete(m.cmds, serviceName)
+		m.stopLogFollower("docker:" + containerName)
 		if m.logger != nil {
 			m.logger.Info("service workload container stopped",
 				"service", serviceName,
@@ -815,6 +838,29 @@ func workloadContainerName(projectID, bindingID, serviceName string) string {
 		return name[:63]
 	}
 	return name
+}
+
+func (m *ProcessManager) WithLogCollector(collector *LogCollector) *ProcessManager {
+	if m == nil {
+		return m
+	}
+	m.logCollector = collector
+	return m
+}
+
+func (cfg runtimeWorkloadConfig) ProjectID() string {
+	projectID, _, _ := parseWorkspaceIdentity(cfg.WorkspaceRoot)
+	return projectID
+}
+
+func (cfg runtimeWorkloadConfig) BindingID() string {
+	_, bindingID, _ := parseWorkspaceIdentity(cfg.WorkspaceRoot)
+	return bindingID
+}
+
+func (cfg runtimeWorkloadConfig) RevisionID() string {
+	_, _, revisionID := parseWorkspaceIdentity(cfg.WorkspaceRoot)
+	return revisionID
 }
 
 func (m *ProcessManager) isContainerRunning(ctx context.Context, name string) (bool, error) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -66,6 +67,239 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 	}
 	if status.Steps[2].State != "ready" {
 		t.Fatalf("expected deploy ready, got %q", status.Steps[2].State)
+	}
+}
+
+func TestBootstrapOrchestratorGetStatusIncludesRuntimeInventory(t *testing.T) {
+	publicIP := "47.129.226.224"
+	compiledJSON, err := json.Marshal(desiredStateRevisionCompiledRecord{
+		RevisionID:          "rev_123",
+		ProjectID:           "prj_123",
+		BlueprintID:         "bp_123",
+		DeploymentBindingID: "bind_123",
+		CommitSHA:           "abc123def456",
+		ArtifactRef:         "artifact://builds/123",
+		ImageRef:            "ghcr.io/lazyops/acme-api:abc123",
+		TriggerKind:         "push",
+		RuntimeMode:         "standalone",
+		Services: []BlueprintServiceContractRecord{
+			{Name: "api", Path: "apps/api", Public: true, RuntimeProfile: "service", Healthcheck: map[string]any{"path": "/healthz", "port": 8080, "protocol": "http"}},
+		},
+		CompatibilityPolicy: LazyopsYAMLCompatibilityPolicy{
+			LocalhostRescue: true,
+		},
+		MagicDomainPolicy: LazyopsYAMLMagicDomainPolicy{
+			Enabled:  true,
+			Provider: MagicDomainProviderSSLIP,
+		},
+		ScaleToZeroPolicy: LazyopsYAMLScaleToZeroPolicy{
+			Enabled: false,
+		},
+		PlacementAssignments: []PlacementAssignmentRecord{
+			{ServiceName: "api", TargetID: "inst_123", TargetKind: "instance"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal compiled revision: %v", err)
+	}
+
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		PublicIP:                &publicIP,
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto standalone",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             bootstrapModeStandalone,
+		TargetKind:              "instance",
+		TargetID:                "inst_123",
+		CompatibilityPolicyJSON: `{"localhost_rescue":true}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123def456",
+		TriggerKind:          "push",
+		Status:               RevisionStatusPromoted,
+		CompiledRevisionJSON: string(compiledJSON),
+		CreatedAt:            time.Date(2026, 4, 14, 8, 20, 0, 0, time.UTC),
+		UpdatedAt:            time.Date(2026, 4, 14, 8, 35, 0, 0, time.UTC),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusPromoted,
+		CreatedAt:  time.Date(2026, 4, 14, 8, 21, 0, 0, time.UTC),
+		UpdatedAt:  time.Date(2026, 4, 14, 8, 35, 0, 0, time.UTC),
+	})
+	deploymentSvc := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
+		WithPublicDomainSupport(bindingStore, instanceStore)
+	internalServices := newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{
+		"prj_123": {{
+			ID:            "isvc_123",
+			ProjectID:     "prj_123",
+			Kind:          "postgres",
+			Alias:         "postgres",
+			Protocol:      "tcp",
+			LocalEndpoint: "localhost:5432",
+		}},
+	})
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		nil,
+	).WithOneClickPipeline(nil, nil, nil, deploymentSvc, nil).WithInternalServiceStore(internalServices)
+
+	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+
+	if status.RuntimeInventory.SyncState != "synced" {
+		t.Fatalf("expected synced runtime inventory, got %q", status.RuntimeInventory.SyncState)
+	}
+	if status.RuntimeInventory.LiveRevision != 1 || status.RuntimeInventory.StableRevision != 1 {
+		t.Fatalf("expected live/stable revision number 1, got live=%d stable=%d", status.RuntimeInventory.LiveRevision, status.RuntimeInventory.StableRevision)
+	}
+	if status.RuntimeInventory.AppRuntime.Status != "live" {
+		t.Fatalf("expected live app runtime, got %q", status.RuntimeInventory.AppRuntime.Status)
+	}
+	if status.RuntimeInventory.AppRuntime.ContainerName != "lazyops-app-prj-123-bind-123-api" {
+		t.Fatalf("unexpected app container %q", status.RuntimeInventory.AppRuntime.ContainerName)
+	}
+	if !status.RuntimeInventory.SidecarRuntime.Enabled {
+		t.Fatal("expected sidecar runtime to be enabled")
+	}
+	if status.RuntimeInventory.SidecarRuntime.ContainerName != "lazyops-sidecar-prj-123-bind-123-api" {
+		t.Fatalf("unexpected sidecar container %q", status.RuntimeInventory.SidecarRuntime.ContainerName)
+	}
+	if len(status.RuntimeInventory.InternalServices) != 1 {
+		t.Fatalf("expected one internal runtime service, got %d", len(status.RuntimeInventory.InternalServices))
+	}
+	if status.RuntimeInventory.InternalServices[0].ContainerName != "lazyops-int-prj-123-bind-123-postgres" {
+		t.Fatalf("unexpected internal service container %q", status.RuntimeInventory.InternalServices[0].ContainerName)
+	}
+	if len(status.PublicURLs) == 0 || status.PublicURLs[0] != "https://api.47-129-226-224.sslip.io" {
+		t.Fatalf("unexpected public urls %#v", status.PublicURLs)
+	}
+}
+
+func TestBootstrapOrchestratorGetStatusMarksRuntimeInventoryMissingWhenNoDeployment(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto standalone",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             bootstrapModeStandalone,
+		TargetKind:              "instance",
+		TargetID:                "inst_123",
+		CompatibilityPolicyJSON: `{"localhost_rescue":true}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	internalServices := newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{
+		"prj_123": {{
+			ID:            "isvc_123",
+			ProjectID:     "prj_123",
+			Kind:          "postgres",
+			Alias:         "postgres",
+			Protocol:      "tcp",
+			LocalEndpoint: "localhost:5432",
+		}},
+	})
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		bindingStore,
+		newFakeDeploymentStore(),
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		nil,
+	).WithInternalServiceStore(internalServices)
+
+	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+
+	if status.RuntimeInventory.SyncState != "missing" {
+		t.Fatalf("expected missing runtime sync state, got %q", status.RuntimeInventory.SyncState)
+	}
+	if status.RuntimeInventory.SyncReason != "Chua dong bo du lieu runtime" {
+		t.Fatalf("unexpected runtime sync reason %q", status.RuntimeInventory.SyncReason)
+	}
+	if status.RuntimeInventory.AppRuntime.Status != "unavailable" {
+		t.Fatalf("expected unavailable app runtime, got %q", status.RuntimeInventory.AppRuntime.Status)
+	}
+	if len(status.RuntimeInventory.InternalServices) != 1 {
+		t.Fatalf("expected internal service runtime record, got %d", len(status.RuntimeInventory.InternalServices))
+	}
+	if status.RuntimeInventory.InternalServices[0].Status != "configured" {
+		t.Fatalf("expected configured internal service status, got %q", status.RuntimeInventory.InternalServices[0].Status)
 	}
 }
 

@@ -11,10 +11,12 @@ import { StatusBadge } from '@/components/primitives/status-badge';
 import { HealthChip } from '@/components/primitives/health-chip';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import Link from 'next/link';
+import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
 
 export default function ProjectIntegrationsPage() {
   const params = useParams();
   const projectId = params?.projectId as string;
+  const { shouldBlock } = useProjectExpertRouteGuard(projectId);
 
   const { data: reposData, isLoading: reposLoading } = useGitHubInstallations();
   const { data: appConfig } = useGitHubAppConfig();
@@ -23,6 +25,10 @@ export default function ProjectIntegrationsPage() {
     queryFn: () => Promise.resolve(null as ProjectRepoLink | null),
     staleTime: 60 * 1000,
   });
+
+  if (shouldBlock) {
+    return <SkeletonPage title cards={3} />;
+  }
 
   if (reposLoading || linkLoading) {
     return <SkeletonPage title cards={3} />;

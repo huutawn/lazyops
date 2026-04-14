@@ -124,6 +124,7 @@ func (ctl *ObservabilityController) StreamLogs(c *gin.Context) {
 	preview, err := ctl.observability.PreviewLogs(c.Request.Context(), service.PreviewLogsCommand{
 		ProjectID:   project.ID,
 		ServiceName: serviceName,
+		Source:      c.Query("source"),
 		Level:       c.Query("level"),
 		Contains:    c.Query("contains"),
 		Node:        c.Query("node"),
@@ -174,6 +175,7 @@ func (ctl *ObservabilityController) ListLogs(c *gin.Context) {
 		c.Request.Context(),
 		project.ID,
 		c.Query("service"),
+		c.Query("source"),
 		c.Query("level"),
 		c.Query("contains"),
 		limit,

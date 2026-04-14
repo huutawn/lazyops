@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,10 @@ import (
 type GatewayManager struct {
 	logger       *slog.Logger
 	runtimeRoot  string
+	logCollector *LogCollector
+	mu           sync.Mutex
+	logWatchers  map[string]logWatcherHandle
+	logWatcherSeq uint64
 	now          func() time.Time
 	validateHook func(context.Context, GatewayPlan, gatewayRenderPaths) (GatewayHookResult, error)
 	applyHook    func(context.Context, GatewayPlan, gatewayRenderPaths) (GatewayActivation, GatewayHookResult, error)
@@ -49,10 +54,19 @@ func NewGatewayManager(logger *slog.Logger, runtimeRoot string) *GatewayManager 
 	return &GatewayManager{
 		logger:      logger,
 		runtimeRoot: runtimeRoot,
+		logWatchers: make(map[string]logWatcherHandle),
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
+}
+
+func (m *GatewayManager) WithLogCollector(collector *LogCollector) *GatewayManager {
+	if m == nil {
+		return m
+	}
+	m.logCollector = collector
+	return m
 }
 
 func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx RuntimeContext, layout WorkspaceLayout) (GatewayRenderResult, error) {
@@ -71,7 +85,9 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 	if err != nil {
 		return GatewayRenderResult{}, err
 	}
-	config := renderCaddyfile(plan)
+	runtimeLogPath := filepath.Join(paths.liveRoot, "runtime.log")
+	accessLogPath := filepath.Join(paths.liveRoot, "access.log")
+	config := renderCaddyfile(plan, accessLogPath)
 
 	for _, dir := range []string{paths.versionRoot, filepath.Dir(paths.workspacePlan), paths.liveRoot} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -232,6 +248,7 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 	if err := copyFile(paths.versionPlanPath, paths.livePlanPath, 0o644); err != nil {
 		return GatewayRenderResult{}, err
 	}
+	m.startGatewayLogWatchers(runtimeCtx, paths.liveRoot, runtimeLogPath, accessLogPath)
 
 	if m.logger != nil {
 		m.logger.Info("rendered gateway config",
@@ -326,6 +343,75 @@ func (m *GatewayManager) renderPaths(layout WorkspaceLayout, runtimeCtx RuntimeC
 		reloadPath:      filepath.Join(liveRoot, "reload.json"),
 		rollbackPath:    filepath.Join(liveRoot, "rollback.json"),
 	}
+}
+
+func (m *GatewayManager) startGatewayLogWatchers(runtimeCtx RuntimeContext, liveRoot, runtimeLogPath, accessLogPath string) {
+	if m == nil || m.logCollector == nil {
+		return
+	}
+
+	serviceName := "gateway"
+	if candidate := primaryMetricServiceName(runtimeCtx.Services); strings.TrimSpace(candidate) != "" {
+		serviceName = candidate
+	}
+	baseLabels := map[string]string{
+		"project_id":  strings.TrimSpace(runtimeCtx.Project.ProjectID),
+		"binding_id":  strings.TrimSpace(runtimeCtx.Binding.BindingID),
+		"revision_id": strings.TrimSpace(runtimeCtx.Revision.RevisionID),
+		"service":     serviceName,
+		"source_kind": "gateway",
+	}
+
+	m.startGatewayFileWatcher(filepath.Join(liveRoot, "watcher-runtime"), runtimeLogPath, "gateway:caddy", mergeLogLabels(baseLabels, map[string]string{"log_type": "runtime"}))
+	m.startGatewayFileWatcher(filepath.Join(liveRoot, "watcher-access"), accessLogPath, "gateway:caddy:access", mergeLogLabels(baseLabels, map[string]string{"log_type": "access"}))
+}
+
+func (m *GatewayManager) startGatewayFileWatcher(watcherKey, path, source string, labels map[string]string) {
+	if m == nil || m.logCollector == nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.logWatcherSeq++
+	watcherID := m.logWatcherSeq
+	previous := m.logWatchers[watcherKey]
+	m.logWatchers[watcherKey] = logWatcherHandle{id: watcherID, cancel: cancel}
+	m.mu.Unlock()
+	if previous.cancel != nil {
+		previous.cancel()
+	}
+
+	watcher := newFileLogWatcher(m.logCollector)
+	go func() {
+		defer m.clearGatewayLogWatcher(watcherKey, watcherID)
+		watcher.Follow(ctx, path, source, labels)
+	}()
+}
+
+func (m *GatewayManager) stopGatewayLogWatcher(watcherKey string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	handle := m.logWatchers[watcherKey]
+	delete(m.logWatchers, watcherKey)
+	m.mu.Unlock()
+	if handle.cancel != nil {
+		handle.cancel()
+	}
+}
+
+func (m *GatewayManager) clearGatewayLogWatcher(watcherKey string, watcherID uint64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	handle, ok := m.logWatchers[watcherKey]
+	if ok && handle.id == watcherID {
+		delete(m.logWatchers, watcherKey)
+	}
+	m.mu.Unlock()
 }
 
 func (m *GatewayManager) defaultValidate(_ context.Context, plan GatewayPlan, paths gatewayRenderPaths) (GatewayHookResult, error) {
@@ -443,7 +529,7 @@ func (m *GatewayManager) defaultApply(_ context.Context, plan GatewayPlan, paths
 
 func (m *GatewayManager) defaultReload(_ context.Context, plan GatewayPlan, paths gatewayRenderPaths, activation GatewayActivation) (GatewayHookResult, error) {
 	// Reload Caddy with the new config
-	if err := execCaddyReload(paths.liveConfigPath); err != nil {
+	if err := execCaddyReload(paths.liveConfigPath, filepath.Join(paths.liveRoot, "runtime.log")); err != nil {
 		return GatewayHookResult{}, &OperationError{
 			Code:      "gateway_caddy_reload_failed",
 			Message:   fmt.Sprintf("caddy reload failed: %v", err),
@@ -486,7 +572,7 @@ func execCaddyValidate(configPath string) error {
 // execCaddyReload runs 'caddy reload' to apply a new config.
 // If caddy binary is not found, it skips the reload (dev mode).
 // If Caddy isn't running, it starts Caddy instead of reloading.
-func execCaddyReload(configPath string) error {
+func execCaddyReload(configPath, runtimeLogPath string) error {
 	if _, err := exec.LookPath("caddy"); err != nil {
 		slog.Default().Warn("caddy binary not found, skipping reload (dev mode)",
 			"config_path", configPath,
@@ -508,8 +594,16 @@ func execCaddyReload(configPath string) error {
 		}
 		// Start Caddy as a background daemon (detached from parent process)
 		cmd := exec.Command("caddy", "run", "--config", configPath, "--adapter", "caddyfile")
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		if err := os.MkdirAll(filepath.Dir(runtimeLogPath), 0o755); err != nil {
+			return fmt.Errorf("prepare caddy runtime log dir: %w", err)
+		}
+		logFile, err := os.OpenFile(runtimeLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("open caddy runtime log: %w", err)
+		}
+		defer logFile.Close()
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("caddy start failed: %w", err)
@@ -580,17 +674,17 @@ func (m *GatewayManager) defaultRollback(_ context.Context, _ GatewayPlan, paths
 	return result, nil
 }
 
-func renderCaddyfile(plan GatewayPlan) string {
+func renderCaddyfile(plan GatewayPlan, accessLogPath string) string {
 	// If routing policy has routes, generate path-based config
 	if len(plan.RoutingPolicy.Routes) > 0 {
-		return renderCaddyfileWithPathRouting(plan)
+		return renderCaddyfileWithPathRouting(plan, accessLogPath)
 	}
 
 	// Fallback: per-service domains (existing behavior)
-	return renderCaddyfilePerService(plan)
+	return renderCaddyfilePerService(plan, accessLogPath)
 }
 
-func renderCaddyfilePerService(plan GatewayPlan) string {
+func renderCaddyfilePerService(plan GatewayPlan, accessLogPath string) string {
 	if len(plan.Routes) == 0 || !hasRenderableGatewayHosts(plan.Routes) {
 		return "{\n  auto_https disable_redirects\n}\n\n# no public services for this revision\n"
 	}
@@ -606,6 +700,7 @@ func renderCaddyfilePerService(plan GatewayPlan) string {
 		}
 		builder.WriteString(fmt.Sprintf("https://%s, https://%s {\n", route.PrimaryHost, route.FallbackHost))
 		builder.WriteString("  encode zstd gzip\n")
+		appendCaddyAccessLog(&builder, accessLogPath)
 
 		// WebSocket support: detect /ws paths and add explicit handling
 		wsPath := inferWebSocketPath(route.ServiceName)
@@ -633,9 +728,9 @@ func renderCaddyfilePerService(plan GatewayPlan) string {
 	return builder.String()
 }
 
-func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
+func renderCaddyfileWithPathRouting(plan GatewayPlan, accessLogPath string) string {
 	if !hasRenderableGatewayHosts(plan.Routes) && plan.RoutingPolicy.SharedDomain == "" {
-		return renderCaddyfilePerService(plan)
+		return renderCaddyfilePerService(plan, accessLogPath)
 	}
 
 	var builder strings.Builder
@@ -661,6 +756,7 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 
 		builder.WriteString(fmt.Sprintf("%s {\n", domain))
 		builder.WriteString("  encode zstd gzip\n\n")
+		appendCaddyAccessLog(&builder, accessLogPath)
 
 		// WebSocket routes (must be first)
 		wsRoutes := filterRoutes(plan.RoutingPolicy.Routes, true)
@@ -728,11 +824,23 @@ func renderCaddyfileWithPathRouting(plan GatewayPlan) string {
 		}
 		builder.WriteString(fmt.Sprintf("https://%s, https://%s {\n", route.PrimaryHost, route.FallbackHost))
 		builder.WriteString("  encode zstd gzip\n")
+		appendCaddyAccessLog(&builder, accessLogPath)
 		builder.WriteString(fmt.Sprintf("  reverse_proxy %s\n", route.Upstream))
 		builder.WriteString("}\n\n")
 	}
 
 	return builder.String()
+}
+
+func appendCaddyAccessLog(builder *strings.Builder, accessLogPath string) {
+	accessLogPath = strings.TrimSpace(accessLogPath)
+	if builder == nil || accessLogPath == "" {
+		return
+	}
+	builder.WriteString("  log {\n")
+	builder.WriteString(fmt.Sprintf("    output file %s\n", accessLogPath))
+	builder.WriteString("    format json\n")
+	builder.WriteString("  }\n")
 }
 
 func filterRoutes(routes []contracts.RoutePayload, websocket bool) []contracts.RoutePayload {

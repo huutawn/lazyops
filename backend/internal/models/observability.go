@@ -5,6 +5,7 @@ import "time"
 type LogStreamQuery struct {
 	ProjectID        string
 	ServiceName      string
+	Source           string
 	Level            string
 	Contains         string
 	Node             string

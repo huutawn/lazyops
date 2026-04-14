@@ -336,12 +336,15 @@ type FinOpsSummary struct {
 }
 
 type ServiceFinOpsSummary struct {
-	ServiceName   string  `json:"service_name"`
-	AvgCPU        float64 `json:"avg_cpu"`
-	AvgMemory     float64 `json:"avg_memory"`
-	P95Latency    float64 `json:"p95_latency"`
-	RequestRate   float64 `json:"request_rate"`
-	TotalRequests int64   `json:"total_requests"`
+	ServiceName     string  `json:"service_name"`
+	AvgCPU          float64 `json:"avg_cpu"`
+	AvgMemory       float64 `json:"avg_memory"`
+	AvgDiskBytes    float64 `json:"avg_disk_bytes"`
+	NetworkInBytes  float64 `json:"network_in_bytes"`
+	NetworkOutBytes float64 `json:"network_out_bytes"`
+	P95Latency      float64 `json:"p95_latency"`
+	RequestRate     float64 `json:"request_rate"`
+	TotalRequests   int64   `json:"total_requests"`
 }
 
 type HotNodeSummary struct {
@@ -418,8 +421,9 @@ func toScaleToZeroStateRecord(item models.ScaleToZeroState) *ScaleToZeroStateRec
 func computeServiceFinOpsSummary(serviceName string, rollups []models.MetricRollup) ServiceFinOpsSummary {
 	summary := ServiceFinOpsSummary{ServiceName: serviceName}
 
-	var cpuSum, memSum, latencyP95Sum float64
-	var cpuCount, memCount, latencyCount int
+	var cpuSum, memSum, diskSum, latencyP95Sum float64
+	var networkInBytes, networkOutBytes float64
+	var cpuCount, memCount, diskCount, latencyCount int
 	var totalRequests int64
 
 	for _, r := range rollups {
@@ -430,6 +434,13 @@ func computeServiceFinOpsSummary(serviceName string, rollups []models.MetricRoll
 		case MetricKindMemory:
 			memSum += r.Avg
 			memCount++
+		case MetricKindDisk:
+			diskSum += r.Avg
+			diskCount++
+		case MetricKindNetworkIn:
+			networkInBytes += r.Avg * float64(maxInt64(r.Count, 1))
+		case MetricKindNetworkOut:
+			networkOutBytes += r.Avg * float64(maxInt64(r.Count, 1))
 		case MetricKindRequestLatency:
 			latencyP95Sum += r.P95
 			latencyCount++
@@ -444,12 +455,25 @@ func computeServiceFinOpsSummary(serviceName string, rollups []models.MetricRoll
 	if memCount > 0 {
 		summary.AvgMemory = memSum / float64(memCount)
 	}
+	if diskCount > 0 {
+		summary.AvgDiskBytes = diskSum / float64(diskCount)
+	}
+	summary.NetworkInBytes = networkInBytes
+	summary.NetworkOutBytes = networkOutBytes
 	if latencyCount > 0 {
 		summary.P95Latency = latencyP95Sum / float64(latencyCount)
 	}
 	summary.TotalRequests = totalRequests
+	summary.RequestRate = float64(totalRequests)
 
 	return summary
+}
+
+func maxInt64(value, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func normalizeScaleToZeroState(raw string) string {

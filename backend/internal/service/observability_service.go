@@ -240,6 +240,7 @@ func (s *ObservabilityService) ListRecentLogs(
 	ctx context.Context,
 	projectID,
 	serviceName,
+	source,
 	level,
 	contains string,
 	limit int,
@@ -265,6 +266,7 @@ func (s *ObservabilityService) ListRecentLogs(
 	entries, err := s.logs.ListByQuery(models.LogStreamQuery{
 		ProjectID:   projectID,
 		ServiceName: strings.TrimSpace(serviceName),
+		Source:      strings.TrimSpace(source),
 		Level:       normalizedLevel,
 		Contains:    strings.TrimSpace(contains),
 		Limit:       limit,
@@ -278,6 +280,7 @@ func (s *ObservabilityService) ListRecentLogs(
 		lines = append(lines, LogLineRecord{
 			ID:            entry.ID,
 			Service:       entry.ServiceName,
+			Source:        entry.Source,
 			RevisionID:    entry.RevisionID,
 			CorrelationID: entry.CorrelationID,
 			Timestamp:     entry.OccurredAt,
@@ -290,97 +293,46 @@ func (s *ObservabilityService) ListRecentLogs(
 }
 
 type ServiceMetricSummary struct {
-	Service      string  `json:"service"`
-	CpuP95       float64 `json:"cpu_p95"`
-	CpuMax       float64 `json:"cpu_max"`
-	CpuMin       float64 `json:"cpu_min"`
-	CpuAvg       float64 `json:"cpu_avg"`
-	RamP95       float64 `json:"ram_p95"`
-	RamMax       float64 `json:"ram_max"`
-	RamMin       float64 `json:"ram_min"`
-	RamAvg       float64 `json:"ram_avg"`
-	RequestCount int64   `json:"request_count"`
-	Period       string  `json:"period"`
+	Service              string  `json:"service"`
+	CpuP95               float64 `json:"cpu_p95"`
+	CpuMax               float64 `json:"cpu_max"`
+	CpuMin               float64 `json:"cpu_min"`
+	CpuAvg               float64 `json:"cpu_avg"`
+	RamP95               float64 `json:"ram_p95"`
+	RamMax               float64 `json:"ram_max"`
+	RamMin               float64 `json:"ram_min"`
+	RamAvg               float64 `json:"ram_avg"`
+	DiskP95Bytes         float64 `json:"disk_p95_bytes"`
+	DiskMaxBytes         float64 `json:"disk_max_bytes"`
+	DiskMinBytes         float64 `json:"disk_min_bytes"`
+	DiskAvgBytes         float64 `json:"disk_avg_bytes"`
+	NetworkInTotalBytes  float64 `json:"network_in_total_bytes"`
+	NetworkOutTotalBytes float64 `json:"network_out_total_bytes"`
+	RequestCount         int64   `json:"request_count"`
+	Period               string  `json:"period"`
 }
 
 func (s *ObservabilityService) BuildServiceMetricSummary(ctx context.Context, projectID string, limit int) ([]ServiceMetricSummary, error) {
-	if s.metricRollups != nil {
-		metrics, err := s.buildServiceMetricSummaryFromRollups(projectID, limit)
-		if err != nil {
-			return nil, err
-		}
-		if len(metrics) > 0 {
-			return metrics, nil
-		}
+	_ = ctx
+	if s.metricRollups == nil {
+		return nil, nil
 	}
-
-	traces, err := s.ListTracesByProject(ctx, projectID, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	type series struct {
-		cpu []float64
-		ram []float64
-	}
-	perService := make(map[string]*series)
-	for _, trace := range traces {
-		service := strings.TrimSpace(trace.ServiceName)
-		if service == "" {
-			service = "unknown"
-		}
-		track := perService[service]
-		if track == nil {
-			track = &series{
-				cpu: make([]float64, 0, 8),
-				ram: make([]float64, 0, 8),
-			}
-			perService[service] = track
-		}
-
-		cpuProxy := math.Max(0, math.Min(100, trace.DurationMs/10))
-		ramProxy := math.Max(0, float64(trace.SpanCount)*64)
-		track.cpu = append(track.cpu, cpuProxy)
-		track.ram = append(track.ram, ramProxy)
-	}
-
-	metrics := make([]ServiceMetricSummary, 0, len(perService))
-	for serviceName, values := range perService {
-		cpuStats := summarizeSeries(values.cpu)
-		ramStats := summarizeSeries(values.ram)
-		metrics = append(metrics, ServiceMetricSummary{
-			Service:      serviceName,
-			CpuP95:       cpuStats.p95,
-			CpuMax:       cpuStats.max,
-			CpuMin:       cpuStats.min,
-			CpuAvg:       cpuStats.avg,
-			RamP95:       ramStats.p95,
-			RamMax:       ramStats.max,
-			RamMin:       ramStats.min,
-			RamAvg:       ramStats.avg,
-			RequestCount: int64(len(values.cpu)),
-			Period:       "trace_recent",
-		})
-	}
-
-	sort.Slice(metrics, func(i, j int) bool {
-		if metrics[i].RequestCount == metrics[j].RequestCount {
-			return metrics[i].Service < metrics[j].Service
-		}
-		return metrics[i].RequestCount > metrics[j].RequestCount
-	})
-	return metrics, nil
+	return s.buildServiceMetricSummaryFromRollups(projectID, limit)
 }
 
 type IngestAgentMetricRollupCommand struct {
-	ProjectID   string
-	TargetKind  string
-	TargetID    string
-	ServiceName string
-	Window      string
-	CPU         AgentMetricAggregate
-	RAM         AgentMetricAggregate
-	Latency     AgentMetricAggregate
+	ProjectID    string
+	TargetKind   string
+	TargetID     string
+	ServiceName  string
+	Window       string
+	CPU          AgentMetricAggregate
+	RAM          AgentMetricAggregate
+	Disk         AgentMetricAggregate
+	NetworkIn    AgentMetricAggregate
+	NetworkOut   AgentMetricAggregate
+	RequestCount AgentMetricAggregate
+	Latency      AgentMetricAggregate
 }
 
 type AgentMetricAggregate struct {
@@ -452,33 +404,20 @@ func (s *ObservabilityService) IngestMetricRollup(ctx context.Context, cmd Inges
 	if err := writeAggregate(MetricKindMemory, cmd.RAM, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindMemory})); err != nil {
 		return 0, err
 	}
-	if err := writeAggregate(MetricKindRequestLatency, cmd.Latency, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindRequestLatency})); err != nil {
+	if err := writeAggregate(MetricKindDisk, cmd.Disk, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindDisk})); err != nil {
 		return 0, err
 	}
-
-	requestSamples := cmd.Latency.Count
-	if requestSamples <= 0 {
-		if cmd.CPU.Count > cmd.RAM.Count {
-			requestSamples = cmd.CPU.Count
-		} else {
-			requestSamples = cmd.RAM.Count
-		}
+	if err := writeAggregate(MetricKindNetworkIn, cmd.NetworkIn, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindNetworkIn})); err != nil {
+		return 0, err
 	}
-	if requestSamples > 0 {
-		requestValue := float64(requestSamples)
-		if err := writeAggregate(
-			MetricKindRequestCount,
-			AgentMetricAggregate{
-				P95:   requestValue,
-				Max:   requestValue,
-				Min:   requestValue,
-				Avg:   requestValue,
-				Count: requestSamples,
-			},
-			mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindRequestCount}),
-		); err != nil {
-			return 0, err
-		}
+	if err := writeAggregate(MetricKindNetworkOut, cmd.NetworkOut, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindNetworkOut})); err != nil {
+		return 0, err
+	}
+	if err := writeAggregate(MetricKindRequestCount, cmd.RequestCount, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindRequestCount})); err != nil {
+		return 0, err
+	}
+	if err := writeAggregate(MetricKindRequestLatency, cmd.Latency, mergeMetricMetadata(baseMetadata, map[string]any{"metric": MetricKindRequestLatency})); err != nil {
+		return 0, err
 	}
 
 	return inserted, nil
@@ -503,8 +442,10 @@ func (s *ObservabilityService) buildServiceMetricSummaryFromRollups(projectID st
 	type serviceAggregate struct {
 		cpu                metricSeriesAccumulator
 		ram                metricSeriesAccumulator
+		disk               metricSeriesAccumulator
+		networkIn          metricSeriesAccumulator
+		networkOut         metricSeriesAccumulator
 		requestCountDirect int64
-		requestCountByLat  int64
 		period             string
 	}
 
@@ -532,31 +473,36 @@ func (s *ObservabilityService) buildServiceMetricSummaryFromRollups(projectID st
 			aggregate.cpu.Add(rollup)
 		case MetricKindMemory:
 			aggregate.ram.Add(rollup)
+		case MetricKindDisk:
+			aggregate.disk.Add(rollup)
+		case MetricKindNetworkIn:
+			aggregate.networkIn.Add(rollup)
+		case MetricKindNetworkOut:
+			aggregate.networkOut.Add(rollup)
 		case MetricKindRequestCount:
 			if rollup.Count > 0 {
 				aggregate.requestCountDirect += rollup.Count
 			} else if rollup.Avg > 0 {
 				aggregate.requestCountDirect += int64(math.Round(rollup.Avg))
 			}
-		case MetricKindRequestLatency:
-			if rollup.Count > 0 {
-				aggregate.requestCountByLat += rollup.Count
-			}
 		}
 	}
 
 	metrics := make([]ServiceMetricSummary, 0, len(perService))
 	for serviceName, aggregate := range perService {
-		if !aggregate.cpu.HasSamples() && !aggregate.ram.HasSamples() && aggregate.requestCountDirect == 0 && aggregate.requestCountByLat == 0 {
+		if !aggregate.cpu.HasSamples() &&
+			!aggregate.ram.HasSamples() &&
+			!aggregate.disk.HasSamples() &&
+			!aggregate.networkIn.HasSamples() &&
+			!aggregate.networkOut.HasSamples() &&
+			aggregate.requestCountDirect == 0 {
 			continue
 		}
 
 		cpuStats := aggregate.cpu.Summary()
 		ramStats := aggregate.ram.Summary()
+		diskStats := aggregate.disk.Summary()
 		requestCount := aggregate.requestCountDirect
-		if requestCount <= 0 {
-			requestCount = aggregate.requestCountByLat
-		}
 
 		period := aggregate.period
 		if period == "" {
@@ -564,17 +510,23 @@ func (s *ObservabilityService) buildServiceMetricSummaryFromRollups(projectID st
 		}
 
 		metrics = append(metrics, ServiceMetricSummary{
-			Service:      serviceName,
-			CpuP95:       cpuStats.p95,
-			CpuMax:       cpuStats.max,
-			CpuMin:       cpuStats.min,
-			CpuAvg:       cpuStats.avg,
-			RamP95:       bytesToMB(ramStats.p95),
-			RamMax:       bytesToMB(ramStats.max),
-			RamMin:       bytesToMB(ramStats.min),
-			RamAvg:       bytesToMB(ramStats.avg),
-			RequestCount: requestCount,
-			Period:       period,
+			Service:              serviceName,
+			CpuP95:               cpuStats.p95,
+			CpuMax:               cpuStats.max,
+			CpuMin:               cpuStats.min,
+			CpuAvg:               cpuStats.avg,
+			RamP95:               bytesToMB(ramStats.p95),
+			RamMax:               bytesToMB(ramStats.max),
+			RamMin:               bytesToMB(ramStats.min),
+			RamAvg:               bytesToMB(ramStats.avg),
+			DiskP95Bytes:         diskStats.p95,
+			DiskMaxBytes:         diskStats.max,
+			DiskMinBytes:         diskStats.min,
+			DiskAvgBytes:         diskStats.avg,
+			NetworkInTotalBytes:  aggregate.networkIn.Total(),
+			NetworkOutTotalBytes: aggregate.networkOut.Total(),
+			RequestCount:         requestCount,
+			Period:               period,
 		})
 	}
 
@@ -687,6 +639,7 @@ func (s *ObservabilityService) PreviewLogs(ctx context.Context, cmd PreviewLogsC
 	query := models.LogStreamQuery{
 		ProjectID:     projectID,
 		ServiceName:   serviceName,
+		Source:        strings.TrimSpace(cmd.Source),
 		Level:         level,
 		Contains:      strings.TrimSpace(cmd.Contains),
 		Node:          strings.TrimSpace(cmd.Node),
@@ -714,6 +667,7 @@ func (s *ObservabilityService) PreviewLogs(ctx context.Context, cmd PreviewLogsC
 	for _, entry := range entries {
 		preview.Lines = append(preview.Lines, LogLineRecord{
 			Timestamp: entry.OccurredAt,
+			Source:    entry.Source,
 			Level:     entry.Level,
 			Message:   entry.Message,
 			Node:      entry.Node,
@@ -1379,6 +1333,7 @@ type LogBatchRecord struct {
 type PreviewLogsCommand struct {
 	ProjectID     string
 	ServiceName   string
+	Source        string
 	Level         string
 	Contains      string
 	Node          string
@@ -1396,6 +1351,7 @@ type LogsStreamPreview struct {
 type LogLineRecord struct {
 	ID            string    `json:"id,omitempty"`
 	Service       string    `json:"service,omitempty"`
+	Source        string    `json:"source,omitempty"`
 	RevisionID    string    `json:"revision_id,omitempty"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 	Timestamp     time.Time `json:"timestamp"`
@@ -1535,34 +1491,11 @@ func (a metricSeriesAccumulator) Summary() seriesSummary {
 	}
 }
 
-func summarizeSeries(values []float64) seriesSummary {
-	if len(values) == 0 {
-		return seriesSummary{}
+func (a metricSeriesAccumulator) Total() float64 {
+	if !a.hasValues {
+		return 0
 	}
-
-	sorted := make([]float64, len(values))
-	copy(sorted, values)
-	sort.Float64s(sorted)
-
-	var total float64
-	for _, item := range sorted {
-		total += item
-	}
-
-	index := int(math.Ceil(float64(len(sorted))*0.95)) - 1
-	if index < 0 {
-		index = 0
-	}
-	if index >= len(sorted) {
-		index = len(sorted) - 1
-	}
-
-	return seriesSummary{
-		min: sorted[0],
-		max: sorted[len(sorted)-1],
-		avg: total / float64(len(sorted)),
-		p95: sorted[index],
-	}
+	return a.weightedSum
 }
 
 func metricWindowDuration(window string) time.Duration {
