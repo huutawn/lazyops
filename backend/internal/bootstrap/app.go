@@ -24,6 +24,7 @@ type Application struct {
 	ProjectRepo            *repository.ProjectRepository
 	ProjectRepoLinkRepo    *repository.ProjectRepoLinkRepository
 	ProjectInternalSvcRepo *repository.ProjectInternalServiceRepository
+	ProjectEnvRepo         *repository.ProjectEnvBundleRepository
 	BuildJobRepo           *repository.BuildJobRepository
 	DeploymentBindingRepo  *repository.DeploymentBindingRepository
 	ServiceRepo            *repository.ServiceRepository
@@ -52,6 +53,7 @@ type Application struct {
 	BuildCallbackSvc       *service.BuildCallbackService
 	ProjectService         *service.ProjectService
 	ProjectInternalSvc     *service.ProjectInternalServiceService
+	ProjectEnvSvc          *service.ProjectEnvService
 	ProjectRepoLinkSvc     *service.ProjectRepoLinkService
 	BootstrapOrchestrator  *service.BootstrapOrchestrator
 	BuildJobSvc            *service.BuildJobService
@@ -100,6 +102,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	projectRepo := repository.NewProjectRepository(db)
 	projectRepoLinkRepo := repository.NewProjectRepoLinkRepository(db)
 	projectInternalSvcRepo := repository.NewProjectInternalServiceRepository(db)
+	projectEnvRepo := repository.NewProjectEnvBundleRepository(db)
 	buildJobRepo := repository.NewBuildJobRepository(db)
 	deploymentBindingRepo := repository.NewDeploymentBindingRepository(db)
 	serviceRepo := repository.NewServiceRepository(db)
@@ -150,6 +153,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	githubOAuthService.WithInstallationSync(githubInstallSvc)
 	projectService := service.NewProjectService(projectRepo, projectInternalSvcRepo)
 	projectInternalSvc := service.NewProjectInternalServiceService(projectRepo, projectInternalSvcRepo)
+	projectEnvSvc := service.NewProjectEnvService(projectRepo, projectEnvRepo, projectInternalSvcRepo, cfg.Secrets.EncryptionKey)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
 	buildJobSvc := service.NewBuildJobService(projectRepoLinkRepo, buildJobRepo)
 	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
@@ -209,6 +213,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		deploymentBindingRepo,
 		operatorStreamHub,
 	)
+	rolloutPlanner.WithProjectEnvService(projectEnvSvc)
 	rolloutExecutionSvc := service.NewRolloutExecutionService(
 		deploymentSvc,
 		rolloutPlanner,
@@ -250,6 +255,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		ProjectRepo:            projectRepo,
 		ProjectRepoLinkRepo:    projectRepoLinkRepo,
 		ProjectInternalSvcRepo: projectInternalSvcRepo,
+		ProjectEnvRepo:         projectEnvRepo,
 		BuildJobRepo:           buildJobRepo,
 		DeploymentBindingRepo:  deploymentBindingRepo,
 		ServiceRepo:            serviceRepo,
@@ -278,6 +284,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		BuildCallbackSvc:       buildCallbackSvc,
 		ProjectService:         projectService,
 		ProjectInternalSvc:     projectInternalSvc,
+		ProjectEnvSvc:          projectEnvSvc,
 		ProjectRepoLinkSvc:     projectRepoLinkSvc,
 		BootstrapOrchestrator:  bootstrapOrchestrator,
 		BuildJobSvc:            buildJobSvc,

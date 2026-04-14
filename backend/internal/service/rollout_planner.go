@@ -41,6 +41,7 @@ type RolloutPlanner struct {
 	incidents   RuntimeIncidentStore
 	bindings    DeploymentBindingStore
 	operatorHub OperatorEventBroadcaster
+	projectEnv  *ProjectEnvService
 }
 
 type OperatorEventBroadcaster interface {
@@ -64,6 +65,14 @@ func NewRolloutPlanner(
 		bindings:    bindings,
 		operatorHub: operatorHub,
 	}
+}
+
+func (p *RolloutPlanner) WithProjectEnvService(service *ProjectEnvService) *RolloutPlanner {
+	if p == nil {
+		return p
+	}
+	p.projectEnv = service
+	return p
 }
 
 func (p *RolloutPlanner) PlanCandidate(ctx context.Context, projectID, revisionID string) (*RolloutPlan, error) {
@@ -136,6 +145,15 @@ func (p *RolloutPlanner) PlanCandidate(ctx context.Context, projectID, revisionI
 			"target_id":    binding.TargetID,
 		},
 		"revision": revisionPayload,
+	}
+	if p.projectEnv != nil {
+		projectEnv, err := p.projectEnv.LoadRuntimeEnv(projectID)
+		if err != nil {
+			return nil, fmt.Errorf("load project env: %w", err)
+		}
+		if len(projectEnv) > 0 {
+			preparePayload["project_env"] = projectEnv
+		}
 	}
 
 	req := runtime.RolloutRequest{

@@ -13,6 +13,7 @@ type Config struct {
 	App         AppConfig
 	Server      ServerConfig
 	Database    DatabaseConfig
+	Secrets     SecretConfig
 	JWT         JWTConfig
 	PAT         PATConfig
 	GoogleOAuth GoogleOAuthConfig
@@ -47,6 +48,10 @@ type DatabaseConfig struct {
 	TimeZone     string
 	MaxIdleConns int
 	MaxOpenConns int
+}
+
+type SecretConfig struct {
+	EncryptionKey string
 }
 
 type JWTConfig struct {
@@ -155,6 +160,9 @@ func Load() Config {
 			TimeZone:     getEnv("DB_TIMEZONE", "Asia/Bangkok"),
 			MaxIdleConns: getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
 			MaxOpenConns: getEnvAsInt("DB_MAX_OPEN_CONNS", 50),
+		},
+		Secrets: SecretConfig{
+			EncryptionKey: getEnv("BACKEND_SECRET_ENCRYPTION_KEY", ""),
 		},
 		JWT: JWTConfig{
 			Secret:    jwtSecret,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,7 @@ type ProcessManager struct {
 
 type runtimeWorkloadConfig struct {
 	Service       ServiceRuntimeContext `json:"service"`
+	ProjectEnv    map[string]string     `json:"project_env,omitempty"`
 	ArtifactRef   string                `json:"artifact_ref"`
 	ImageRef      string                `json:"image_ref"`
 	WorkspaceRoot string                `json:"workspace_root"`
@@ -625,8 +627,7 @@ func (m *ProcessManager) startContainerWorkload(ctx context.Context, cfg runtime
 		args = append(args, "--label", "lazyops.revision_id="+revisionID)
 	}
 
-	args = append(args, "-e", "PORT="+strconv.Itoa(port))
-	for _, envVar := range dependencyEnvVars(cfg.Service.Dependencies) {
+	for _, envVar := range buildContainerEnvVars(port, cfg.Service.Dependencies, cfg.ProjectEnv) {
 		args = append(args, "-e", envVar)
 	}
 
@@ -696,9 +697,32 @@ func (m *ProcessManager) startSidecarCompanion(ctx context.Context, configPath s
 	return containerName, nil
 }
 
-func dependencyEnvVars(deps []contracts.DependencyBindingPayload) []string {
+func buildContainerEnvVars(port int, deps []contracts.DependencyBindingPayload, projectEnv map[string]string) []string {
+	env := dependencyEnvMap(deps)
+	for key, value := range projectEnv {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" || isReservedRuntimeEnvKey(trimmedKey) {
+			continue
+		}
+		env[trimmedKey] = value
+	}
+	env["PORT"] = strconv.Itoa(port)
+
+	out := make([]string, 0, len(env))
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func dependencyEnvMap(deps []contracts.DependencyBindingPayload) map[string]string {
 	if len(deps) == 0 {
-		return nil
+		return map[string]string{}
 	}
 
 	env := make(map[string]string, len(deps)*4)
@@ -732,11 +756,12 @@ func dependencyEnvVars(deps []contracts.DependencyBindingPayload) []string {
 		}
 	}
 
-	out := make([]string, 0, len(env))
-	for key, value := range env {
-		out = append(out, key+"="+value)
-	}
-	return out
+	return env
+}
+
+func isReservedRuntimeEnvKey(key string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(key))
+	return normalized == "PORT" || strings.HasPrefix(normalized, "LAZYOPS_")
 }
 
 func splitHostPort(endpoint string) (string, string) {

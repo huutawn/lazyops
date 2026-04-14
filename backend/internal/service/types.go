@@ -368,8 +368,8 @@ type LazyopsYAMLCompatibilityPolicy struct {
 }
 
 type LazyopsYAMLRoutingPolicy struct {
-	SharedDomain string              `json:"shared_domain,omitempty"`
-	Routes       []LazyopsYAMLRoute  `json:"routes,omitempty"`
+	SharedDomain string             `json:"shared_domain,omitempty"`
+	Routes       []LazyopsYAMLRoute `json:"routes,omitempty"`
 }
 
 type LazyopsYAMLRoute struct {
@@ -555,6 +555,28 @@ type ProjectInternalServiceRecord struct {
 
 type ProjectInternalServiceListResult struct {
 	Items []ProjectInternalServiceRecord
+}
+
+type UpsertProjectEnvCommand struct {
+	RequesterUserID string
+	RequesterRole   string
+	ProjectID       string
+	Content         string
+}
+
+type ProjectEnvHelperSnippet struct {
+	ServiceKind string
+	Alias       string
+	Env         map[string]string
+}
+
+type ProjectEnvBundleRecord struct {
+	Configured     bool
+	UpdatedAt      *time.Time
+	Fingerprint    string
+	Keys           []string
+	ParseWarnings  []string
+	HelperSnippets []ProjectEnvHelperSnippet
 }
 
 type CreateProjectRepoLinkCommand struct {

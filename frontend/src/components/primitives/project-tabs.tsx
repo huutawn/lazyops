@@ -8,6 +8,7 @@ const PROJECT_TABS = [
   { label: 'Tổng quan', href: (id: string) => `/projects/${id}` },
   { label: 'Tích hợp', href: (id: string) => `/projects/${id}/integrations` },
   { label: 'Liên kết kho mã', href: (id: string) => `/projects/${id}/repo-link` },
+  { label: 'Biến môi trường', href: (id: string) => `/projects/${id}/env` },
   { label: 'Binding', href: (id: string) => `/projects/${id}/bindings` },
   { label: 'Blueprint', href: (id: string) => `/projects/${id}/blueprint` },
   { label: 'Dịch vụ nội bộ', href: (id: string) => `/projects/${id}/internal-services` },

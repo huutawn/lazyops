@@ -49,6 +49,7 @@ func Migrate(db *gorm.DB) error {
 		&models.Project{},
 		&models.ProjectRepoLink{},
 		&models.ProjectInternalService{},
+		&models.ProjectEnvBundle{},
 		&models.BuildJob{},
 		&models.DeploymentBinding{},
 		&models.Service{},

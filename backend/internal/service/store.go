@@ -76,6 +76,12 @@ type ProjectInternalServiceStore interface {
 	ListByProject(projectID string) ([]models.ProjectInternalService, error)
 }
 
+type ProjectEnvBundleStore interface {
+	GetByProject(projectID string) (*models.ProjectEnvBundle, error)
+	Upsert(bundle *models.ProjectEnvBundle) error
+	DeleteByProject(projectID string) error
+}
+
 type BlueprintStore interface {
 	Create(blueprint *models.Blueprint) error
 	GetByIDForProject(projectID, blueprintID string) (*models.Blueprint, error)

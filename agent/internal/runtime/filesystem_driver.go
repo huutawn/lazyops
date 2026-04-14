@@ -82,6 +82,7 @@ func (d *FilesystemDriver) hydrateRuntimeContextFromWorkspace(layout WorkspaceLa
 	if strings.TrimSpace(manifest.Revision.RevisionID) != strings.TrimSpace(runtimeCtx.Revision.RevisionID) {
 		return runtimeCtx
 	}
+	runtimeCtx.ProjectEnv = cloneStringMap(manifest.ProjectEnv)
 	return withRuntimeServices(runtimeCtx, manifest.Services)
 }
 
@@ -205,6 +206,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 		hydratedConfigPath := filepath.Join(serviceDir, "runtime.json")
 		if err := writeJSON(hydratedConfigPath, map[string]any{
 			"service":        service,
+			"project_env":    runtimeCtx.ProjectEnv,
 			"artifact_ref":   artifact.ArtifactRef,
 			"image_ref":      artifact.ImageRef,
 			"workspace_root": layout.Root,
@@ -296,6 +298,7 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 	manifest := WorkspaceManifest{
 		PreparedAt:   d.now(),
 		Project:      runtimeCtx.Project,
+		ProjectEnv:   cloneStringMap(runtimeCtx.ProjectEnv),
 		Binding:      runtimeCtx.Binding,
 		Revision:     runtimeCtx.Revision,
 		Services:     runtimeCtx.Services,

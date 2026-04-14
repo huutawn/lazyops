@@ -25,6 +25,15 @@ func ToConfigureProjectInternalServicesCommand(userID, role, projectID string, r
 	}
 }
 
+func ToUpsertProjectEnvCommand(userID, role, projectID string, req requestdto.UpsertProjectEnvRequest) service.UpsertProjectEnvCommand {
+	return service.UpsertProjectEnvCommand{
+		RequesterUserID: userID,
+		RequesterRole:   role,
+		ProjectID:       projectID,
+		Content:         req.Content,
+	}
+}
+
 func ToCreateProjectRepoLinkCommand(userID, role, projectID string, req requestdto.LinkProjectRepoRequest) service.CreateProjectRepoLinkCommand {
 	return service.CreateProjectRepoLinkCommand{
 		RequesterUserID:      userID,
@@ -94,4 +103,24 @@ func ToProjectInternalServiceListResponse(result service.ProjectInternalServiceL
 	}
 
 	return responsedto.ProjectInternalServiceListResponse{Items: items}
+}
+
+func ToProjectEnvBundleResponse(record service.ProjectEnvBundleRecord) responsedto.ProjectEnvBundleResponse {
+	helperSnippets := make([]responsedto.ProjectEnvHelperSnippetResponse, 0, len(record.HelperSnippets))
+	for _, item := range record.HelperSnippets {
+		helperSnippets = append(helperSnippets, responsedto.ProjectEnvHelperSnippetResponse{
+			ServiceKind: item.ServiceKind,
+			Alias:       item.Alias,
+			Env:         item.Env,
+		})
+	}
+
+	return responsedto.ProjectEnvBundleResponse{
+		Configured:     record.Configured,
+		UpdatedAt:      record.UpdatedAt,
+		Fingerprint:    record.Fingerprint,
+		Keys:           record.Keys,
+		ParseWarnings:  record.ParseWarnings,
+		HelperSnippets: helperSnippets,
+	}
 }

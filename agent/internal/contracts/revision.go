@@ -27,9 +27,10 @@ type ProjectMetadataPayload struct {
 }
 
 type PrepareReleaseWorkspacePayload struct {
-	Project  ProjectMetadataPayload   `json:"project"`
-	Binding  DeploymentBindingPayload `json:"binding"`
-	Revision DesiredRevisionPayload   `json:"revision"`
+	Project    ProjectMetadataPayload   `json:"project"`
+	Binding    DeploymentBindingPayload `json:"binding"`
+	Revision   DesiredRevisionPayload   `json:"revision"`
+	ProjectEnv map[string]string        `json:"project_env,omitempty"`
 }
 
 type DeploymentBindingPayload struct {

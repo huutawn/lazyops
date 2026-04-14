@@ -29,12 +29,16 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	deploymentController := NewDeploymentController(nil, nil)
 	observabilityController := NewObservabilityController(nil, nil)
 	internalServiceController := NewProjectInternalServiceController(nil)
+	projectEnvController := NewProjectEnvController(nil)
 
 	protected := router.Group("/api/v1")
 	protected.Use(middleware.Authenticate(nil))
 	protected.GET("/projects", projectController.List)
 	protected.POST("/projects", projectController.Create)
 	protected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+	protected.GET("/projects/:id/env", projectEnvController.Get)
+	protected.PUT("/projects/:id/env", projectEnvController.Upsert)
+	protected.DELETE("/projects/:id/env", projectEnvController.Delete)
 	protected.GET("/projects/:id/internal-services", internalServiceController.List)
 	protected.PUT("/projects/:id/internal-services", internalServiceController.Configure)
 	protected.GET("/projects/:id/bootstrap/status", bootstrapController.Status)
@@ -63,6 +67,9 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 		{name: "list projects", method: http.MethodGet, target: "/api/v1/projects"},
 		{name: "create project", method: http.MethodPost, target: "/api/v1/projects", body: `{"name":"Acme"}`},
 		{name: "link repo", method: http.MethodPost, target: "/api/v1/projects/prj_123/repo-link", body: `{"github_installation_id":1,"github_repo_id":2}`},
+		{name: "get project env", method: http.MethodGet, target: "/api/v1/projects/prj_123/env"},
+		{name: "put project env", method: http.MethodPut, target: "/api/v1/projects/prj_123/env", body: `{"content":"APP_ENV=prod"}`},
+		{name: "delete project env", method: http.MethodDelete, target: "/api/v1/projects/prj_123/env"},
 		{name: "list internal services", method: http.MethodGet, target: "/api/v1/projects/prj_123/internal-services"},
 		{name: "configure internal services", method: http.MethodPut, target: "/api/v1/projects/prj_123/internal-services", body: `{"kinds":["postgres","redis"]}`},
 		{name: "bootstrap status", method: http.MethodGet, target: "/api/v1/projects/prj_123/bootstrap/status"},

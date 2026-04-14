@@ -31,12 +31,13 @@ type Driver interface {
 }
 
 type RuntimeContext struct {
-	Project  ProjectMetadata                    `json:"project"`
-	Binding  contracts.DeploymentBindingPayload `json:"binding"`
-	Revision contracts.DesiredRevisionPayload   `json:"revision"`
-	Services []ServiceRuntimeContext            `json:"services"`
-	Rollout  RolloutContext                     `json:"-"`
-	Runtime  RuntimeDependencyContext           `json:"-"`
+	Project    ProjectMetadata                    `json:"project"`
+	ProjectEnv map[string]string                  `json:"project_env,omitempty"`
+	Binding    contracts.DeploymentBindingPayload `json:"binding"`
+	Revision   contracts.DesiredRevisionPayload   `json:"revision"`
+	Services   []ServiceRuntimeContext            `json:"services"`
+	Rollout    RolloutContext                     `json:"-"`
+	Runtime    RuntimeDependencyContext           `json:"-"`
 }
 
 func (r RuntimeContext) RoutingPolicy() contracts.RoutingPolicyPayload {
@@ -118,6 +119,7 @@ type PreparedWorkspace struct {
 type WorkspaceManifest struct {
 	PreparedAt   time.Time                          `json:"prepared_at"`
 	Project      ProjectMetadata                    `json:"project"`
+	ProjectEnv   map[string]string                  `json:"project_env,omitempty"`
 	Binding      contracts.DeploymentBindingPayload `json:"binding"`
 	Revision     contracts.DesiredRevisionPayload   `json:"revision"`
 	Services     []ServiceRuntimeContext            `json:"services"`
@@ -836,9 +838,10 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 			Slug:      payload.Project.Slug,
 			Labels:    payload.Project.Labels,
 		},
-		Binding:  payload.Binding,
-		Revision: payload.Revision,
-		Services: services,
+		ProjectEnv: cloneStringMap(payload.ProjectEnv),
+		Binding:    payload.Binding,
+		Revision:   payload.Revision,
+		Services:   services,
 		Runtime: RuntimeDependencyContext{
 			PlacementByService:   placementByService,
 			ServiceByName:        serviceByName,
@@ -855,8 +858,9 @@ func ContextFromWorkspaceManifest(manifest WorkspaceManifest) (RuntimeContext, e
 			Slug:      manifest.Project.Slug,
 			Labels:    manifest.Project.Labels,
 		},
-		Binding:  manifest.Binding,
-		Revision: manifest.Revision,
+		ProjectEnv: manifest.ProjectEnv,
+		Binding:    manifest.Binding,
+		Revision:   manifest.Revision,
 	})
 	if err != nil {
 		return RuntimeContext{}, err

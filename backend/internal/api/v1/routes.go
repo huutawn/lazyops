@@ -17,6 +17,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	buildController := controller.NewBuildController(app.BuildCallbackSvc)
 	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
 	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc)
+	projectEnvController := controller.NewProjectEnvController(app.ProjectEnvSvc)
 	routingController := controller.NewRoutingController(app.RoutingSvc)
 	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator, app.InstanceService, app.InstanceSSHInstallSvc)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
@@ -93,6 +94,15 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.POST("/projects", projectController.Create)
 			userProtected.GET("/projects", projectController.List)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
+			userProtected.GET("/projects/:id/env", projectEnvController.Get)
+			userProtected.PUT("/projects/:id/env",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectEnvController.Upsert,
+			)
+			userProtected.DELETE("/projects/:id/env",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectEnvController.Delete,
+			)
 			userProtected.GET("/projects/:id/internal-services", projectInternalServiceController.List)
 			userProtected.PUT("/projects/:id/internal-services",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),

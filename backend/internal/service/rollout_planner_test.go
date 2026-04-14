@@ -9,6 +9,7 @@ import (
 
 	"lazyops-server/internal/models"
 	"lazyops-server/internal/runtime"
+	"lazyops-server/internal/secret"
 )
 
 type fakeRuntimeIncidentStore struct {
@@ -143,6 +144,72 @@ func TestRolloutPlannerPlanCandidateSuccess(t *testing.T) {
 	}
 	if len(plan.Steps) == 0 {
 		t.Fatal("expected at least one rollout step")
+	}
+}
+
+func TestRolloutPlannerPlanCandidateIncludesProjectEnv(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewStandaloneDriver())
+
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123",
+		TriggerKind:          "push",
+		Status:               RevisionStatusArtifactReady,
+		CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Production",
+		TargetRef:   "prod-main",
+		RuntimeMode: "standalone",
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+	})
+	bundleStore := newFakeProjectEnvBundleStore()
+	serialized, err := serializeProjectEnvMap(map[string]string{"APP_ENV": "prod"})
+	if err != nil {
+		t.Fatalf("serialize env map: %v", err)
+	}
+	encrypted, err := secret.Encrypt(serialized, "planner-secret-key")
+	if err != nil {
+		t.Fatalf("encrypt env bundle: %v", err)
+	}
+	if err := bundleStore.Upsert(&models.ProjectEnvBundle{
+		ProjectID:      "prj_123",
+		EnvEncrypted:   encrypted,
+		EnvFingerprint: projectEnvFingerprint(serialized),
+		UpdatedBy:      "usr_123",
+	}); err != nil {
+		t.Fatalf("seed env bundle: %v", err)
+	}
+
+	planner := newTestRolloutPlanner(
+		registry,
+		revisionStore,
+		newFakeDeploymentStore(),
+		newFakeRuntimeIncidentStore(),
+		bindingStore,
+		&fakeOperatorEventBroadcaster{},
+	).WithProjectEnvService(NewProjectEnvService(nil, bundleStore, nil, "planner-secret-key"))
+
+	plan, err := planner.PlanCandidate(context.Background(), "prj_123", "rev_123")
+	if err != nil {
+		t.Fatalf("plan candidate: %v", err)
+	}
+	if len(plan.Steps) == 0 {
+		t.Fatal("expected rollout steps")
+	}
+	projectEnv, ok := plan.Steps[0].Command.Payload["project_env"].(map[string]string)
+	if !ok {
+		t.Fatalf("expected project_env map in rollout payload, got %#v", plan.Steps[0].Command.Payload["project_env"])
+	}
+	if projectEnv["APP_ENV"] != "prod" {
+		t.Fatalf("expected APP_ENV=prod in rollout payload, got %#v", projectEnv)
 	}
 }
 
