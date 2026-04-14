@@ -142,8 +142,9 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
         </div>
       </SectionCard>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid items-start gap-6 xl:grid-cols-2">
         <SectionCard
+          className="self-start"
           title="Domain công khai"
           description="Public URL hiện tại của service public. Đây là link nên đưa cho user hoặc dùng để tạo traffic khi demo."
           actions={
@@ -152,7 +153,7 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
                 href={primaryPublicURL}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg border border-[#334155] bg-[#0B1120]/60 px-3 py-2 text-sm font-semibold text-[#38BDF8] transition-colors hover:text-white"
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-[#334155] bg-[#0B1120]/60 px-3 py-2 text-sm font-semibold text-[#38BDF8] transition-colors hover:text-white"
               >
                 Mở app <ExternalLink className="size-4" />
               </a>

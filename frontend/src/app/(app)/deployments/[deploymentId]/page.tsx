@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { 
   Rocket, 
@@ -54,10 +55,54 @@ function formatState(state: string): string {
   return state.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+type DeploymentLogView = 'app' | 'gateway' | 'sidecar' | 'internal' | 'all';
+
+const LOG_VIEW_OPTIONS: Array<{ id: DeploymentLogView; label: string }> = [
+  { id: 'app', label: 'App' },
+  { id: 'gateway', label: 'Gateway' },
+  { id: 'sidecar', label: 'Sidecar' },
+  { id: 'internal', label: 'Internal' },
+  { id: 'all', label: 'All' },
+];
+
+function matchesLogView(line: LogEntry, view: DeploymentLogView): boolean {
+  const source = (line.source ?? '').trim().toLowerCase();
+  switch (view) {
+    case 'app':
+      return source === 'app:container';
+    case 'gateway':
+      return source.startsWith('gateway:caddy');
+    case 'sidecar':
+      return source === 'compatibility_sidecar';
+    case 'internal':
+      return source === 'internal_service';
+    case 'all':
+    default:
+      return true;
+  }
+}
+
+function emptyLogMessage(view: DeploymentLogView): string {
+  switch (view) {
+    case 'app':
+      return 'Chưa có app log được ghi nhận cho revision này.';
+    case 'gateway':
+      return 'Chưa có gateway log được ghi nhận cho revision này.';
+    case 'sidecar':
+      return 'Chưa có sidecar log được ghi nhận cho revision này.';
+    case 'internal':
+      return 'Chưa có internal-service log được ghi nhận cho revision này.';
+    case 'all':
+    default:
+      return 'Chưa có log được ghi nhận cho revision này.';
+  }
+}
+
 export default function DeploymentDetailPage() {
   const params = useParams();
   const projectId = params?.projectId as string | undefined;
   const deploymentId = params?.deploymentId as string;
+  const [logView, setLogView] = useState<DeploymentLogView>('app');
   
   const { data, isLoading, isError } = useDeployment(projectId, deploymentId);
   const deploymentAction = useDeploymentAction(projectId, deploymentId);
@@ -67,17 +112,22 @@ export default function DeploymentDetailPage() {
     queryKey: ['deployment-runtime-logs', projectId, deploymentId, revisionID],
     queryFn: async (): Promise<LogEntry[]> => {
       if (!projectId || !revisionID) return [];
-      const result = await listProjectLogs(projectId, { limit: 200 });
+      const result = await listProjectLogs(projectId, { limit: 300 });
       if (result.error) throw new Error(result.error.message);
       const lines = result.data?.items ?? [];
-      return lines.filter((line) => line.revision_id === revisionID).slice(0, 8);
+      return lines.filter((line) => line.revision_id === revisionID);
     },
     enabled: !!projectId && !!revisionID,
     staleTime: 15 * 1000,
     refetchInterval: 10_1000,
   });
 
-  const traceCorrelationID = deploymentLogs.data?.find((line) => line.correlation_id)?.correlation_id ?? '';
+  const filteredDeploymentLogs = useMemo(
+    () => (deploymentLogs.data ?? []).filter((line) => matchesLogView(line, logView)).slice(0, 12),
+    [deploymentLogs.data, logView],
+  );
+
+  const traceCorrelationID = filteredDeploymentLogs.find((line) => line.correlation_id)?.correlation_id ?? '';
   const trace = useTrace(traceCorrelationID);
 
   if (isLoading) {
@@ -251,14 +301,32 @@ export default function DeploymentDetailPage() {
 
           <SectionCard 
             title={<div className="flex items-center gap-2"><Terminal className="size-5 text-[#38BDF8]" /> Nhật ký vận hành</div>}
-            description="Các log mới nhất liên quan trực tiếp đến revision này."
+            description="Mặc định ưu tiên app runtime logs. Có thể chuyển sang gateway, sidecar hoặc internal service để điều tra sâu hơn."
           >
             <div className="rounded-xl border border-[#1e293b] bg-[#0B1120] p-4 min-h-[200px] font-mono shadow-inner">
+              <div className="mb-4 flex flex-wrap gap-2">
+                {LOG_VIEW_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setLogView(option.id)}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors',
+                      logView === option.id
+                        ? 'border-[#38BDF8] bg-[#0EA5E9]/10 text-[#38BDF8]'
+                        : 'border-[#1e293b] bg-[#020617] text-[#94a3b8] hover:text-white',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
               {deploymentLogs.isLoading ? (
                 <p className="text-[#64748b] text-sm animate-pulse">Đang kết nối luồng log...</p>
-              ) : deploymentLogs.data && deploymentLogs.data.length > 0 ? (
+              ) : filteredDeploymentLogs.length > 0 ? (
                 <div className="flex flex-col gap-2">
-                  {deploymentLogs.data.map((line) => (
+                  {filteredDeploymentLogs.map((line) => (
                     <div key={line.id} className="text-[13px] leading-relaxed group">
                       <span className="text-[#64748b] mr-3">{new Date(line.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                       <span className={cn(
@@ -277,7 +345,7 @@ export default function DeploymentDetailPage() {
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 opacity-40">
                   <Terminal className="size-10 text-[#64748b] mb-4" />
-                  <p className="text-[#64748b] text-sm text-center">Chưa có log được ghi nhận cho revision này.</p>
+                  <p className="text-[#64748b] text-sm text-center">{emptyLogMessage(logView)}</p>
                 </div>
               )}
             </div>
