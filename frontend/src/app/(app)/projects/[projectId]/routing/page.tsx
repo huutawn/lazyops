@@ -6,7 +6,6 @@ import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
-import { ProjectTabs } from '@/components/primitives/project-tabs';
 import { FormButton, FormField, FormInput } from '@/components/forms/form-fields';
 import { useProjectRouting, useUpdateProjectRouting } from '@/modules/project-routing/project-routing-hooks';
 import type { RoutingRoute } from '@/modules/project-routing/project-routing-types';
@@ -96,7 +95,6 @@ export default function RoutingPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <ProjectTabs projectId={projectId} />
       <PageHeader
         title="Định tuyến"
         subtitle="Cấu hình cách định tuyến lưu lượng bên ngoài đến các dịch vụ của bạn. Thiết lập định tuyến theo đường dẫn, WebSocket endpoint và shared domain."
