@@ -13,8 +13,10 @@ type CreateDeploymentCommand struct {
 type DesiredStateRevisionRecord struct {
 	ID                   string
 	ProjectID            string
+	ProjectSlug          string
 	BlueprintID          string
 	DeploymentBindingID  string
+	Namespace            string
 	CommitSHA            string
 	ArtifactRef          string
 	ImageRef             string
@@ -22,10 +24,14 @@ type DesiredStateRevisionRecord struct {
 	Status               string
 	RuntimeMode          string
 	Services             []BlueprintServiceContractRecord
+	ServiceSpecs         []K3sServiceSpecRecord
 	DependencyBindings   []LazyopsYAMLDependencyBinding
+	InternalBindings     []InternalBindingRecord
 	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy
 	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy
 	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy
+	ManifestBundle       K3sManifestBundleRecord
+	PublicDomains        []PublicDomainRecord
 	PlacementAssignments []PlacementAssignmentRecord
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
@@ -67,8 +73,10 @@ type DeploymentOverviewRecord struct {
 	RolloutState         string
 	Promoted             bool
 	TriggeredBy          string
+	Namespace            string
 	RuntimeMode          string
 	Services             []BlueprintServiceContractRecord
+	ServiceSpecs         []K3sServiceSpecRecord
 	PlacementAssignments []PlacementAssignmentRecord
 	PublicURLs           []string
 	PublicURLReason      string

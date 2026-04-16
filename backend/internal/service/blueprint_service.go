@@ -128,6 +128,8 @@ func (s *BlueprintService) Compile(cmd CompileBlueprintCommand) (*CompileBluepri
 
 	compiled := BlueprintCompiledContractRecord{
 		ProjectID:           project.ID,
+		ProjectSlug:         project.Slug,
+		Namespace:           firstNonEmptyCompiledValue(project.NamespaceSlug, normalizeProjectSlug(project.Slug)),
 		RuntimeMode:         runtimeMode,
 		Repo:                repoState,
 		Binding:             bindingRecord,
@@ -179,13 +181,16 @@ func (s *BlueprintService) Compile(cmd CompileBlueprintCommand) (*CompileBluepri
 			ProjectID:            project.ID,
 			BlueprintID:          blueprint.ID,
 			DeploymentBindingID:  binding.ID,
+			Namespace:            compiled.Namespace,
 			CommitSHA:            artifact.CommitSHA,
 			ArtifactRef:          artifact.ArtifactRef,
 			ImageRef:             artifact.ImageRef,
 			TriggerKind:          triggerKind,
 			RuntimeMode:          runtimeMode,
 			Services:             serviceContracts,
+			ServiceSpecs:         buildK3sServiceSpecs(compiled.Namespace, serviceContracts),
 			DependencyBindings:   dependencyBindings,
+			InternalBindings:     buildInternalBindings(serviceContracts, dependencyBindings),
 			CompatibilityPolicy:  document.CompatibilityPolicy,
 			MagicDomainPolicy:    magicDomainPolicy,
 			ScaleToZeroPolicy:    document.ScaleToZeroPolicy,
@@ -212,12 +217,19 @@ func compileProjectServices(projectID string, services []LazyopsYAMLService) ([]
 
 		runtimeProfile := inferRuntimeProfile(item)
 		model := models.Service{
-			ID:              utils.NewPrefixedID("svc"),
-			ProjectID:       projectID,
-			Name:            strings.TrimSpace(item.Name),
-			Path:            strings.TrimSpace(item.Path),
-			Public:          item.Public,
-			HealthcheckJSON: healthcheckJSON,
+			ID:                 utils.NewPrefixedID("svc"),
+			ProjectID:          projectID,
+			Name:               strings.TrimSpace(item.Name),
+			Path:               strings.TrimSpace(item.Path),
+			Kind:               inferServiceKind(item),
+			Public:             item.Public,
+			StartHint:          strings.TrimSpace(item.StartHint),
+			DetectedPortsJSON:  "[]",
+			EnvBundleJSON:      "{}",
+			PVCSpecJSON:        "{}",
+			DeployStrategyJSON: "{}",
+			Replicas:           1,
+			HealthcheckJSON:    healthcheckJSON,
 		}
 		if runtimeProfile != "" {
 			runtimeProfileCopy := runtimeProfile
@@ -229,16 +241,21 @@ func compileProjectServices(projectID string, services []LazyopsYAMLService) ([]
 			ProjectID:      projectID,
 			Name:           model.Name,
 			Path:           model.Path,
+			Kind:           model.Kind,
 			Public:         item.Public,
 			RuntimeProfile: runtimeProfile,
+			StartHint:      model.StartHint,
+			Replicas:       1,
 			Healthcheck:    healthcheck,
 		}
 		contract := BlueprintServiceContractRecord{
 			Name:           model.Name,
 			Path:           model.Path,
+			Kind:           model.Kind,
 			Public:         item.Public,
 			RuntimeProfile: runtimeProfile,
 			StartHint:      strings.TrimSpace(item.StartHint),
+			Replicas:       1,
 			Healthcheck:    healthcheck,
 		}
 
@@ -273,6 +290,22 @@ func inferRuntimeProfile(item LazyopsYAMLService) string {
 		return "service"
 	}
 	return "worker"
+}
+
+func inferServiceKind(item LazyopsYAMLService) string {
+	name := strings.ToLower(strings.TrimSpace(item.Name))
+	switch {
+	case strings.Contains(name, "postgres"):
+		return "postgres"
+	case strings.Contains(name, "mysql"):
+		return "mysql"
+	case strings.Contains(name, "redis"):
+		return "redis"
+	case strings.Contains(name, "rabbit"):
+		return "rabbitmq"
+	default:
+		return "app"
+	}
 }
 
 func normalizeBlueprintArtifactMetadata(input BlueprintArtifactMetadata) (BlueprintArtifactMetadata, error) {
@@ -390,6 +423,22 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	if err != nil {
 		return ProjectServiceRecord{}, err
 	}
+	detectedPorts := []ServiceDetectedPortRecord{}
+	if err := unmarshalJSONWithFallback(item.DetectedPortsJSON, &detectedPorts, []ServiceDetectedPortRecord{}); err != nil {
+		return ProjectServiceRecord{}, err
+	}
+	envBundle := map[string]string{}
+	if err := unmarshalJSONWithFallback(item.EnvBundleJSON, &envBundle, map[string]string{}); err != nil {
+		return ProjectServiceRecord{}, err
+	}
+	pvcSpec := map[string]any{}
+	if err := unmarshalJSONWithFallback(item.PVCSpecJSON, &pvcSpec, map[string]any{}); err != nil {
+		return ProjectServiceRecord{}, err
+	}
+	deployStrategy := map[string]any{}
+	if err := unmarshalJSONWithFallback(item.DeployStrategyJSON, &deployStrategy, map[string]any{}); err != nil {
+		return ProjectServiceRecord{}, err
+	}
 
 	runtimeProfile := ""
 	if item.RuntimeProfile != nil {
@@ -401,12 +450,34 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 		ProjectID:      item.ProjectID,
 		Name:           item.Name,
 		Path:           item.Path,
+		Kind:           item.Kind,
 		Public:         item.Public,
 		RuntimeProfile: runtimeProfile,
+		StartHint:      item.StartHint,
+		ImageRef:       item.ImageRef,
+		ImageDigest:    item.ImageDigest,
+		DetectedPorts:  detectedPorts,
+		TargetPort:     item.TargetPort,
+		ServicePort:    item.ServicePort,
+		Replicas:       item.Replicas,
+		EnvBundle:      envBundle,
+		PVCSpec:        pvcSpec,
+		DeployStrategy: deployStrategy,
 		Healthcheck:    healthcheck,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
 	}, nil
+}
+
+func unmarshalJSONWithFallback[T any](raw string, target *T, fallback T) error {
+	if strings.TrimSpace(raw) == "" {
+		*target = fallback
+		return nil
+	}
+	if err := json.Unmarshal([]byte(raw), target); err != nil {
+		return err
+	}
+	return nil
 }
 
 func ToBlueprintRecord(item models.Blueprint) (BlueprintRecord, error) {

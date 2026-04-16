@@ -3,13 +3,25 @@ package response
 import "time"
 
 type BuildArtifactMetadataResponse struct {
-	CommitSHA            string                             `json:"commit_sha"`
-	ArtifactRef          string                             `json:"artifact_ref,omitempty"`
-	ImageRef             string                             `json:"image_ref,omitempty"`
-	ImageDigest          string                             `json:"image_digest,omitempty"`
-	DetectedServices     []string                           `json:"detected_services,omitempty"`
-	DetectedFramework    string                             `json:"detected_framework,omitempty"`
-	SuggestedHealthcheck *BuildSuggestedHealthcheckResponse `json:"suggested_healthcheck,omitempty"`
+	CommitSHA               string                             `json:"commit_sha"`
+	ArtifactRef             string                             `json:"artifact_ref,omitempty"`
+	ImageRef                string                             `json:"image_ref,omitempty"`
+	ImageDigest             string                             `json:"image_digest,omitempty"`
+	AppliedServices         []string                           `json:"applied_services,omitempty"`
+	DetectedServices        []string                           `json:"detected_services,omitempty"`
+	DetectedPorts           []BuildDetectedPortResponse        `json:"detected_ports,omitempty"`
+	PortDetectionSource     string                             `json:"port_detection_source,omitempty"`
+	PortDetectionConfidence string                             `json:"port_detection_confidence,omitempty"`
+	SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
+	DetectedFramework       string                             `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckResponse `json:"suggested_healthcheck,omitempty"`
+}
+
+type BuildDetectedPortResponse struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Exposed  bool   `json:"exposed,omitempty"`
 }
 
 type BuildSuggestedHealthcheckResponse struct {

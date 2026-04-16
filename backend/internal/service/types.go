@@ -432,16 +432,109 @@ type CompileBlueprintCommand struct {
 	LazyopsYAMLRaw  []byte
 }
 
+type ServiceDetectedPortRecord struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Exposed  bool   `json:"exposed,omitempty"`
+}
+
+type ManifestDocumentRecord struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content"`
+}
+
+type K3sManifestBundleRecord struct {
+	Namespace    string                   `json:"namespace"`
+	CombinedYAML string                   `json:"combined_yaml"`
+	RollbackYAML string                   `json:"rollback_yaml,omitempty"`
+	Documents    []ManifestDocumentRecord `json:"documents,omitempty"`
+	GeneratedAt  time.Time                `json:"generated_at"`
+}
+
+type InternalBindingRecord struct {
+	ServiceName      string `json:"service_name"`
+	Alias            string `json:"alias"`
+	TargetService    string `json:"target_service"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	Protocol         string `json:"protocol"`
+	URL              string `json:"url,omitempty"`
+	ConnectionString string `json:"connection_string,omitempty"`
+}
+
+type K3sServiceSpecRecord struct {
+	Name           string                      `json:"name"`
+	Kind           string                      `json:"kind"`
+	Namespace      string                      `json:"namespace,omitempty"`
+	Path           string                      `json:"path,omitempty"`
+	Public         bool                        `json:"public"`
+	RuntimeProfile string                      `json:"runtime_profile,omitempty"`
+	StartHint      string                      `json:"start_hint,omitempty"`
+	ImageRef       string                      `json:"image_ref,omitempty"`
+	ImageDigest    string                      `json:"image_digest,omitempty"`
+	TargetPort     int                         `json:"target_port,omitempty"`
+	ServicePort    int                         `json:"service_port,omitempty"`
+	Replicas       int                         `json:"replicas,omitempty"`
+	Healthcheck    map[string]any              `json:"healthcheck,omitempty"`
+	DetectedPorts  []ServiceDetectedPortRecord `json:"detected_ports,omitempty"`
+	EnvBundle      map[string]string           `json:"env_bundle,omitempty"`
+	PVCSpec        map[string]any              `json:"pvc_spec,omitempty"`
+	DeployStrategy map[string]any              `json:"deploy_strategy,omitempty"`
+}
+
 type ProjectServiceRecord struct {
 	ID             string
 	ProjectID      string
 	Name           string
 	Path           string
+	Kind           string
 	Public         bool
 	RuntimeProfile string
+	StartHint      string
+	ImageRef       string
+	ImageDigest    string
+	DetectedPorts  []ServiceDetectedPortRecord
+	TargetPort     int
+	ServicePort    int
+	Replicas       int
+	EnvBundle      map[string]string
+	PVCSpec        map[string]any
+	DeployStrategy map[string]any
 	Healthcheck    map[string]any
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+type ProjectServiceListResult struct {
+	Items []ProjectServiceRecord
+}
+
+type ConfigureProjectServicesCommand struct {
+	RequesterUserID string
+	RequesterRole   string
+	ProjectID       string
+	Items           []ConfigureProjectServiceItem
+}
+
+type ConfigureProjectServiceItem struct {
+	Name           string
+	Path           string
+	Kind           string
+	Public         bool
+	RuntimeProfile string
+	StartHint      string
+	ImageRef       string
+	ImageDigest    string
+	TargetPort     int
+	ServicePort    int
+	Replicas       int
+	EnvBundle      map[string]string
+	PVCSpec        map[string]any
+	DeployStrategy map[string]any
+	Healthcheck    map[string]any
 }
 
 type BlueprintRepoStateRecord struct {
@@ -456,9 +549,19 @@ type BlueprintRepoStateRecord struct {
 type BlueprintServiceContractRecord struct {
 	Name           string
 	Path           string
+	Kind           string
 	Public         bool
 	RuntimeProfile string
 	StartHint      string
+	ImageRef       string
+	ImageDigest    string
+	DetectedPorts  []ServiceDetectedPortRecord
+	TargetPort     int
+	ServicePort    int
+	Replicas       int
+	EnvBundle      map[string]string
+	PVCSpec        map[string]any
+	DeployStrategy map[string]any
 	Healthcheck    map[string]any
 }
 
@@ -471,6 +574,8 @@ type PlacementAssignmentRecord struct {
 
 type BlueprintCompiledContractRecord struct {
 	ProjectID           string
+	ProjectSlug         string
+	Namespace           string
 	RuntimeMode         string
 	Repo                BlueprintRepoStateRecord
 	Binding             DeploymentBindingRecord
@@ -497,18 +602,22 @@ type DesiredStateRevisionDraftRecord struct {
 	ProjectID            string
 	BlueprintID          string
 	DeploymentBindingID  string
+	Namespace            string
 	CommitSHA            string
 	ArtifactRef          string
 	ImageRef             string
 	TriggerKind          string
 	RuntimeMode          string
 	Services             []BlueprintServiceContractRecord
+	ServiceSpecs         []K3sServiceSpecRecord
 	DependencyBindings   []LazyopsYAMLDependencyBinding
+	InternalBindings     []InternalBindingRecord
 	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy
 	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy
 	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy
 	RoutingPolicy        LazyopsYAMLRoutingPolicy
 	PlacementAssignments []PlacementAssignmentRecord
+	ManifestBundle       K3sManifestBundleRecord
 }
 
 type CompileBlueprintResult struct {
@@ -521,6 +630,9 @@ type CreateProjectCommand struct {
 	UserID           string
 	Name             string
 	Slug             string
+	NamespaceSlug    string
+	ClusterID        string
+	RuntimeMode      string
 	DefaultBranch    string
 	InternalServices []string
 }
@@ -529,6 +641,9 @@ type ProjectSummary struct {
 	ID            string
 	Name          string
 	Slug          string
+	NamespaceSlug string
+	ClusterID     string
+	RuntimeMode   string
 	DefaultBranch string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time

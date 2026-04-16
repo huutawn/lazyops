@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -149,7 +151,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Build
-	imageRef, imageDigest, services, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
+	imageRef, imageDigest, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
 
 	status := "succeeded"
 	if err != nil {
@@ -158,7 +160,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Callback
-	if err := w.callback(ctx, input, status, imageRef, imageDigest, services, detectedFramework, suggestedHealthcheck); err != nil {
+	if err := w.callback(ctx, input, status, imageRef, imageDigest, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck); err != nil {
 		slog.Error("build callback failed", "job_id", job.ID, "error", err)
 		w.failJob(job.ID, fmt.Sprintf("callback failed: %v", err))
 		return
@@ -191,6 +193,10 @@ func (w *Worker) buildAndPush(
 	imageRef string,
 	imageDigest string,
 	services []string,
+	detectedPorts []BuildDetectedPortMetadata,
+	portDetectionSource string,
+	portDetectionConfidence string,
+	suggestedTargetPort int,
 	detectedFramework string,
 	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
 	err error,
@@ -198,7 +204,7 @@ func (w *Worker) buildAndPush(
 	// Clone repo
 	repoDir, err := w.cloneRepo(ctx, input)
 	if err != nil {
-		return "", "", nil, "", nil, fmt.Errorf("clone repo: %w", err)
+		return "", "", nil, nil, "", "", 0, "", nil, fmt.Errorf("clone repo: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
 
@@ -211,12 +217,12 @@ func (w *Worker) buildAndPush(
 
 	// Login to registry
 	if err := w.dockerLogin(ctx); err != nil {
-		return "", "", nil, "", nil, fmt.Errorf("docker login: %w", err)
+		return "", "", nil, nil, "", "", 0, "", nil, fmt.Errorf("docker login: %w", err)
 	}
 
 	// Build with nixpacks when available; fallback to docker build if Dockerfile exists.
 	if err := w.buildImage(ctx, repoDir, imageName); err != nil {
-		return "", "", nil, "", nil, err
+		return "", "", nil, nil, "", "", 0, "", nil, err
 	}
 
 	// Push image
@@ -224,7 +230,7 @@ func (w *Worker) buildAndPush(
 	pushCmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "push", imageName)
 	pushOutput, err := pushCmd.CombinedOutput()
 	if err != nil {
-		return "", "", nil, "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
+		return "", "", nil, nil, "", "", 0, "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
 	}
 
 	// Get image digest
@@ -236,8 +242,10 @@ func (w *Worker) buildAndPush(
 		services = []string{"app"}
 	}
 	detectedFramework, suggestedHealthcheck = w.detectFrontendMetadata(repoDir)
+	detectedPorts, portDetectionSource, _ = w.inspectImagePorts(ctx, imageName)
+	suggestedTargetPort, portDetectionConfidence = selectSuggestedTargetPort(services, detectedPorts, detectedFramework, suggestedHealthcheck)
 
-	return imageName, digest, services, detectedFramework, suggestedHealthcheck, nil
+	return imageName, digest, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, nil
 }
 
 func (w *Worker) imageName(input BuildWorkerInput, tag string) string {
@@ -408,6 +416,13 @@ type BuildSuggestedHealthcheckMetadata struct {
 	Port int    `json:"port"`
 }
 
+type BuildDetectedPortMetadata struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Exposed  bool   `json:"exposed,omitempty"`
+}
+
 func (w *Worker) detectFrontendMetadata(repoDir string) (string, *BuildSuggestedHealthcheckMetadata) {
 	packageJSONPath := filepath.Join(repoDir, "package.json")
 	payload, err := os.ReadFile(packageJSONPath)
@@ -456,6 +471,10 @@ func (w *Worker) callback(
 	imageRef,
 	imageDigest string,
 	services []string,
+	detectedPorts []BuildDetectedPortMetadata,
+	portDetectionSource string,
+	portDetectionConfidence string,
+	suggestedTargetPort int,
 	detectedFramework string,
 	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
 ) error {
@@ -475,6 +494,16 @@ func (w *Worker) callback(
 		body["image_digest"] = imageDigest
 		metadata := map[string]any{
 			"detected_services": services,
+			"detected_ports":    detectedPorts,
+		}
+		if strings.TrimSpace(portDetectionSource) != "" {
+			metadata["port_detection_source"] = strings.TrimSpace(portDetectionSource)
+		}
+		if strings.TrimSpace(portDetectionConfidence) != "" {
+			metadata["port_detection_confidence"] = strings.TrimSpace(portDetectionConfidence)
+		}
+		if suggestedTargetPort > 0 {
+			metadata["suggested_target_port"] = suggestedTargetPort
 		}
 		if strings.TrimSpace(detectedFramework) != "" {
 			metadata["detected_framework"] = strings.TrimSpace(detectedFramework)
@@ -512,6 +541,118 @@ func (w *Worker) callback(
 	}
 
 	return nil
+}
+
+func (w *Worker) inspectImagePorts(ctx context.Context, imageName string) ([]BuildDetectedPortMetadata, string, error) {
+	cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "inspect", imageName, "--format", "{{json .Config.ExposedPorts}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, "", err
+	}
+
+	var exposed map[string]any
+	if err := json.Unmarshal(output, &exposed); err != nil {
+		return nil, "", err
+	}
+
+	ports := make([]BuildDetectedPortMetadata, 0, len(exposed))
+	for key := range exposed {
+		parts := strings.SplitN(strings.TrimSpace(key), "/", 2)
+		if len(parts) == 0 {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || port <= 0 {
+			continue
+		}
+		protocol := "tcp"
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+			protocol = strings.ToLower(strings.TrimSpace(parts[1]))
+		}
+		ports = append(ports, BuildDetectedPortMetadata{
+			Port:     port,
+			Protocol: protocol,
+			Name:     fmt.Sprintf("%d-%s", port, protocol),
+			Exposed:  true,
+		})
+	}
+
+	sort.Slice(ports, func(i, j int) bool {
+		if ports[i].Port == ports[j].Port {
+			return ports[i].Protocol < ports[j].Protocol
+		}
+		return ports[i].Port < ports[j].Port
+	})
+	return ports, "docker_inspect", nil
+}
+
+func selectSuggestedTargetPort(
+	services []string,
+	detectedPorts []BuildDetectedPortMetadata,
+	detectedFramework string,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+) (int, string) {
+	if port := selectInternalServicePort(services, detectedPorts); port > 0 {
+		return port, "high"
+	}
+	if suggestedHealthcheck != nil && suggestedHealthcheck.Port > 0 {
+		if containsDetectedPort(detectedPorts, suggestedHealthcheck.Port) || len(detectedPorts) == 0 {
+			return suggestedHealthcheck.Port, "high"
+		}
+		return suggestedHealthcheck.Port, "medium"
+	}
+	if len(detectedPorts) == 1 {
+		return detectedPorts[0].Port, "high"
+	}
+	switch strings.ToLower(strings.TrimSpace(detectedFramework)) {
+	case "next", "vite", "react-scripts":
+		if containsDetectedPort(detectedPorts, 3000) || len(detectedPorts) == 0 {
+			return 3000, "medium"
+		}
+	}
+	for _, item := range detectedPorts {
+		if item.Port >= 1024 {
+			return item.Port, "low"
+		}
+	}
+	if len(detectedPorts) > 0 {
+		return detectedPorts[0].Port, "low"
+	}
+	return 0, ""
+}
+
+func selectInternalServicePort(services []string, detectedPorts []BuildDetectedPortMetadata) int {
+	lower := make([]string, 0, len(services))
+	for _, item := range services {
+		lower = append(lower, strings.ToLower(strings.TrimSpace(item)))
+	}
+	for _, candidate := range []struct {
+		Name string
+		Port int
+	}{
+		{Name: "postgres", Port: 5432},
+		{Name: "mysql", Port: 3306},
+		{Name: "redis", Port: 6379},
+		{Name: "rabbitmq", Port: 5672},
+	} {
+		for _, item := range lower {
+			if item == candidate.Name {
+				if containsDetectedPort(detectedPorts, candidate.Port) || len(detectedPorts) == 0 {
+					return candidate.Port
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func containsDetectedPort(detectedPorts []BuildDetectedPortMetadata, port int) bool {
+	for _, item := range detectedPorts {
+		if item.Port == port {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *Worker) callbackURL() string {

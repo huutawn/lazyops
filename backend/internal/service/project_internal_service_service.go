@@ -86,6 +86,9 @@ func (s *ProjectInternalServiceService) provisionInternalServices(projectID stri
 	if binding == nil {
 		return nil
 	}
+	if strings.TrimSpace(binding.RuntimeMode) == "distributed-k3s" || strings.TrimSpace(binding.TargetKind) == "cluster" {
+		return nil
+	}
 	if strings.TrimSpace(binding.TargetKind) != "instance" {
 		return fmt.Errorf("%w: internal services hiện chỉ hỗ trợ target instance", ErrInvalidInput)
 	}
@@ -217,7 +220,7 @@ func (s *ProjectInternalServiceService) List(requesterUserID, requesterRole, pro
 	return &ProjectInternalServiceListResult{Items: records}, nil
 }
 
-func buildInternalServicesDependencyBindings(services []LazyopsYAMLService, internalServices []models.ProjectInternalService) ([]LazyopsYAMLService, []LazyopsYAMLDependencyBinding) {
+func buildInternalServicesDependencyBindings(runtimeMode string, services []LazyopsYAMLService, internalServices []models.ProjectInternalService) ([]LazyopsYAMLService, []LazyopsYAMLDependencyBinding) {
 	if len(internalServices) == 0 {
 		servicesCopy := make([]LazyopsYAMLService, len(services))
 		copy(servicesCopy, services)
@@ -258,12 +261,16 @@ func buildInternalServicesDependencyBindings(services []LazyopsYAMLService, inte
 		}
 		for _, item := range internalServices {
 			targetService := targetByKind[item.Kind]
+			localEndpoint := item.LocalEndpoint
+			if strings.TrimSpace(runtimeMode) == "distributed-k3s" {
+				localEndpoint = ""
+			}
 			dependencies = append(dependencies, LazyopsYAMLDependencyBinding{
 				Service:       service.Name,
 				Alias:         item.Alias,
 				TargetService: targetService,
 				Protocol:      item.Protocol,
-				LocalEndpoint: item.LocalEndpoint,
+				LocalEndpoint: localEndpoint,
 			})
 		}
 	}

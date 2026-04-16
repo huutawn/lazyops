@@ -63,6 +63,7 @@ type CommandAckEnvelope struct {
 	Source        EnvelopeSource   `json:"source"`
 	OccurredAt    time.Time        `json:"occurred_at"`
 	Summary       string           `json:"summary,omitempty"`
+	Details       map[string]any   `json:"details,omitempty"`
 }
 
 type CommandNackEnvelope struct {

@@ -1384,7 +1384,7 @@ func (s *BootstrapOrchestrator) buildOneClickLazyopsDocument(project models.Proj
 		internalServices = append(internalServices, persisted...)
 	}
 
-	services, dependencyBindings := buildInternalServicesDependencyBindings(services, internalServices)
+	services, dependencyBindings := buildInternalServicesDependencyBindings(binding.RuntimeMode, services, internalServices)
 
 	compatibilityPolicy, err := decodeAnyMapJSON(binding.CompatibilityPolicyJSON)
 	if err != nil {

@@ -20,6 +20,7 @@ type AgentControlController struct {
 	controlHub     *service.ControlHub
 	commandTracker *service.CommandTracker
 	observability  *service.ObservabilityService
+	operatorHub    *service.OperatorStreamHub
 	recoverer      agentReconnectRecoverer
 	cfg            config.Config
 	upgrader       websocket.Upgrader
@@ -29,11 +30,12 @@ type agentReconnectRecoverer interface {
 	RecoverRunningDeploymentsForAgent(ctx context.Context, userID, agentID string) error
 }
 
-func NewAgentControlController(hub *service.ControlHub, commandTracker *service.CommandTracker, observability *service.ObservabilityService, recoverer agentReconnectRecoverer, cfg config.Config) *AgentControlController {
+func NewAgentControlController(hub *service.ControlHub, commandTracker *service.CommandTracker, observability *service.ObservabilityService, operatorHub *service.OperatorStreamHub, recoverer agentReconnectRecoverer, cfg config.Config) *AgentControlController {
 	return &AgentControlController{
 		controlHub:     hub,
 		commandTracker: commandTracker,
 		observability:  observability,
+		operatorHub:    operatorHub,
 		recoverer:      recoverer,
 		cfg:            cfg,
 		upgrader: websocket.Upgrader{
@@ -193,10 +195,11 @@ func (ctl *AgentControlController) handleCommandResponse(agentID string, raw []b
 
 func (ctl *AgentControlController) handleCommandAck(agentID string, raw []byte) {
 	var ack struct {
-		Type      string `json:"type"`
-		RequestID string `json:"request_id"`
-		Status    string `json:"status"`
-		Summary   string `json:"summary,omitempty"`
+		Type      string         `json:"type"`
+		RequestID string         `json:"request_id"`
+		Status    string         `json:"status"`
+		Summary   string         `json:"summary,omitempty"`
+		Details   map[string]any `json:"details,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &ack); err != nil {
 		return
@@ -220,6 +223,9 @@ func (ctl *AgentControlController) handleCommandAck(agentID string, raw []byte) 
 	output := map[string]any{}
 	if ack.Summary != "" {
 		output["summary"] = ack.Summary
+	}
+	for key, value := range ack.Details {
+		output[key] = value
 	}
 
 	_ = ctl.commandTracker.UpdateState(ack.RequestID, state, output, "")
@@ -342,6 +348,17 @@ func (ctl *AgentControlController) handleLogBatch(client *service.ControlClient,
 		CollectedAt: payload.CollectedAt,
 	}); err != nil {
 		writeControlJSON(client.Conn, gin.H{"type": "error", "message": "failed to ingest log batch"})
+		return
+	}
+	if ctl.operatorHub != nil {
+		_ = ctl.operatorHub.BroadcastEvent("logs.live", map[string]any{
+			"project_id":   payload.ProjectID,
+			"binding_id":   payload.BindingID,
+			"revision_id":  payload.RevisionID,
+			"service_name": payload.ServiceName,
+			"collected_at": payload.CollectedAt,
+			"entries":      payload.Entries,
+		})
 	}
 }
 

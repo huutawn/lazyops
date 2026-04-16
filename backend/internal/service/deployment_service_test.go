@@ -74,6 +74,25 @@ func (f *fakeDesiredStateRevisionStore) UpdateStatus(revisionID, status string, 
 	return nil
 }
 
+func (f *fakeDesiredStateRevisionStore) UpdateSnapshot(revisionID, compiledRevisionJSON, manifestBundleJSON string, at time.Time) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	for _, projectItems := range f.byProjectID {
+		if item, ok := projectItems[revisionID]; ok {
+			if compiledRevisionJSON != "" {
+				item.CompiledRevisionJSON = compiledRevisionJSON
+			}
+			if manifestBundleJSON != "" {
+				item.ManifestBundleJSON = manifestBundleJSON
+			}
+			item.UpdatedAt = at
+			return nil
+		}
+	}
+	return nil
+}
+
 func (f *fakeDesiredStateRevisionStore) ListByProject(projectID string) ([]models.DesiredStateRevision, error) {
 	projectItems := f.byProjectID[projectID]
 	if projectItems == nil {

@@ -6,6 +6,9 @@ type ProjectSummaryResponse struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	Slug          string    `json:"slug"`
+	NamespaceSlug string    `json:"namespace_slug"`
+	ClusterID     string    `json:"cluster_id,omitempty"`
+	RuntimeMode   string    `json:"runtime_mode"`
 	DefaultBranch string    `json:"default_branch"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -13,6 +16,10 @@ type ProjectSummaryResponse struct {
 
 type ProjectListResponse struct {
 	Items []ProjectSummaryResponse `json:"items"`
+}
+
+type ProjectServiceListResponse struct {
+	Items []ProjectServiceResponse `json:"items"`
 }
 
 type ProjectRepoLinkResponse struct {

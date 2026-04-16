@@ -21,6 +21,27 @@ func ToCreateDeploymentResponse(result service.CreateDeploymentResult) responsed
 	for _, item := range result.Revision.Services {
 		revisionServices = append(revisionServices, toBlueprintServiceResponse(item))
 	}
+	revisionSpecs := make([]responsedto.ProjectServiceResponse, 0, len(result.Revision.ServiceSpecs))
+	for _, item := range result.Revision.ServiceSpecs {
+		revisionSpecs = append(revisionSpecs, responsedto.ProjectServiceResponse{
+			Name:           item.Name,
+			Path:           item.Path,
+			Kind:           item.Kind,
+			Public:         item.Public,
+			RuntimeProfile: item.RuntimeProfile,
+			StartHint:      item.StartHint,
+			ImageRef:       item.ImageRef,
+			ImageDigest:    item.ImageDigest,
+			DetectedPorts:  toBuildDetectedPortResponses(item.DetectedPorts),
+			TargetPort:     item.TargetPort,
+			ServicePort:    item.ServicePort,
+			Replicas:       item.Replicas,
+			EnvBundle:      item.EnvBundle,
+			PVCSpec:        item.PVCSpec,
+			DeployStrategy: item.DeployStrategy,
+			Healthcheck:    item.Healthcheck,
+		})
+	}
 
 	return responsedto.CreateDeploymentResponse{
 		Revision: responsedto.DesiredStateRevisionResponse{
@@ -28,6 +49,7 @@ func ToCreateDeploymentResponse(result service.CreateDeploymentResult) responsed
 			ProjectID:            result.Revision.ProjectID,
 			BlueprintID:          result.Revision.BlueprintID,
 			DeploymentBindingID:  result.Revision.DeploymentBindingID,
+			Namespace:            result.Revision.Namespace,
 			CommitSHA:            result.Revision.CommitSHA,
 			ArtifactRef:          result.Revision.ArtifactRef,
 			ImageRef:             result.Revision.ImageRef,
@@ -35,11 +57,14 @@ func ToCreateDeploymentResponse(result service.CreateDeploymentResult) responsed
 			Status:               result.Revision.Status,
 			RuntimeMode:          result.Revision.RuntimeMode,
 			Services:             revisionServices,
+			ServiceSpecs:         revisionSpecs,
 			DependencyBindings:   toDependencyBindingMaps(result.Revision.DependencyBindings),
+			InternalBindings:     toInternalBindingMaps(result.Revision.InternalBindings),
 			CompatibilityPolicy:  toCompatibilityPolicyMap(result.Revision.CompatibilityPolicy),
 			MagicDomainPolicy:    toMagicDomainPolicyMap(result.Revision.MagicDomainPolicy),
 			ScaleToZeroPolicy:    toScaleToZeroPolicyMap(result.Revision.ScaleToZeroPolicy),
 			PlacementAssignments: toPlacementAssignmentResponses(result.Revision.PlacementAssignments),
+			ManifestBundle:       toManifestBundleMap(result.Revision.ManifestBundle),
 			CreatedAt:            result.Revision.CreatedAt,
 			UpdatedAt:            result.Revision.UpdatedAt,
 		},
@@ -61,6 +86,27 @@ func ToDeploymentOverviewResponse(record service.DeploymentOverviewRecord) respo
 	for _, item := range record.Services {
 		services = append(services, toBlueprintServiceResponse(item))
 	}
+	serviceSpecs := make([]responsedto.ProjectServiceResponse, 0, len(record.ServiceSpecs))
+	for _, item := range record.ServiceSpecs {
+		serviceSpecs = append(serviceSpecs, responsedto.ProjectServiceResponse{
+			Name:           item.Name,
+			Path:           item.Path,
+			Kind:           item.Kind,
+			Public:         item.Public,
+			RuntimeProfile: item.RuntimeProfile,
+			StartHint:      item.StartHint,
+			ImageRef:       item.ImageRef,
+			ImageDigest:    item.ImageDigest,
+			DetectedPorts:  toBuildDetectedPortResponses(item.DetectedPorts),
+			TargetPort:     item.TargetPort,
+			ServicePort:    item.ServicePort,
+			Replicas:       item.Replicas,
+			EnvBundle:      item.EnvBundle,
+			PVCSpec:        item.PVCSpec,
+			DeployStrategy: item.DeployStrategy,
+			Healthcheck:    item.Healthcheck,
+		})
+	}
 
 	return responsedto.DeploymentOverviewResponse{
 		ID:                   record.ID,
@@ -75,8 +121,10 @@ func ToDeploymentOverviewResponse(record service.DeploymentOverviewRecord) respo
 		RolloutState:         record.RolloutState,
 		Promoted:             record.Promoted,
 		TriggeredBy:          record.TriggeredBy,
+		Namespace:            record.Namespace,
 		RuntimeMode:          record.RuntimeMode,
 		Services:             services,
+		ServiceSpecs:         serviceSpecs,
 		PlacementAssignments: toPlacementAssignmentResponses(record.PlacementAssignments),
 		PublicURLs:           append([]string{}, record.PublicURLs...),
 		PublicURLReason:      record.PublicURLReason,
@@ -142,4 +190,46 @@ func ToDeploymentListResponse(items []service.DeploymentOverviewRecord) response
 		out = append(out, ToDeploymentOverviewResponse(item))
 	}
 	return responsedto.DeploymentListResponse{Items: out}
+}
+
+func toInternalBindingMaps(items []service.InternalBindingRecord) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, map[string]any{
+			"service_name":      item.ServiceName,
+			"alias":             item.Alias,
+			"target_service":    item.TargetService,
+			"host":              item.Host,
+			"port":              item.Port,
+			"protocol":          item.Protocol,
+			"url":               item.URL,
+			"connection_string": item.ConnectionString,
+		})
+	}
+	return out
+}
+
+func toManifestBundleMap(item service.K3sManifestBundleRecord) map[string]any {
+	if item.Namespace == "" && item.CombinedYAML == "" && len(item.Documents) == 0 {
+		return nil
+	}
+	docs := make([]map[string]any, 0, len(item.Documents))
+	for _, doc := range item.Documents {
+		docs = append(docs, map[string]any{
+			"name":    doc.Name,
+			"kind":    doc.Kind,
+			"path":    doc.Path,
+			"content": doc.Content,
+		})
+	}
+	return map[string]any{
+		"namespace":     item.Namespace,
+		"combined_yaml": item.CombinedYAML,
+		"rollback_yaml": item.RollbackYAML,
+		"generated_at":  item.GeneratedAt,
+		"documents":     docs,
+	}
 }

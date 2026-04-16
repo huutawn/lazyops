@@ -59,6 +59,45 @@ func TestDetectFrontendMetadataOmitWhenUnknown(t *testing.T) {
 	}
 }
 
+func TestSelectSuggestedTargetPortPrefersInternalServiceDefaults(t *testing.T) {
+	port, confidence := selectSuggestedTargetPort(
+		[]string{"postgres"},
+		[]BuildDetectedPortMetadata{{Port: 5432, Protocol: "tcp"}},
+		"",
+		nil,
+	)
+
+	if port != 5432 || confidence != "high" {
+		t.Fatalf("expected postgres default port with high confidence, got port=%d confidence=%q", port, confidence)
+	}
+}
+
+func TestSelectSuggestedTargetPortFallsBackToFrameworkHint(t *testing.T) {
+	port, confidence := selectSuggestedTargetPort(
+		[]string{"web"},
+		[]BuildDetectedPortMetadata{{Port: 3000, Protocol: "tcp"}, {Port: 9229, Protocol: "tcp"}},
+		"next",
+		nil,
+	)
+
+	if port != 3000 || confidence != "medium" {
+		t.Fatalf("expected next.js hint port 3000 with medium confidence, got port=%d confidence=%q", port, confidence)
+	}
+}
+
+func TestSelectSuggestedTargetPortChoosesSuggestedHealthcheckEvenWhenNotExposed(t *testing.T) {
+	port, confidence := selectSuggestedTargetPort(
+		[]string{"api"},
+		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp"}},
+		"",
+		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
+	)
+
+	if port != 3000 || confidence != "medium" {
+		t.Fatalf("expected healthcheck port 3000 with medium confidence, got port=%d confidence=%q", port, confidence)
+	}
+}
+
 func writePackageJSON(t *testing.T, repoDir, content string) {
 	t.Helper()
 	path := filepath.Join(repoDir, "package.json")

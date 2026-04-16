@@ -551,14 +551,90 @@ func (s *Service) handleReconcileRevision(ctx context.Context, envelope contract
 			"revision_id", runtimeCtx.Revision.RevisionID,
 			"binding_id", runtimeCtx.Binding.BindingID,
 			"applied_steps", len(result.AppliedSteps),
+			"preflight_warning_count", len(result.PreflightWarnings),
+			"port_mismatch_count", result.PortMismatchCount,
 		)
 	}
+	for _, warning := range result.PreflightWarnings {
+		s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityWarning, warning, map[string]string{
+			"operation": "reconcile_revision",
+			"phase":     "manifest_preflight",
+		})
+	}
+	if result.PortMismatchCount > 0 {
+		for _, observation := range result.PortObservations {
+			if observation.Status != "mismatch" {
+				continue
+			}
+			s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityWarning, fmt.Sprintf(
+				"service %s port mismatch: %s",
+				observation.ServiceName,
+				observation.Warning,
+			), map[string]string{
+				"operation":             "reconcile_revision",
+				"service":               observation.ServiceName,
+				"port_mismatch":         "true",
+				"expected_target_port":  strconv.Itoa(observation.ExpectedTargetPort),
+				"expected_service_port": strconv.Itoa(observation.ExpectedServicePort),
+			})
+		}
+	}
+	for _, progress := range result.RolloutProgress {
+		severity := contracts.SeverityInfo
+		if progress.Status != "ready" {
+			severity = contracts.SeverityWarning
+		}
+		s.emitRuntimeEvent(runtimeCtx, "agent", severity, fmt.Sprintf(
+			"service %s rollout status: %s (%d/%d ready)",
+			progress.ServiceName,
+			progress.Status,
+			progress.ReadyReplicas,
+			progress.DesiredReplicas,
+		), map[string]string{
+			"operation":          "reconcile_revision",
+			"phase":              "rollout_progress",
+			"service":            progress.ServiceName,
+			"rollout_status":     progress.Status,
+			"desired_replicas":   strconv.Itoa(progress.DesiredReplicas),
+			"ready_replicas":     strconv.Itoa(progress.ReadyReplicas),
+			"updated_replicas":   strconv.Itoa(progress.UpdatedReplicas),
+			"available_replicas": strconv.Itoa(progress.AvailableReplicas),
+		})
+	}
+	for _, ingress := range result.Ingresses {
+		severity := contracts.SeverityInfo
+		if !ingress.Ready {
+			severity = contracts.SeverityWarning
+		}
+		s.emitRuntimeEvent(runtimeCtx, "agent", severity, fmt.Sprintf(
+			"service %s ingress %s (%s)",
+			ingress.ServiceName,
+			ingress.Status,
+			ingress.Message,
+		), map[string]string{
+			"operation":        "reconcile_revision",
+			"phase":            "ingress",
+			"service":          ingress.ServiceName,
+			"ingress_status":   ingress.Status,
+			"ingress_ready":    strconv.FormatBool(ingress.Ready),
+			"external_targets": strings.Join(ingress.ExternalAddresses, ","),
+		})
+	}
 	s.emitRuntimeEvent(runtimeCtx, "agent", contracts.SeverityInfo, fmt.Sprintf("revision %s reconciled", result.RevisionID), map[string]string{
-		"operation":     "reconcile_revision",
-		"applied_steps": strconv.Itoa(len(result.AppliedSteps)),
+		"operation":               "reconcile_revision",
+		"applied_steps":           strconv.Itoa(len(result.AppliedSteps)),
+		"preflight_warning_count": strconv.Itoa(len(result.PreflightWarnings)),
+		"port_mismatch_count":     strconv.Itoa(result.PortMismatchCount),
 	})
 
-	return dispatcher.Done(fmt.Sprintf("revision %s reconciled with %d steps", result.RevisionID, len(result.AppliedSteps)))
+	summary := fmt.Sprintf("revision %s reconciled with %d steps", result.RevisionID, len(result.AppliedSteps))
+	if len(result.PreflightWarnings) > 0 {
+		summary = fmt.Sprintf("%s (%d manifest preflight warnings)", summary, len(result.PreflightWarnings))
+	}
+	if result.PortMismatchCount > 0 {
+		summary = fmt.Sprintf("%s (%d port mismatch warnings)", summary, result.PortMismatchCount)
+	}
+	return dispatcher.DoneWithDetails(summary, reconcileResultDetails(result))
 }
 
 func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
@@ -886,12 +962,18 @@ func (s *Service) handleRollbackRelease(ctx context.Context, envelope contracts.
 		"restored_revision_id": rolledBack.RestoredRevisionID,
 	})
 
-	return dispatcher.Done(rolledBack.Summary.Summary)
+	return dispatcher.DoneWithDetails(rolledBack.Summary.Summary, rollbackResultDetails(rolledBack))
 }
 
 type rollbackReleasePayload struct {
-	DeploymentID string `json:"deployment_id,omitempty"`
-	RevisionID   string `json:"revision_id,omitempty"`
+	DeploymentID       string                             `json:"deployment_id,omitempty"`
+	RevisionID         string                             `json:"revision_id,omitempty"`
+	FailedRevisionID   string                             `json:"failed_revision_id,omitempty"`
+	RestoredRevisionID string                             `json:"restored_revision_id,omitempty"`
+	Project            contracts.ProjectMetadataPayload   `json:"project"`
+	Binding            contracts.DeploymentBindingPayload `json:"binding"`
+	Revision           contracts.DesiredRevisionPayload   `json:"revision"`
+	ProjectEnv         map[string]string                  `json:"project_env,omitempty"`
 }
 
 func (s *Service) decodeRollbackRuntimeContext(ctx context.Context, rawPayload json.RawMessage) (RuntimeContext, error) {
@@ -907,10 +989,46 @@ func (s *Service) decodeRollbackRuntimeContext(ctx context.Context, rawPayload j
 	if err := json.Unmarshal(rawPayload, &rollbackPayload); err != nil {
 		return RuntimeContext{}, fmt.Errorf("command payload could not be decoded: %w", err)
 	}
+	if rollbackPayload.Project.ProjectID != "" && rollbackPayload.Binding.BindingID != "" && rollbackPayload.Revision.RevisionID != "" {
+		runtimeCtx, err := ContextFromPreparePayload(contracts.PrepareReleaseWorkspacePayload{
+			Project:    rollbackPayload.Project,
+			Binding:    rollbackPayload.Binding,
+			Revision:   rollbackPayload.Revision,
+			ProjectEnv: rollbackPayload.ProjectEnv,
+		})
+		if err != nil {
+			return RuntimeContext{}, err
+		}
+		runtimeCtx.Rollout.RollbackFromRevisionID = firstNonEmptyString(rollbackPayload.FailedRevisionID, rollbackPayload.Revision.RevisionID)
+		runtimeCtx.Rollout.RollbackToRevisionID = strings.TrimSpace(rollbackPayload.RestoredRevisionID)
+		return runtimeCtx, nil
+	}
 	if strings.TrimSpace(rollbackPayload.RevisionID) == "" {
 		return RuntimeContext{}, fmt.Errorf("rollback payload must include revision_id")
 	}
 	return s.loadRuntimeContextByRevisionID(ctx, rollbackPayload.RevisionID)
+}
+
+func reconcileResultDetails(result ReconcileRevisionResult) map[string]any {
+	return map[string]any{
+		"revision_id":          result.RevisionID,
+		"applied_steps":        result.AppliedSteps,
+		"preflight_warnings":   result.PreflightWarnings,
+		"port_observations":    result.PortObservations,
+		"port_mismatch_count":  result.PortMismatchCount,
+		"rollout_progress":     result.RolloutProgress,
+		"ingress_observations": result.Ingresses,
+		"completed_at":         result.CompletedAt,
+	}
+}
+
+func rollbackResultDetails(result RollbackReleaseResult) map[string]any {
+	return map[string]any{
+		"failed_revision_id":   result.FailedRevisionID,
+		"restored_revision_id": result.RestoredRevisionID,
+		"rollback_path":        result.RollbackPath,
+		"rolled_back_at":       result.Summary.RolledBackAt,
+	}
 }
 
 func (s *Service) loadRuntimeContextByRevisionID(ctx context.Context, revisionID string) (RuntimeContext, error) {

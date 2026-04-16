@@ -3,11 +3,50 @@ package service
 import (
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"lazyops-server/internal/models"
 )
+
+type fakeProjectServiceStoreForProjectSvc struct {
+	items map[string][]models.Service
+	err   error
+}
+
+func newFakeProjectServiceStoreForProjectSvc(items map[string][]models.Service) *fakeProjectServiceStoreForProjectSvc {
+	return &fakeProjectServiceStoreForProjectSvc{items: items}
+}
+
+func (f *fakeProjectServiceStoreForProjectSvc) ReplaceForProject(projectID string, items []models.Service) error {
+	existing := f.items[projectID]
+	cloned := make([]models.Service, 0, len(existing)+len(items))
+	for _, item := range existing {
+		if strings.HasPrefix(item.Path, reservedManagedInternalServicePathPrefix) {
+			cloned = append(cloned, item)
+		}
+	}
+	cloned = append(cloned, items...)
+	if f.items == nil {
+		f.items = make(map[string][]models.Service)
+	}
+	f.items[projectID] = cloned
+	return f.err
+}
+
+func (f *fakeProjectServiceStoreForProjectSvc) ListByProject(projectID string) ([]models.Service, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	items := f.items[projectID]
+	cloned := make([]models.Service, len(items))
+	copy(cloned, items)
+	sort.Slice(cloned, func(i, j int) bool {
+		return cloned[i].Name < cloned[j].Name
+	})
+	return cloned, nil
+}
 
 type fakeProjectStore struct {
 	byID       map[string]*models.Project
@@ -198,5 +237,148 @@ func TestProjectServiceListScopesProjectsToOwner(t *testing.T) {
 	}
 	if items[0].ID != "prj_1" {
 		t.Fatalf("expected owner-scoped project, got %q", items[0].ID)
+	}
+}
+
+func TestProjectServiceListServicesReturnsPersistedServices(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(map[string][]models.Service{
+		"prj_1": {
+			{
+				ID:              "svc_api",
+				ProjectID:       "prj_1",
+				Name:            "api",
+				Path:            "apps/api",
+				Kind:            "app",
+				TargetPort:      8080,
+				ServicePort:     80,
+				HealthcheckJSON: `{"path":"/healthz","port":8080,"protocol":"http"}`,
+			},
+		},
+	})
+
+	service := NewProjectService(projectStore).WithServiceStore(serviceStore)
+	result, err := service.ListServices("usr_123", RoleAdmin, "prj_1")
+	if err != nil {
+		t.Fatalf("list services: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected one service, got %d", len(result.Items))
+	}
+	if result.Items[0].Name != "api" || result.Items[0].TargetPort != 8080 || result.Items[0].ServicePort != 80 {
+		t.Fatalf("unexpected service record %#v", result.Items[0])
+	}
+}
+
+func TestProjectServiceConfigureServicesPersistsServiceCatalog(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(map[string][]models.Service{
+		"prj_1": {
+			{
+				ID:        "svc_internal",
+				ProjectID: "prj_1",
+				Name:      "lazyops-internal-postgres",
+				Path:      ".lazyops/internal/postgres",
+				Kind:      "postgres",
+			},
+		},
+	})
+
+	service := NewProjectService(projectStore).WithServiceStore(serviceStore)
+	result, err := service.ConfigureServices(ConfigureProjectServicesCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleAdmin,
+		ProjectID:       "prj_1",
+		Items: []ConfigureProjectServiceItem{
+			{
+				Name:       "api",
+				Path:       "apps/api",
+				Kind:       "backend",
+				Public:     false,
+				TargetPort: 8080,
+				Replicas:   2,
+				Healthcheck: map[string]any{
+					"path": "/ready",
+					"port": 8080,
+				},
+			},
+			{
+				Name:       "web",
+				Path:       "apps/web",
+				Kind:       "frontend",
+				Public:     true,
+				TargetPort: 3000,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure services: %v", err)
+	}
+	if len(result.Items) != 3 {
+		t.Fatalf("expected 3 services including preserved internal, got %d", len(result.Items))
+	}
+
+	var apiSvc *ProjectServiceRecord
+	var webSvc *ProjectServiceRecord
+	for index := range result.Items {
+		switch result.Items[index].Name {
+		case "api":
+			apiSvc = &result.Items[index]
+		case "web":
+			webSvc = &result.Items[index]
+		}
+	}
+	if apiSvc == nil || webSvc == nil {
+		t.Fatalf("expected api and web services in result, got %#v", result.Items)
+	}
+	if apiSvc.Kind != "backend" || apiSvc.Replicas != 2 || apiSvc.TargetPort != 8080 || apiSvc.ServicePort != 8080 {
+		t.Fatalf("unexpected api service record %#v", apiSvc)
+	}
+	if extractHealthcheckPort(apiSvc.Healthcheck) != 8080 {
+		t.Fatalf("expected api healthcheck port 8080, got %#v", apiSvc.Healthcheck)
+	}
+	if webSvc.RuntimeProfile != "web" || !webSvc.Public {
+		t.Fatalf("expected web service to infer runtime profile web, got %#v", webSvc)
+	}
+}
+
+func TestProjectServiceConfigureServicesRejectsReservedInternalPath(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	service := NewProjectService(projectStore).WithServiceStore(newFakeProjectServiceStoreForProjectSvc(nil))
+
+	_, err := service.ConfigureServices(ConfigureProjectServicesCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleAdmin,
+		ProjectID:       "prj_1",
+		Items: []ConfigureProjectServiceItem{
+			{Name: "db", Path: ".lazyops/internal/postgres"},
+		},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
 }

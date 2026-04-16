@@ -7,6 +7,7 @@ type DesiredStateRevisionResponse struct {
 	ProjectID            string                        `json:"project_id"`
 	BlueprintID          string                        `json:"blueprint_id"`
 	DeploymentBindingID  string                        `json:"deployment_binding_id"`
+	Namespace            string                        `json:"namespace,omitempty"`
 	CommitSHA            string                        `json:"commit_sha"`
 	ArtifactRef          string                        `json:"artifact_ref,omitempty"`
 	ImageRef             string                        `json:"image_ref,omitempty"`
@@ -14,11 +15,14 @@ type DesiredStateRevisionResponse struct {
 	Status               string                        `json:"status"`
 	RuntimeMode          string                        `json:"runtime_mode"`
 	Services             []ProjectServiceResponse      `json:"services"`
+	ServiceSpecs         []ProjectServiceResponse      `json:"service_specs,omitempty"`
 	DependencyBindings   []map[string]any              `json:"dependency_bindings,omitempty"`
+	InternalBindings     []map[string]any              `json:"internal_bindings,omitempty"`
 	CompatibilityPolicy  map[string]any                `json:"compatibility_policy"`
 	MagicDomainPolicy    map[string]any                `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    map[string]any                `json:"scale_to_zero_policy"`
 	PlacementAssignments []PlacementAssignmentResponse `json:"placement_assignments,omitempty"`
+	ManifestBundle       map[string]any                `json:"manifest_bundle,omitempty"`
 	CreatedAt            time.Time                     `json:"created_at"`
 	UpdatedAt            time.Time                     `json:"updated_at"`
 }
@@ -59,8 +63,10 @@ type DeploymentOverviewResponse struct {
 	RolloutState         string                        `json:"rollout_state"`
 	Promoted             bool                          `json:"promoted"`
 	TriggeredBy          string                        `json:"triggered_by"`
+	Namespace            string                        `json:"namespace,omitempty"`
 	RuntimeMode          string                        `json:"runtime_mode"`
 	Services             []ProjectServiceResponse      `json:"services"`
+	ServiceSpecs         []ProjectServiceResponse      `json:"service_specs,omitempty"`
 	PlacementAssignments []PlacementAssignmentResponse `json:"placement_assignments"`
 	PublicURLs           []string                      `json:"public_urls"`
 	PublicURLReason      string                        `json:"public_url_reason,omitempty"`

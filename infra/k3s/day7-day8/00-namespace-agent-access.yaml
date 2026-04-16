@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lazyops-day7-day8
+  labels:
+    app.kubernetes.io/part-of: lazyops
+    lazyops.phase: day7-day8
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lazyops-namespace-agent
+  namespace: lazyops-day7-day8
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lazyops-namespace-agent
+  namespace: lazyops-day7-day8
+rules:
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets", "persistentvolumeclaims", "pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lazyops-namespace-agent
+  namespace: lazyops-day7-day8
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lazyops-namespace-agent
+subjects:
+  - kind: ServiceAccount
+    name: lazyops-namespace-agent
+    namespace: lazyops-day7-day8
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lazyops-namespace-agent-token
+  namespace: lazyops-day7-day8
+  annotations:
+    kubernetes.io/service-account.name: lazyops-namespace-agent
+type: kubernetes.io/service-account-token

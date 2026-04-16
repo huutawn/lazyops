@@ -30,6 +30,7 @@ func (f HandlerFunc) Handle(ctx context.Context, envelope contracts.CommandEnvel
 type Result struct {
 	Status  contracts.CommandAckStatus
 	Summary string
+	Details map[string]any
 	Error   *DispatchError
 }
 
@@ -48,6 +49,14 @@ func Done(summary string) Result {
 	return Result{
 		Status:  contracts.CommandAckDone,
 		Summary: summary,
+	}
+}
+
+func DoneWithDetails(summary string, details map[string]any) Result {
+	return Result{
+		Status:  contracts.CommandAckDone,
+		Summary: summary,
+		Details: details,
 	}
 }
 
@@ -162,7 +171,7 @@ func (d *CommandDispatcher) Dispatch(ctx context.Context, envelope contracts.Com
 		return d.writer.SendCommandNack(ctx, nack)
 	}
 
-	if err := d.writer.SendCommandAck(ctx, d.newAck(envelope, contracts.CommandAckAccepted, "command accepted by dispatcher")); err != nil {
+	if err := d.writer.SendCommandAck(ctx, d.newAck(envelope, contracts.CommandAckAccepted, "command accepted by dispatcher", nil)); err != nil {
 		return err
 	}
 
@@ -190,7 +199,7 @@ func (d *CommandDispatcher) Dispatch(ctx context.Context, envelope contracts.Com
 	if log != nil {
 		log.Info("command handler completed", "status", status, "summary", summary)
 	}
-	return d.writer.SendCommandAck(ctx, d.newAck(envelope, status, summary))
+	return d.writer.SendCommandAck(ctx, d.newAck(envelope, status, summary, result.Details))
 }
 
 func (d *CommandDispatcher) validateEnvelope(envelope contracts.CommandEnvelope) *contracts.CommandNackEnvelope {
@@ -215,7 +224,7 @@ func (d *CommandDispatcher) validateEnvelope(envelope contracts.CommandEnvelope)
 	return nil
 }
 
-func (d *CommandDispatcher) newAck(envelope contracts.CommandEnvelope, status contracts.CommandAckStatus, summary string) contracts.CommandAckEnvelope {
+func (d *CommandDispatcher) newAck(envelope contracts.CommandEnvelope, status contracts.CommandAckStatus, summary string, details map[string]any) contracts.CommandAckEnvelope {
 	return contracts.CommandAckEnvelope{
 		Type:          contracts.AckEnvelopeType,
 		RequestID:     envelope.RequestID,
@@ -226,6 +235,7 @@ func (d *CommandDispatcher) newAck(envelope contracts.CommandEnvelope, status co
 		Source:        contracts.EnvelopeSourceAgent,
 		OccurredAt:    d.now(),
 		Summary:       summary,
+		Details:       details,
 	}
 }
 

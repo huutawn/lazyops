@@ -3,16 +3,26 @@ package response
 import "time"
 
 type ProjectServiceResponse struct {
-	ID             string         `json:"id"`
-	ProjectID      string         `json:"project_id"`
-	Name           string         `json:"name"`
-	Path           string         `json:"path"`
-	Public         bool           `json:"public"`
-	RuntimeProfile string         `json:"runtime_profile,omitempty"`
-	StartHint      string         `json:"start_hint,omitempty"`
-	Healthcheck    map[string]any `json:"healthcheck"`
-	CreatedAt      time.Time      `json:"created_at,omitempty"`
-	UpdatedAt      time.Time      `json:"updated_at,omitempty"`
+	ID             string                      `json:"id"`
+	ProjectID      string                      `json:"project_id"`
+	Name           string                      `json:"name"`
+	Path           string                      `json:"path"`
+	Kind           string                      `json:"kind,omitempty"`
+	Public         bool                        `json:"public"`
+	RuntimeProfile string                      `json:"runtime_profile,omitempty"`
+	StartHint      string                      `json:"start_hint,omitempty"`
+	ImageRef       string                      `json:"image_ref,omitempty"`
+	ImageDigest    string                      `json:"image_digest,omitempty"`
+	DetectedPorts  []BuildDetectedPortResponse `json:"detected_ports,omitempty"`
+	TargetPort     int                         `json:"target_port,omitempty"`
+	ServicePort    int                         `json:"service_port,omitempty"`
+	Replicas       int                         `json:"replicas,omitempty"`
+	EnvBundle      map[string]string           `json:"env_bundle,omitempty"`
+	PVCSpec        map[string]any              `json:"pvc_spec,omitempty"`
+	DeployStrategy map[string]any              `json:"deploy_strategy,omitempty"`
+	Healthcheck    map[string]any              `json:"healthcheck"`
+	CreatedAt      time.Time                   `json:"created_at,omitempty"`
+	UpdatedAt      time.Time                   `json:"updated_at,omitempty"`
 }
 
 type BlueprintArtifactMetadataResponse struct {
@@ -39,6 +49,8 @@ type PlacementAssignmentResponse struct {
 
 type BlueprintCompiledResponse struct {
 	ProjectID           string                            `json:"project_id"`
+	ProjectSlug         string                            `json:"project_slug,omitempty"`
+	Namespace           string                            `json:"namespace,omitempty"`
 	RuntimeMode         string                            `json:"runtime_mode"`
 	Repo                BlueprintRepoStateResponse        `json:"repo"`
 	Binding             DeploymentBindingResponse         `json:"binding"`
@@ -64,17 +76,21 @@ type DesiredRevisionDraftResponse struct {
 	ProjectID            string                        `json:"project_id"`
 	BlueprintID          string                        `json:"blueprint_id"`
 	DeploymentBindingID  string                        `json:"deployment_binding_id"`
+	Namespace            string                        `json:"namespace,omitempty"`
 	CommitSHA            string                        `json:"commit_sha"`
 	ArtifactRef          string                        `json:"artifact_ref,omitempty"`
 	ImageRef             string                        `json:"image_ref,omitempty"`
 	TriggerKind          string                        `json:"trigger_kind"`
 	RuntimeMode          string                        `json:"runtime_mode"`
 	Services             []ProjectServiceResponse      `json:"services"`
+	ServiceSpecs         []ProjectServiceResponse      `json:"service_specs,omitempty"`
 	DependencyBindings   []map[string]any              `json:"dependency_bindings,omitempty"`
+	InternalBindings     []map[string]any              `json:"internal_bindings,omitempty"`
 	CompatibilityPolicy  map[string]any                `json:"compatibility_policy"`
 	MagicDomainPolicy    map[string]any                `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    map[string]any                `json:"scale_to_zero_policy"`
 	PlacementAssignments []PlacementAssignmentResponse `json:"placement_assignments,omitempty"`
+	ManifestBundle       map[string]any                `json:"manifest_bundle,omitempty"`
 }
 
 type CompileBlueprintResponse struct {

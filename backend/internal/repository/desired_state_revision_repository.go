@@ -42,6 +42,21 @@ func (r *DesiredStateRevisionRepository) UpdateStatus(revisionID, status string,
 		}).Error
 }
 
+func (r *DesiredStateRevisionRepository) UpdateSnapshot(revisionID, compiledRevisionJSON, manifestBundleJSON string, at time.Time) error {
+	updates := map[string]any{
+		"updated_at": at,
+	}
+	if compiledRevisionJSON != "" {
+		updates["compiled_revision_json"] = compiledRevisionJSON
+	}
+	if manifestBundleJSON != "" {
+		updates["manifest_bundle_json"] = manifestBundleJSON
+	}
+	return r.db.Model(&models.DesiredStateRevision{}).
+		Where("id = ?", revisionID).
+		Updates(updates).Error
+}
+
 func (r *DesiredStateRevisionRepository) ListByProject(projectID string) ([]models.DesiredStateRevision, error) {
 	var revisions []models.DesiredStateRevision
 	if err := r.db.Where("project_id = ?", projectID).Order("created_at ASC").Find(&revisions).Error; err != nil {

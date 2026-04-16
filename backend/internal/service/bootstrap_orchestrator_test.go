@@ -75,6 +75,7 @@ func TestBootstrapOrchestratorGetStatusIncludesRuntimeInventory(t *testing.T) {
 	compiledJSON, err := json.Marshal(desiredStateRevisionCompiledRecord{
 		RevisionID:          "rev_123",
 		ProjectID:           "prj_123",
+		ProjectSlug:         "acme-api",
 		BlueprintID:         "bp_123",
 		DeploymentBindingID: "bind_123",
 		CommitSHA:           "abc123def456",
@@ -215,7 +216,7 @@ func TestBootstrapOrchestratorGetStatusIncludesRuntimeInventory(t *testing.T) {
 	if status.RuntimeInventory.InternalServices[0].ContainerName != "lazyops-int-prj-123-bind-123-postgres" {
 		t.Fatalf("unexpected internal service container %q", status.RuntimeInventory.InternalServices[0].ContainerName)
 	}
-	if len(status.PublicURLs) == 0 || status.PublicURLs[0] != "https://api.47-129-226-224.sslip.io" {
+	if len(status.PublicURLs) == 0 || status.PublicURLs[0] != "https://api.acme-api.47-129-226-224.sslip.io" {
 		t.Fatalf("unexpected public urls %#v", status.PublicURLs)
 	}
 }

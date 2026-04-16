@@ -32,7 +32,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	userController := controller.NewUserController(app.UserService)
 	agentController := controller.NewAgentController(app.AgentService, app.Hub)
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
-	agentControlController := controller.NewAgentControlController(app.ControlHub, app.CommandTracker, app.ObservabilitySvc, app.RolloutExecutionSvc, app.Config)
+	agentControlController := controller.NewAgentControlController(app.ControlHub, app.CommandTracker, app.ObservabilitySvc, app.OperatorStreamHub, app.RolloutExecutionSvc, app.Config)
 	operatorStreamController := controller.NewOperatorStreamController(app.OperatorStreamHub, app.Config)
 
 	rootAgentControl := router.Group("/ws")
@@ -93,6 +93,11 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/github/repos", githubController.ListRepos)
 			userProtected.POST("/projects", projectController.Create)
 			userProtected.GET("/projects", projectController.List)
+			userProtected.GET("/projects/:id/services", projectController.ListServices)
+			userProtected.PUT("/projects/:id/services",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectController.ConfigureServices,
+			)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
 			userProtected.GET("/projects/:id/env", projectEnvController.Get)
 			userProtected.PUT("/projects/:id/env",

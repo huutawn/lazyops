@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"lazyops-server/internal/runtime"
@@ -356,6 +356,7 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 			"command_type", cmd.Type,
 			"state", tracked.State,
 		)
+		s.broadcastRolloutProgress(deployment.ID, revision.ID, projectID, correlationID, i, len(plan.Steps), cmd.Type, tracked)
 
 		switch cmd.Type {
 		case runtime.CommandTypeStartReleaseCandidate:
@@ -691,22 +692,53 @@ func (s *RolloutExecutionService) evaluateHealthGate(ctx context.Context, projec
 }
 
 func (s *RolloutExecutionService) rollbackDeployment(ctx context.Context, projectID, deploymentID, revisionID, agentID, correlationID string, result *RolloutExecutionResult) (*RollbackResult, error) {
+	rollbackPlan, err := s.planner.PlanRollback(ctx, projectID, deploymentID)
+	if err != nil {
+		_ = s.failDeployment(projectID, deploymentID, revisionID)
+		return nil, err
+	}
+
+	payload := cloneAnyMap(rollbackPlan.Payload)
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+	payload["failed_revision_id"] = rollbackPlan.FailedRevisionID
+	payload["restored_revision_id"] = rollbackPlan.RestoredRevisionID
+
 	cmd := enrichRolloutCommand(runtime.AgentCommand{
 		Type:      runtime.CommandTypeRollbackRelease,
 		ProjectID: projectID,
 		Source:    "rollout_execution_service",
-		Payload: map[string]any{
-			"deployment_id": deploymentID,
-			"revision_id":   revisionID,
-		},
+		Payload:   payload,
 	}, projectID, revisionID, correlationID)
-	if _, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd); err != nil {
+	cmdResult, err := s.dispatcher.DispatchCommand(ctx, agentID, cmd)
+	if err != nil {
 		_ = s.failDeployment(projectID, deploymentID, revisionID)
 		return nil, err
 	}
 	result.DispatchedCommands = append(result.DispatchedCommands, cmd.Type)
 
-	rollbackResult, err := s.planner.RollbackDeployment(ctx, projectID, deploymentID)
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Minute)
+	tracked, waitErr := s.dispatcher.WaitForCommand(waitCtx, cmdResult.RequestID)
+	waitCancel()
+	if waitErr != nil {
+		_ = s.failDeployment(projectID, deploymentID, revisionID)
+		return nil, waitErr
+	}
+	if tracked == nil {
+		_ = s.failDeployment(projectID, deploymentID, revisionID)
+		return nil, fmt.Errorf("rollback command %q returned empty result", cmd.Type)
+	}
+	if tracked.State != CommandStateDone {
+		_ = s.failDeployment(projectID, deploymentID, revisionID)
+		if tracked.Error != "" {
+			return nil, fmt.Errorf("rollback command %q failed: %s", cmd.Type, tracked.Error)
+		}
+		return nil, fmt.Errorf("rollback command %q returned state %q", cmd.Type, tracked.State)
+	}
+	s.broadcastRolloutProgress(deploymentID, revisionID, projectID, correlationID, -1, -1, cmd.Type, tracked)
+
+	rollbackResult, err := s.planner.FinalizeRollback(ctx, projectID, deploymentID, rollbackPlan.FailedRevisionID, rollbackPlan.RestoredRevisionID)
 	if err != nil {
 		_ = s.failDeployment(projectID, deploymentID, revisionID)
 		return nil, err
@@ -769,4 +801,41 @@ func rolloutAlreadyStarted(deploymentStatus, revisionStatus string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *RolloutExecutionService) broadcastRolloutProgress(deploymentID, revisionID, projectID, correlationID string, stepIndex, totalSteps int, commandType string, tracked *TrackedCommand) {
+	if s == nil || s.operatorHub == nil || tracked == nil {
+		return
+	}
+	payload := map[string]any{
+		"deployment_id":  deploymentID,
+		"revision_id":    revisionID,
+		"project_id":     projectID,
+		"correlation_id": correlationID,
+		"command_type":   commandType,
+		"state":          tracked.State,
+		"summary":        tracked.Output["summary"],
+		"step_index":     stepIndex,
+		"total_steps":    totalSteps,
+	}
+	if len(tracked.Output) > 0 {
+		payload["command_output"] = tracked.Output
+		if rolloutProgress, ok := tracked.Output["rollout_progress"]; ok {
+			payload["rollout_progress"] = rolloutProgress
+		}
+		if ingress, ok := tracked.Output["ingress_observations"]; ok {
+			payload["ingress_observations"] = ingress
+		}
+	}
+	_ = s.operatorHub.BroadcastEvent("deployment.rollout_progress", payload)
+	if ingress, ok := tracked.Output["ingress_observations"]; ok {
+		_ = s.operatorHub.BroadcastEvent("deployment.ingress_status", map[string]any{
+			"deployment_id":        deploymentID,
+			"revision_id":          revisionID,
+			"project_id":           projectID,
+			"correlation_id":       correlationID,
+			"command_type":         commandType,
+			"ingress_observations": ingress,
+		})
+	}
 }

@@ -93,6 +93,7 @@ type DesiredStateRevisionStore interface {
 	GetByIDForProject(projectID, revisionID string) (*models.DesiredStateRevision, error)
 	ListByProject(projectID string) ([]models.DesiredStateRevision, error)
 	UpdateStatus(revisionID, status string, at time.Time) error
+	UpdateSnapshot(revisionID, compiledRevisionJSON, manifestBundleJSON string, at time.Time) error
 }
 
 type DeploymentStore interface {

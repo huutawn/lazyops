@@ -8,6 +8,7 @@ import (
 )
 
 type PublicDomainResolveInput struct {
+	ProjectSlug          string
 	RuntimeMode          string
 	TargetKind           string
 	TargetID             string
@@ -31,31 +32,30 @@ type PublicDomainResult struct {
 
 type PublicDomainResolver struct {
 	instances InstanceStore
+	clusters  ClusterStore
 }
 
-func NewPublicDomainResolver(instances InstanceStore) *PublicDomainResolver {
-	return &PublicDomainResolver{instances: instances}
+func NewPublicDomainResolver(instances InstanceStore, clusters ClusterStore) *PublicDomainResolver {
+	return &PublicDomainResolver{
+		instances: instances,
+		clusters:  clusters,
+	}
 }
 
 func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDomainResult {
-	if r == nil || r.instances == nil {
+	if r == nil {
 		return PublicDomainResult{
 			PublicURLs: []string{},
-			Reason:     "Không thể xác định domain công khai vì thiếu instance store.",
+			Reason:     "Không thể xác định domain công khai vì thiếu public domain resolver.",
 		}
 	}
 
-	if strings.TrimSpace(input.RuntimeMode) != bootstrapModeStandalone {
+	runtimeMode := strings.TrimSpace(input.RuntimeMode)
+	targetKind := strings.TrimSpace(input.TargetKind)
+	if runtimeMode != bootstrapModeStandalone && runtimeMode != bootstrapModeDistributedK3s {
 		return PublicDomainResult{
 			PublicURLs: []string{},
-			Reason:     "Domain công khai theo public IP hiện chỉ hỗ trợ cho standalone instance.",
-		}
-	}
-
-	if strings.TrimSpace(input.TargetKind) != "instance" {
-		return PublicDomainResult{
-			PublicURLs: []string{},
-			Reason:     "Target hiện tại không phải instance nên chưa có magic domain theo public IP.",
+			Reason:     "Magic domain theo public IP hiện chỉ hỗ trợ cho standalone instance hoặc distributed-k3s.",
 		}
 	}
 
@@ -74,27 +74,22 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 
 	domains := make([]PublicDomainRecord, 0, len(publicServices))
 	for _, service := range publicServices {
-		targetID := placementTargetIDForService(service.Name, input.PlacementAssignments)
-		if targetID == "" {
-			targetID = strings.TrimSpace(input.TargetID)
-		}
-		if targetID == "" {
-			continue
-		}
-
-		instance, err := r.instances.GetByID(targetID)
-		if err != nil || instance == nil || instance.PublicIP == nil {
-			continue
-		}
-
-		publicIP := strings.TrimSpace(*instance.PublicIP)
+		publicIP := r.resolveTargetPublicIP(targetKind, strings.TrimSpace(input.TargetID), service.Name, input.PlacementAssignments)
 		if publicIP == "" || net.ParseIP(publicIP) == nil || isPrivateIP(publicIP) {
 			continue
 		}
 
 		dashedIP := strings.ReplaceAll(publicIP, ".", "-")
-		primaryHost := fmt.Sprintf("%s.%s.%s", service.Name, dashedIP, MagicDomainProviderSSLIP)
-		fallbackHost := fmt.Sprintf("%s.%s.%s", service.Name, dashedIP, MagicDomainProviderNipIO)
+		projectToken := strings.TrimSpace(input.ProjectSlug)
+		if projectToken == "" {
+			projectToken = strings.TrimSpace(input.TargetID)
+		}
+		if strings.TrimSpace(projectToken) == "" {
+			projectToken = "cluster"
+		}
+		projectToken = sanitizeDomainLabel(projectToken)
+		primaryHost := fmt.Sprintf("%s.%s.%s.%s", service.Name, projectToken, dashedIP, MagicDomainProviderSSLIP)
+		fallbackHost := fmt.Sprintf("%s.%s.%s.%s", service.Name, projectToken, publicIP, MagicDomainProviderNipIO)
 
 		domains = append(domains, PublicDomainRecord{
 			ServiceName:  service.Name,
@@ -121,6 +116,39 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 		Domains:    []PublicDomainRecord{},
 		PublicURLs: []string{},
 		Reason:     "Target chưa có public IP hợp lệ để cấp magic domain.",
+	}
+}
+
+func (r *PublicDomainResolver) resolveTargetPublicIP(targetKind, targetID, serviceName string, assignments []PlacementAssignmentRecord) string {
+	targetID = strings.TrimSpace(targetID)
+	switch strings.TrimSpace(targetKind) {
+	case "instance":
+		if r.instances == nil {
+			return ""
+		}
+		placementID := placementTargetIDForService(serviceName, assignments)
+		if placementID != "" {
+			targetID = placementID
+		}
+		if targetID == "" {
+			return ""
+		}
+		instance, err := r.instances.GetByID(targetID)
+		if err != nil || instance == nil || instance.PublicIP == nil {
+			return ""
+		}
+		return strings.TrimSpace(*instance.PublicIP)
+	case "cluster":
+		if r.clusters == nil || targetID == "" {
+			return ""
+		}
+		cluster, err := r.clusters.GetByID(targetID)
+		if err != nil || cluster == nil || cluster.PublicIP == nil {
+			return ""
+		}
+		return strings.TrimSpace(*cluster.PublicIP)
+	default:
+		return ""
 	}
 }
 
@@ -154,6 +182,31 @@ func collectPublicURLsFromDomains(domains []PublicDomainRecord) []string {
 		}
 	}
 	return urls
+}
+
+func sanitizeDomainLabel(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return "app"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if b.Len() > 0 && !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func toPublicDomainPayloads(domains []PublicDomainRecord) []map[string]any {

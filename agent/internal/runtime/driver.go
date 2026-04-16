@@ -51,6 +51,8 @@ type RolloutContext struct {
 	PendingRevisionID        string
 	CandidateRevisionID      string
 	DrainingRevisionID       string
+	RollbackFromRevisionID   string
+	RollbackToRevisionID     string
 }
 
 type RuntimeDependencyContext struct {
@@ -79,15 +81,26 @@ type ProjectMetadata struct {
 	ProjectID string            `json:"project_id"`
 	Name      string            `json:"name,omitempty"`
 	Slug      string            `json:"slug,omitempty"`
+	Namespace string            `json:"namespace,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
 type ServiceRuntimeContext struct {
 	Name           string                               `json:"name"`
 	Path           string                               `json:"path"`
+	Kind           string                               `json:"kind,omitempty"`
 	Public         bool                                 `json:"public"`
 	RuntimeProfile string                               `json:"runtime_profile,omitempty"`
 	StartHint      string                               `json:"start_hint,omitempty"`
+	ImageRef       string                               `json:"image_ref,omitempty"`
+	ImageDigest    string                               `json:"image_digest,omitempty"`
+	DetectedPorts  []contracts.DetectedPortPayload      `json:"detected_ports,omitempty"`
+	TargetPort     int                                  `json:"target_port,omitempty"`
+	ServicePort    int                                  `json:"service_port,omitempty"`
+	Replicas       int                                  `json:"replicas,omitempty"`
+	EnvBundle      map[string]string                    `json:"env_bundle,omitempty"`
+	PVCSpec        map[string]any                       `json:"pvc_spec,omitempty"`
+	DeployStrategy map[string]any                       `json:"deploy_strategy,omitempty"`
 	Labels         map[string]string                    `json:"labels,omitempty"`
 	HealthCheck    contracts.HealthCheckPayload         `json:"healthcheck"`
 	RuntimePort    int                                  `json:"runtime_port,omitempty"`
@@ -723,10 +736,51 @@ type GarbageCollectRuntimeResult struct {
 }
 
 type ReconcileRevisionResult struct {
-	RevisionID   string    `json:"revision_id"`
-	AppliedSteps []string  `json:"applied_steps"`
-	Summary      string    `json:"summary"`
-	CompletedAt  time.Time `json:"completed_at"`
+	RevisionID        string                 `json:"revision_id"`
+	AppliedSteps      []string               `json:"applied_steps"`
+	Summary           string                 `json:"summary"`
+	PreflightWarnings []string               `json:"preflight_warnings,omitempty"`
+	PortObservations  []PortApplyObservation `json:"port_observations,omitempty"`
+	PortMismatchCount int                    `json:"port_mismatch_count,omitempty"`
+	RolloutProgress   []RolloutProgress      `json:"rollout_progress,omitempty"`
+	Ingresses         []IngressObservation   `json:"ingresses,omitempty"`
+	CompletedAt       time.Time              `json:"completed_at"`
+}
+
+type RolloutProgress struct {
+	ServiceName        string    `json:"service_name"`
+	DesiredReplicas    int       `json:"desired_replicas,omitempty"`
+	ReadyReplicas      int       `json:"ready_replicas,omitempty"`
+	UpdatedReplicas    int       `json:"updated_replicas,omitempty"`
+	AvailableReplicas  int       `json:"available_replicas,omitempty"`
+	ObservedGeneration int64     `json:"observed_generation,omitempty"`
+	Status             string    `json:"status,omitempty"`
+	Message            string    `json:"message,omitempty"`
+	ObservedAt         time.Time `json:"observed_at"`
+}
+
+type IngressObservation struct {
+	ServiceName       string    `json:"service_name"`
+	IngressName       string    `json:"ingress_name,omitempty"`
+	Hosts             []string  `json:"hosts,omitempty"`
+	URLs              []string  `json:"urls,omitempty"`
+	ExternalAddresses []string  `json:"external_addresses,omitempty"`
+	Ready             bool      `json:"ready"`
+	Status            string    `json:"status,omitempty"`
+	Message           string    `json:"message,omitempty"`
+	ObservedAt        time.Time `json:"observed_at"`
+}
+
+type PortApplyObservation struct {
+	ServiceName               string `json:"service_name"`
+	ExpectedTargetPort        int    `json:"expected_target_port,omitempty"`
+	ExpectedServicePort       int    `json:"expected_service_port,omitempty"`
+	ObservedContainerPort     int    `json:"observed_container_port,omitempty"`
+	ObservedServiceTargetPort int    `json:"observed_service_target_port,omitempty"`
+	ObservedServicePort       int    `json:"observed_service_port,omitempty"`
+	ObservedTargetPortName    string `json:"observed_target_port_name,omitempty"`
+	Status                    string `json:"status,omitempty"`
+	Warning                   string `json:"warning,omitempty"`
 }
 
 type OperationError struct {
@@ -777,9 +831,32 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 		return RuntimeContext{}, fmt.Errorf("binding runtime mode does not match revision runtime mode")
 	}
 	switch payload.Binding.RuntimeMode {
-	case contracts.RuntimeModeStandalone, contracts.RuntimeModeDistributedMesh:
+	case contracts.RuntimeModeStandalone, contracts.RuntimeModeDistributedMesh, contracts.RuntimeModeDistributedK3s:
 	default:
 		return RuntimeContext{}, fmt.Errorf("runtime driver does not support runtime mode %q", payload.Binding.RuntimeMode)
+	}
+	if len(payload.Revision.Services) == 0 && len(payload.Revision.ServiceSpecs) > 0 {
+		payload.Revision.Services = make([]contracts.ServicePayload, 0, len(payload.Revision.ServiceSpecs))
+		for _, spec := range payload.Revision.ServiceSpecs {
+			payload.Revision.Services = append(payload.Revision.Services, contracts.ServicePayload{
+				Name:           spec.Name,
+				Path:           spec.Path,
+				Kind:           spec.Kind,
+				Public:         spec.Public,
+				RuntimeProfile: spec.RuntimeProfile,
+				StartHint:      spec.StartHint,
+				ImageRef:       spec.ImageRef,
+				ImageDigest:    spec.ImageDigest,
+				DetectedPorts:  append([]contracts.DetectedPortPayload(nil), spec.DetectedPorts...),
+				TargetPort:     spec.TargetPort,
+				ServicePort:    spec.ServicePort,
+				Replicas:       spec.Replicas,
+				EnvBundle:      cloneStringMap(spec.EnvBundle),
+				PVCSpec:        cloneAnyMap(spec.PVCSpec),
+				DeployStrategy: cloneAnyMap(spec.DeployStrategy),
+				HealthCheck:    spec.HealthCheck,
+			})
+		}
 	}
 	if len(payload.Revision.Services) == 0 {
 		return RuntimeContext{}, fmt.Errorf("revision must include at least one service")
@@ -803,9 +880,19 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 		ctxService := ServiceRuntimeContext{
 			Name:           service.Name,
 			Path:           service.Path,
+			Kind:           service.Kind,
 			Public:         service.Public,
 			RuntimeProfile: service.RuntimeProfile,
 			StartHint:      service.StartHint,
+			ImageRef:       service.ImageRef,
+			ImageDigest:    service.ImageDigest,
+			DetectedPorts:  append([]contracts.DetectedPortPayload(nil), service.DetectedPorts...),
+			TargetPort:     service.TargetPort,
+			ServicePort:    service.ServicePort,
+			Replicas:       service.Replicas,
+			EnvBundle:      cloneStringMap(service.EnvBundle),
+			PVCSpec:        cloneAnyMap(service.PVCSpec),
+			DeployStrategy: cloneAnyMap(service.DeployStrategy),
 			Labels:         service.Labels,
 			HealthCheck:    service.HealthCheck,
 		}
@@ -836,6 +923,7 @@ func ContextFromPreparePayload(payload contracts.PrepareReleaseWorkspacePayload)
 			ProjectID: payload.Project.ProjectID,
 			Name:      payload.Project.Name,
 			Slug:      payload.Project.Slug,
+			Namespace: firstNonEmptyRuntimeString(payload.Project.Namespace, payload.Revision.Namespace),
 			Labels:    payload.Project.Labels,
 		},
 		ProjectEnv: cloneStringMap(payload.ProjectEnv),
@@ -856,6 +944,7 @@ func ContextFromWorkspaceManifest(manifest WorkspaceManifest) (RuntimeContext, e
 			ProjectID: manifest.Project.ProjectID,
 			Name:      manifest.Project.Name,
 			Slug:      manifest.Project.Slug,
+			Namespace: manifest.Project.Namespace,
 			Labels:    manifest.Project.Labels,
 		},
 		ProjectEnv: manifest.ProjectEnv,
@@ -890,6 +979,15 @@ func workspaceLayout(root string, runtimeCtx RuntimeContext) WorkspaceLayout {
 		Mesh:      filepath.Join(workspaceRoot, "mesh"),
 		Services:  filepath.Join(workspaceRoot, "services"),
 	}
+}
+
+func firstNonEmptyRuntimeString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func capabilityNoContainerLeak(manifest WorkspaceManifest) error {

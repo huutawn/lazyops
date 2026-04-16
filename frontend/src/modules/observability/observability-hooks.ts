@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getTraceByCorrelationID,
@@ -77,4 +78,65 @@ export function useMetrics(projectId?: string) {
     enabled: !!projectId,
     staleTime: 60 * 1000,
   });
+}
+
+type LiveLogEnvelope = {
+  type?: string;
+  payload?: {
+    project_id?: string;
+    service_name?: string;
+    entries?: Array<{
+      timestamp?: string;
+      severity?: LogEntry['level'];
+      source?: string;
+      message?: string;
+    }>;
+  };
+};
+
+export function useLiveLogs(projectId?: string, enabled = false) {
+  const [items, setItems] = useState<LogEntry[]>([]);
+
+  useEffect(() => {
+    if (!projectId || !enabled || typeof window === 'undefined') {
+      setItems([]);
+      return;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/ws/operators/stream`);
+
+    socket.onmessage = (event) => {
+      try {
+        const envelope = JSON.parse(event.data) as LiveLogEnvelope;
+        if (envelope.type !== 'logs.live' || envelope.payload?.project_id !== projectId) {
+          return;
+        }
+        const service = envelope.payload.service_name ?? 'app';
+        const next = (envelope.payload.entries ?? [])
+          .filter((entry) => entry.message && entry.timestamp)
+          .map((entry, index) => ({
+            id: `${service}-${entry.timestamp}-${index}`,
+            service,
+            source: entry.source,
+            level: (entry.severity ?? 'info') as LogEntry['level'],
+            message: entry.message ?? '',
+            timestamp: entry.timestamp ?? new Date().toISOString(),
+          }));
+
+        if (next.length === 0) {
+          return;
+        }
+        setItems((current) => [...current, ...next].slice(-200));
+      } catch {
+        // Ignore malformed live events so the console stays resilient.
+      }
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, [enabled, projectId]);
+
+  return items;
 }

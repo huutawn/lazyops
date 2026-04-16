@@ -37,6 +37,27 @@ func ToCompileBlueprintResponse(result service.CompileBlueprintResult) responsed
 	for _, item := range result.DesiredRevisionDraft.Services {
 		draftServices = append(draftServices, toBlueprintServiceResponse(item))
 	}
+	draftSpecs := make([]responsedto.ProjectServiceResponse, 0, len(result.DesiredRevisionDraft.ServiceSpecs))
+	for _, item := range result.DesiredRevisionDraft.ServiceSpecs {
+		draftSpecs = append(draftSpecs, responsedto.ProjectServiceResponse{
+			Name:           item.Name,
+			Path:           item.Path,
+			Kind:           item.Kind,
+			Public:         item.Public,
+			RuntimeProfile: item.RuntimeProfile,
+			StartHint:      item.StartHint,
+			ImageRef:       item.ImageRef,
+			ImageDigest:    item.ImageDigest,
+			DetectedPorts:  toBuildDetectedPortResponses(item.DetectedPorts),
+			TargetPort:     item.TargetPort,
+			ServicePort:    item.ServicePort,
+			Replicas:       item.Replicas,
+			EnvBundle:      item.EnvBundle,
+			PVCSpec:        item.PVCSpec,
+			DeployStrategy: item.DeployStrategy,
+			Healthcheck:    item.Healthcheck,
+		})
+	}
 
 	return responsedto.CompileBlueprintResponse{
 		Services: services,
@@ -47,6 +68,8 @@ func ToCompileBlueprintResponse(result service.CompileBlueprintResult) responsed
 			SourceRef:  result.Blueprint.SourceRef,
 			Compiled: responsedto.BlueprintCompiledResponse{
 				ProjectID:           result.Blueprint.Compiled.ProjectID,
+				ProjectSlug:         result.Blueprint.Compiled.ProjectSlug,
+				Namespace:           result.Blueprint.Compiled.Namespace,
 				RuntimeMode:         result.Blueprint.Compiled.RuntimeMode,
 				Repo:                toBlueprintRepoStateResponse(result.Blueprint.Compiled.Repo),
 				Binding:             ToDeploymentBindingResponse(result.Blueprint.Compiled.Binding),
@@ -68,17 +91,21 @@ func ToCompileBlueprintResponse(result service.CompileBlueprintResult) responsed
 			ProjectID:            result.DesiredRevisionDraft.ProjectID,
 			BlueprintID:          result.DesiredRevisionDraft.BlueprintID,
 			DeploymentBindingID:  result.DesiredRevisionDraft.DeploymentBindingID,
+			Namespace:            result.DesiredRevisionDraft.Namespace,
 			CommitSHA:            result.DesiredRevisionDraft.CommitSHA,
 			ArtifactRef:          result.DesiredRevisionDraft.ArtifactRef,
 			ImageRef:             result.DesiredRevisionDraft.ImageRef,
 			TriggerKind:          result.DesiredRevisionDraft.TriggerKind,
 			RuntimeMode:          result.DesiredRevisionDraft.RuntimeMode,
 			Services:             draftServices,
+			ServiceSpecs:         draftSpecs,
 			DependencyBindings:   toDependencyBindingMaps(result.DesiredRevisionDraft.DependencyBindings),
+			InternalBindings:     toInternalBindingMaps(result.DesiredRevisionDraft.InternalBindings),
 			CompatibilityPolicy:  toCompatibilityPolicyMap(result.DesiredRevisionDraft.CompatibilityPolicy),
 			MagicDomainPolicy:    toMagicDomainPolicyMap(result.DesiredRevisionDraft.MagicDomainPolicy),
 			ScaleToZeroPolicy:    toScaleToZeroPolicyMap(result.DesiredRevisionDraft.ScaleToZeroPolicy),
 			PlacementAssignments: toPlacementAssignmentResponses(result.DesiredRevisionDraft.PlacementAssignments),
+			ManifestBundle:       toManifestBundleMap(result.DesiredRevisionDraft.ManifestBundle),
 		},
 	}
 }
@@ -89,8 +116,19 @@ func toProjectServiceResponse(item service.ProjectServiceRecord) responsedto.Pro
 		ProjectID:      item.ProjectID,
 		Name:           item.Name,
 		Path:           item.Path,
+		Kind:           item.Kind,
 		Public:         item.Public,
 		RuntimeProfile: item.RuntimeProfile,
+		StartHint:      item.StartHint,
+		ImageRef:       item.ImageRef,
+		ImageDigest:    item.ImageDigest,
+		DetectedPorts:  toBuildDetectedPortResponses(item.DetectedPorts),
+		TargetPort:     item.TargetPort,
+		ServicePort:    item.ServicePort,
+		Replicas:       item.Replicas,
+		EnvBundle:      item.EnvBundle,
+		PVCSpec:        item.PVCSpec,
+		DeployStrategy: item.DeployStrategy,
 		Healthcheck:    item.Healthcheck,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
@@ -101,9 +139,19 @@ func toBlueprintServiceResponse(item service.BlueprintServiceContractRecord) res
 	return responsedto.ProjectServiceResponse{
 		Name:           item.Name,
 		Path:           item.Path,
+		Kind:           item.Kind,
 		Public:         item.Public,
 		RuntimeProfile: item.RuntimeProfile,
 		StartHint:      item.StartHint,
+		ImageRef:       item.ImageRef,
+		ImageDigest:    item.ImageDigest,
+		DetectedPorts:  toBuildDetectedPortResponses(item.DetectedPorts),
+		TargetPort:     item.TargetPort,
+		ServicePort:    item.ServicePort,
+		Replicas:       item.Replicas,
+		EnvBundle:      item.EnvBundle,
+		PVCSpec:        item.PVCSpec,
+		DeployStrategy: item.DeployStrategy,
 		Healthcheck:    item.Healthcheck,
 	}
 }

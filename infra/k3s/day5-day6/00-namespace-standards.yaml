@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lazyops-day5-day6
+  labels:
+    app.kubernetes.io/part-of: lazyops
+    lazyops.phase: day5-day6
+  annotations:
+    lazyops.platform/default-ingress-class: traefik
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lazyops-defaults
+  namespace: lazyops-day5-day6
+spec:
+  hard:
+    pods: "20"
+    persistentvolumeclaims: "10"
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: lazyops-defaults
+  namespace: lazyops-day5-day6
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 500m
+        memory: 512Mi

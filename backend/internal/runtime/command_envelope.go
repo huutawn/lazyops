@@ -56,6 +56,7 @@ const (
 	EventTraceRecorded            = "trace.recorded"
 	EventTopologyUpdated          = "topology.updated"
 	EventMetricRollupIngested     = "metric.rollup_ingested"
+	EventLogsLive                 = "logs.live"
 )
 
 var ValidOperatorEvents = map[string]struct{}{
@@ -68,6 +69,7 @@ var ValidOperatorEvents = map[string]struct{}{
 	EventTraceRecorded:            {},
 	EventTopologyUpdated:          {},
 	EventMetricRollupIngested:     {},
+	EventLogsLive:                 {},
 }
 
 type CommandEnvelope struct {

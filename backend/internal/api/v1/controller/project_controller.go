@@ -65,6 +65,54 @@ func (ctl *ProjectController) List(c *gin.Context) {
 	response.JSON(c, http.StatusOK, "projects loaded", mapper.ToProjectListResponse(items))
 }
 
+func (ctl *ProjectController) ListServices(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	result, err := ctl.projects.ListServices(claims.UserID, claims.Role, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load project services", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load project services", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load project services", "ownership_mismatch", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load project services", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "project services loaded", mapper.ToProjectServiceListResponse(*result))
+}
+
+func (ctl *ProjectController) ConfigureServices(c *gin.Context) {
+	var req requestdto.ConfigureProjectServicesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
+		return
+	}
+
+	claims := middleware.MustClaims(c)
+	result, err := ctl.projects.ConfigureServices(
+		mapper.ToConfigureProjectServicesCommand(claims.UserID, claims.Role, c.Param("id"), req),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to configure project services", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to configure project services", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to configure project services", "ownership_mismatch", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to configure project services", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "project services configured", mapper.ToProjectServiceListResponse(*result))
+}
+
 func (ctl *ProjectController) LinkRepo(c *gin.Context) {
 	var req requestdto.LinkProjectRepoRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

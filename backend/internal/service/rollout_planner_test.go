@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -664,4 +666,221 @@ func TestToIncidentRecord(t *testing.T) {
 	if record.Details["key"] != "value" {
 		t.Fatalf("expected details key=value, got %v", record.Details)
 	}
+}
+
+func TestRolloutPlannerPlanCandidatePersistsK3sSnapshot(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewDistributedK3sDriver())
+
+	revisionStore := newFakeDesiredStateRevisionStore(
+		&models.DesiredStateRevision{
+			ID:                   "rev_stable",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_cluster",
+			Namespace:            "lazyops-demo",
+			CommitSHA:            "stable123",
+			TriggerKind:          "push",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustK3sCompiledRevisionJSON(t, "rev_stable", "bp_123", "prj_123", "bind_cluster", "lazyops-demo"),
+			ManifestBundleJSON:   mustManifestBundleJSON(t, K3sManifestBundleRecord{Namespace: "lazyops-demo", CombinedYAML: "kind: Deployment\nmetadata:\n  name: stable\n", GeneratedAt: time.Date(2026, 4, 16, 8, 0, 0, 0, time.UTC)}),
+			CreatedAt:            time.Date(2026, 4, 16, 8, 0, 0, 0, time.UTC),
+		},
+		&models.DesiredStateRevision{
+			ID:                   "rev_candidate",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_cluster",
+			Namespace:            "lazyops-demo",
+			CommitSHA:            "candidate123",
+			TriggerKind:          "push",
+			Status:               RevisionStatusArtifactReady,
+			CompiledRevisionJSON: mustK3sCompiledRevisionJSON(t, "rev_candidate", "bp_123", "prj_123", "bind_cluster", "lazyops-demo"),
+			CreatedAt:            time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC),
+		},
+	)
+	planner := newTestRolloutPlanner(
+		registry,
+		revisionStore,
+		newFakeDeploymentStore(),
+		newFakeRuntimeIncidentStore(),
+		newFakeDeploymentBindingStore(&models.DeploymentBinding{
+			ID:          "bind_cluster",
+			ProjectID:   "prj_123",
+			Name:        "K3s",
+			TargetRef:   "cluster-prod",
+			RuntimeMode: runtime.RuntimeModeDistributedK3s,
+			TargetKind:  "cluster",
+			TargetID:    "clu_123",
+		}),
+		&fakeOperatorEventBroadcaster{},
+	)
+
+	plan, err := planner.PlanCandidate(context.Background(), "prj_123", "rev_candidate")
+	if err != nil {
+		t.Fatalf("plan candidate: %v", err)
+	}
+	if len(plan.Steps) == 0 {
+		t.Fatal("expected rollout steps")
+	}
+
+	revision, err := revisionStore.GetByIDForProject("prj_123", "rev_candidate")
+	if err != nil {
+		t.Fatalf("load revision: %v", err)
+	}
+	if revision == nil || revision.ManifestBundleJSON == "" {
+		t.Fatalf("expected manifest bundle snapshot to be persisted, got %#v", revision)
+	}
+
+	record, err := ToDesiredStateRevisionRecord(*revision)
+	if err != nil {
+		t.Fatalf("to revision record: %v", err)
+	}
+	if strings.TrimSpace(record.ManifestBundle.CombinedYAML) == "" {
+		t.Fatalf("expected combined manifest yaml, got %#v", record.ManifestBundle)
+	}
+	if strings.TrimSpace(record.ManifestBundle.RollbackYAML) == "" {
+		t.Fatalf("expected rollback manifest yaml from stable revision, got %#v", record.ManifestBundle)
+	}
+}
+
+func TestRolloutPlannerPlanRollbackBuildsPayloadForK3s(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewDistributedK3sDriver())
+
+	revisionStore := newFakeDesiredStateRevisionStore(
+		&models.DesiredStateRevision{
+			ID:                   "rev_stable",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_cluster",
+			Namespace:            "lazyops-demo",
+			CommitSHA:            "stable123",
+			TriggerKind:          "push",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustK3sCompiledRevisionJSON(t, "rev_stable", "bp_123", "prj_123", "bind_cluster", "lazyops-demo"),
+			ManifestBundleJSON:   mustManifestBundleJSON(t, K3sManifestBundleRecord{Namespace: "lazyops-demo", CombinedYAML: "kind: Deployment\nmetadata:\n  name: stable\n", GeneratedAt: time.Date(2026, 4, 16, 8, 0, 0, 0, time.UTC)}),
+			CreatedAt:            time.Date(2026, 4, 16, 8, 0, 0, 0, time.UTC),
+		},
+		&models.DesiredStateRevision{
+			ID:                   "rev_current",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_cluster",
+			Namespace:            "lazyops-demo",
+			CommitSHA:            "current456",
+			TriggerKind:          "push",
+			Status:               RevisionStatusApplying,
+			CompiledRevisionJSON: mustK3sCompiledRevisionJSON(t, "rev_current", "bp_123", "prj_123", "bind_cluster", "lazyops-demo"),
+			ManifestBundleJSON:   mustManifestBundleJSON(t, K3sManifestBundleRecord{Namespace: "lazyops-demo", CombinedYAML: "kind: Deployment\nmetadata:\n  name: current\n", GeneratedAt: time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC)}),
+			CreatedAt:            time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC),
+		},
+	)
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_current",
+		Status:     DeploymentStatusRunning,
+	})
+	planner := newTestRolloutPlanner(
+		registry,
+		revisionStore,
+		deploymentStore,
+		newFakeRuntimeIncidentStore(),
+		newFakeDeploymentBindingStore(&models.DeploymentBinding{
+			ID:          "bind_cluster",
+			ProjectID:   "prj_123",
+			Name:        "K3s",
+			TargetRef:   "cluster-prod",
+			RuntimeMode: runtime.RuntimeModeDistributedK3s,
+			TargetKind:  "cluster",
+			TargetID:    "clu_123",
+		}),
+		&fakeOperatorEventBroadcaster{},
+	)
+
+	rollbackPlan, err := planner.PlanRollback(context.Background(), "prj_123", "dep_123")
+	if err != nil {
+		t.Fatalf("plan rollback: %v", err)
+	}
+	if rollbackPlan.FailedRevisionID != "rev_current" || rollbackPlan.RestoredRevisionID != "rev_stable" {
+		t.Fatalf("unexpected rollback plan: %#v", rollbackPlan)
+	}
+
+	revisionPayload, ok := rollbackPlan.Payload["revision"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected revision payload map, got %#v", rollbackPlan.Payload["revision"])
+	}
+	manifestBundle, ok := revisionPayload["manifest_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected manifest bundle payload, got %#v", revisionPayload["manifest_bundle"])
+	}
+	if strings.TrimSpace(fmt.Sprintf("%v", manifestBundle["rollback_yaml"])) == "" {
+		t.Fatalf("expected rollback yaml in payload, got %#v", manifestBundle)
+	}
+}
+
+func mustManifestBundleJSON(t *testing.T, bundle K3sManifestBundleRecord) string {
+	t.Helper()
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("marshal manifest bundle: %v", err)
+	}
+	return string(raw)
+}
+
+func mustK3sCompiledRevisionJSON(t *testing.T, revisionID, blueprintID, projectID, bindingID, namespace string) string {
+	t.Helper()
+	raw, err := json.Marshal(desiredStateRevisionCompiledRecord{
+		RevisionID:          revisionID,
+		ProjectID:           projectID,
+		ProjectSlug:         "demo",
+		Namespace:           namespace,
+		BlueprintID:         blueprintID,
+		DeploymentBindingID: bindingID,
+		CommitSHA:           revisionID + "-sha",
+		ArtifactRef:         "artifact://builds/" + revisionID,
+		ImageRef:            "ghcr.io/lazyops/demo:" + revisionID,
+		TriggerKind:         "push",
+		RuntimeMode:         runtime.RuntimeModeDistributedK3s,
+		Services: []BlueprintServiceContractRecord{
+			{
+				Name:        "api",
+				Path:        "apps/api",
+				Kind:        "app",
+				Public:      true,
+				TargetPort:  8080,
+				ServicePort: 80,
+				Replicas:    1,
+				Healthcheck: map[string]any{
+					"path": "/healthz",
+					"port": 8080,
+				},
+			},
+		},
+		ServiceSpecs: []K3sServiceSpecRecord{
+			{
+				Name:        "api",
+				Kind:        "app",
+				Namespace:   namespace,
+				Public:      true,
+				ImageRef:    "ghcr.io/lazyops/demo:" + revisionID,
+				TargetPort:  8080,
+				ServicePort: 80,
+				Replicas:    1,
+				Healthcheck: map[string]any{"path": "/healthz", "port": 8080},
+			},
+		},
+		MagicDomainPolicy: LazyopsYAMLMagicDomainPolicy{
+			Enabled:  true,
+			Provider: "sslip.io",
+		},
+		PlacementAssignments: []PlacementAssignmentRecord{
+			{ServiceName: "api", TargetID: "clu_123", TargetKind: "cluster"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal k3s compiled revision json: %v", err)
+	}
+	return string(raw)
 }

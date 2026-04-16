@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useLogs, useIncidents, useMetrics, useTrace } from '@/modules/observability/observability-hooks';
+import { useLogs, useIncidents, useLiveLogs, useMetrics, useTrace } from '@/modules/observability/observability-hooks';
 import type { LogLevel, MetricRecord } from '@/modules/observability/observability-types';
 import { useProjects } from '@/modules/projects/project-hooks';
 import { PageHeader } from '@/components/primitives/page-header';
@@ -68,13 +68,17 @@ export function ObservabilityConsole({
   }, [fixedProjectId, projectId, projects]);
 
   const { data: logs, isLoading: logsLoading, isError: logsError } = useLogs(activeProjectId);
+  const liveLogs = useLiveLogs(activeProjectId, followMode);
   const { data: incidents, isLoading: incidentsLoading, isError: incidentsError } = useIncidents(activeProjectId);
   const { data: metrics, isLoading: metricsLoading, isError: metricsError } = useMetrics(activeProjectId);
   const { data: trace, isLoading: traceLoading } = useTrace(traceQuery);
 
   const filteredLogs = useMemo(
-    () => (logFilter === 'all' ? logs : logs?.filter((l) => l.level === logFilter)),
-    [logs, logFilter],
+    () => {
+      const merged = [...(logs ?? []), ...liveLogs].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      return logFilter === 'all' ? merged : merged.filter((l) => l.level === logFilter);
+    },
+    [liveLogs, logFilter, logs],
   );
 
   if ((!fixedProjectId && projectsLoading) || logsLoading || incidentsLoading || metricsLoading) {

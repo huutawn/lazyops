@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,6 +94,10 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 		cmd.ImageRef,
 		cmd.ImageDigest,
 		cmd.DetectedServices,
+		cmd.DetectedPorts,
+		cmd.PortDetectionSource,
+		cmd.PortDetectionConfidence,
+		cmd.SuggestedTargetPort,
 		cmd.DetectedFramework,
 		cmd.SuggestedHealthcheck,
 	)
@@ -125,9 +132,25 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 
 	result := &BuildCallbackResult{BuildJob: buildJobRecord}
 	if status == BuildJobStatusSucceeded {
-		revision, err := s.createArtifactReadyRevision(*job, artifactMetadata)
+		revision, appliedServices, err := s.createArtifactReadyRevision(*job, artifactMetadata)
 		if err != nil {
 			return nil, err
+		}
+		if len(appliedServices) > 0 {
+			artifactMetadata.AppliedServices = normalizeDetectedServices(appliedServices)
+			artifactMetadataJSON, err = json.Marshal(artifactMetadata)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.buildJobs.UpdateResult(job.ID, status, string(artifactMetadataJSON), startedAt, completedAt, now); err != nil {
+				return nil, err
+			}
+			job.ArtifactMetadataJSON = string(artifactMetadataJSON)
+			buildJobRecord, err = ToBuildJobRecord(*job)
+			if err != nil {
+				return nil, err
+			}
+			result.BuildJob = buildJobRecord
 		}
 		result.Revision = revision
 		deployment, err := s.createQueuedDeployment(job.ProjectID, revision)
@@ -148,24 +171,24 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 	return result, nil
 }
 
-func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, artifact BuildArtifactMetadataStageRecord) (*DesiredStateRevisionRecord, error) {
+func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, artifact BuildArtifactMetadataStageRecord) (*DesiredStateRevisionRecord, []string, error) {
 	if s.blueprints == nil || s.revisions == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	blueprint, err := s.blueprints.GetLatestByProject(job.ProjectID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if blueprint == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	blueprintRecord, err := ToBlueprintRecord(*blueprint)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	applySuggestedHealthcheckToOneClickDefaultService(&blueprintRecord, artifact)
+	appliedServices := applyArtifactToBlueprintServices(&blueprintRecord, artifact)
 	blueprintRecord.Compiled.ArtifactMetadata = BlueprintArtifactMetadata{
 		CommitSHA:   artifact.CommitSHA,
 		ArtifactRef: artifact.ArtifactRef,
@@ -176,7 +199,7 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 	compiled := buildDesiredStateRevisionCompiledRecord(revisionID, blueprintRecord, job.TriggerKind)
 	compiledJSON, err := json.Marshal(compiled)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	revision := &models.DesiredStateRevision{
@@ -184,20 +207,21 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 		ProjectID:            job.ProjectID,
 		BlueprintID:          blueprint.ID,
 		DeploymentBindingID:  blueprintRecord.Compiled.Binding.ID,
+		Namespace:            blueprintRecord.Compiled.Namespace,
 		CommitSHA:            artifact.CommitSHA,
 		TriggerKind:          job.TriggerKind,
 		Status:               RevisionStatusArtifactReady,
 		CompiledRevisionJSON: string(compiledJSON),
 	}
 	if err := s.revisions.Create(revision); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	record, err := ToDesiredStateRevisionRecord(*revision)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &record, nil
+	return &record, appliedServices, nil
 }
 
 func (s *BuildCallbackService) createQueuedDeployment(projectID string, revision *DesiredStateRevisionRecord) (*DeploymentRecord, error) {
@@ -298,16 +322,24 @@ func normalizeBuildArtifactMetadata(
 	imageRef,
 	imageDigest string,
 	detectedServices []string,
+	detectedPorts []ServiceDetectedPortRecord,
+	portDetectionSource string,
+	portDetectionConfidence string,
+	suggestedTargetPort int,
 	detectedFramework string,
 	suggestedHealthcheck *BuildSuggestedHealthcheckRecord,
 ) (BuildArtifactMetadataStageRecord, error) {
 	artifact := BuildArtifactMetadataStageRecord{
-		CommitSHA:            strings.TrimSpace(commitSHA),
-		ImageRef:             strings.TrimSpace(imageRef),
-		ImageDigest:          strings.TrimSpace(imageDigest),
-		DetectedServices:     normalizeDetectedServices(detectedServices),
-		DetectedFramework:    normalizeDetectedFramework(detectedFramework),
-		SuggestedHealthcheck: normalizeSuggestedHealthcheck(suggestedHealthcheck),
+		CommitSHA:               strings.TrimSpace(commitSHA),
+		ImageRef:                strings.TrimSpace(imageRef),
+		ImageDigest:             strings.TrimSpace(imageDigest),
+		DetectedServices:        normalizeDetectedServices(detectedServices),
+		DetectedPorts:           normalizeDetectedPorts(detectedPorts),
+		PortDetectionSource:     normalizePortDetectionSource(portDetectionSource),
+		PortDetectionConfidence: normalizePortDetectionConfidence(portDetectionConfidence),
+		SuggestedTargetPort:     normalizeSuggestedTargetPort(suggestedTargetPort, detectedPorts, suggestedHealthcheck),
+		DetectedFramework:       normalizeDetectedFramework(detectedFramework),
+		SuggestedHealthcheck:    normalizeSuggestedHealthcheck(suggestedHealthcheck),
 	}
 	if artifact.CommitSHA == "" {
 		return BuildArtifactMetadataStageRecord{}, ErrInvalidInput
@@ -339,6 +371,41 @@ func normalizeDetectedServices(items []string) []string {
 	return out
 }
 
+func normalizeDetectedPorts(items []ServiceDetectedPortRecord) []ServiceDetectedPortRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	out := make([]ServiceDetectedPortRecord, 0, len(items))
+	for _, item := range items {
+		if item.Port <= 0 {
+			continue
+		}
+		protocol := strings.ToLower(strings.TrimSpace(item.Protocol))
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		key := fmt.Sprintf("%d/%s", item.Port, protocol)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ServiceDetectedPortRecord{
+			Port:     item.Port,
+			Protocol: protocol,
+			Name:     strings.TrimSpace(item.Name),
+			Exposed:  item.Exposed,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Port == out[j].Port {
+			return out[i].Protocol < out[j].Protocol
+		}
+		return out[i].Port < out[j].Port
+	})
+	return out
+}
+
 func deriveBuildArtifactRef(imageRef, imageDigest string) string {
 	imageRef = strings.TrimSpace(imageRef)
 	imageDigest = strings.TrimSpace(imageDigest)
@@ -365,6 +432,52 @@ func normalizeDetectedFramework(raw string) string {
 	}
 }
 
+func normalizePortDetectionSource(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "docker_inspect":
+		return "docker_inspect"
+	case "registry_api":
+		return "registry_api"
+	default:
+		return ""
+	}
+}
+
+func normalizePortDetectionConfidence(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "high":
+		return "high"
+	case "medium":
+		return "medium"
+	case "low":
+		return "low"
+	default:
+		return ""
+	}
+}
+
+func normalizeSuggestedTargetPort(port int, detectedPorts []ServiceDetectedPortRecord, suggestedHealthcheck *BuildSuggestedHealthcheckRecord) int {
+	if port > 0 {
+		return port
+	}
+	if suggestedHealthcheck != nil && suggestedHealthcheck.Port > 0 {
+		return suggestedHealthcheck.Port
+	}
+	normalized := normalizeDetectedPorts(detectedPorts)
+	if len(normalized) == 1 {
+		return normalized[0].Port
+	}
+	for _, item := range normalized {
+		if item.Port >= 1024 {
+			return item.Port
+		}
+	}
+	if len(normalized) > 0 {
+		return normalized[0].Port
+	}
+	return 0
+}
+
 func normalizeSuggestedHealthcheck(raw *BuildSuggestedHealthcheckRecord) *BuildSuggestedHealthcheckRecord {
 	if raw == nil {
 		return nil
@@ -386,34 +499,208 @@ func normalizeSuggestedHealthcheck(raw *BuildSuggestedHealthcheckRecord) *BuildS
 	}
 }
 
+func applyArtifactToBlueprintServices(blueprint *BlueprintRecord, artifact BuildArtifactMetadataStageRecord) []string {
+	if blueprint == nil || len(blueprint.Compiled.Services) == 0 {
+		return nil
+	}
+	targetIndexes := resolveArtifactTargetServiceIndexes(*blueprint, artifact)
+	if len(targetIndexes) == 0 {
+		return nil
+	}
+
+	applied := make([]string, 0, len(targetIndexes))
+	for _, index := range targetIndexes {
+		if index < 0 || index >= len(blueprint.Compiled.Services) {
+			continue
+		}
+		service := blueprint.Compiled.Services[index]
+		forceFallbackOverride := isOneClickGeneratedBlueprint(*blueprint) &&
+			strings.TrimSpace(service.Name) == "app" &&
+			strings.TrimSpace(service.Path) == "." &&
+			service.Public &&
+			isGenericFallbackHealthcheck(service.Healthcheck)
+		applyArtifactToBlueprintService(&service, artifact, forceFallbackOverride)
+		blueprint.Compiled.Services[index] = service
+		applied = append(applied, service.Name)
+	}
+	return applied
+}
+
 func applySuggestedHealthcheckToOneClickDefaultService(blueprint *BlueprintRecord, artifact BuildArtifactMetadataStageRecord) {
-	if blueprint == nil || artifact.SuggestedHealthcheck == nil {
-		return
+	applyArtifactToBlueprintServices(blueprint, artifact)
+}
+
+func resolveArtifactTargetServiceIndexes(blueprint BlueprintRecord, artifact BuildArtifactMetadataStageRecord) []int {
+	services := blueprint.Compiled.Services
+	if len(services) == 0 {
+		return nil
 	}
-	if !isOneClickGeneratedBlueprint(*blueprint) {
-		return
-	}
-	if len(blueprint.Compiled.Services) != 1 {
-		return
+	if len(services) == 1 {
+		return []int{0}
 	}
 
-	service := blueprint.Compiled.Services[0]
-	if strings.TrimSpace(service.Name) != "app" || strings.TrimSpace(service.Path) != "." || !service.Public {
-		return
-	}
-	if !isGenericFallbackHealthcheck(service.Healthcheck) {
-		return
+	if matched := matchArtifactDetectedServices(services, artifact.DetectedServices); len(matched) == 1 {
+		return matched
 	}
 
+	if index := resolveFrameworkPreferredServiceIndex(services, artifact); index >= 0 {
+		return []int{index}
+	}
+
+	if index := resolveSingleAppLikeServiceIndex(services); index >= 0 {
+		return []int{index}
+	}
+
+	return nil
+}
+
+func matchArtifactDetectedServices(services []BlueprintServiceContractRecord, detectedServices []string) []int {
+	if len(services) == 0 || len(detectedServices) == 0 {
+		return nil
+	}
+
+	nameIndex := make(map[string]int, len(services))
+	pathIndex := make(map[string]int, len(services))
+	for index, service := range services {
+		name := normalizeArtifactServiceMatcher(service.Name)
+		if name != "" {
+			nameIndex[name] = index
+		}
+		for _, candidate := range buildArtifactPathMatchers(service.Path) {
+			if candidate != "" {
+				pathIndex[candidate] = index
+			}
+		}
+	}
+
+	seen := make(map[int]struct{})
+	matches := make([]int, 0, len(detectedServices))
+	for _, raw := range detectedServices {
+		candidate := normalizeArtifactServiceMatcher(raw)
+		if candidate == "" {
+			continue
+		}
+		index, ok := nameIndex[candidate]
+		if !ok {
+			index, ok = pathIndex[candidate]
+		}
+		if !ok {
+			continue
+		}
+		if _, exists := seen[index]; exists {
+			continue
+		}
+		seen[index] = struct{}{}
+		matches = append(matches, index)
+	}
+
+	sort.Ints(matches)
+	return matches
+}
+
+func resolveFrameworkPreferredServiceIndex(services []BlueprintServiceContractRecord, artifact BuildArtifactMetadataStageRecord) int {
+	switch strings.TrimSpace(artifact.DetectedFramework) {
+	case "next", "vite", "react-scripts":
+	default:
+		return -1
+	}
+
+	indexes := make([]int, 0, len(services))
+	for index, service := range services {
+		if service.Public || strings.TrimSpace(service.RuntimeProfile) == "web" {
+			indexes = append(indexes, index)
+		}
+	}
+	if len(indexes) == 1 {
+		return indexes[0]
+	}
+	return -1
+}
+
+func resolveSingleAppLikeServiceIndex(services []BlueprintServiceContractRecord) int {
+	indexes := make([]int, 0, len(services))
+	for index, service := range services {
+		if isManagedInternalServiceKind(service.Kind) {
+			continue
+		}
+		indexes = append(indexes, index)
+	}
+	if len(indexes) == 1 {
+		return indexes[0]
+	}
+	return -1
+}
+
+func isManagedInternalServiceKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "postgres", "mysql", "redis", "rabbitmq":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildArtifactPathMatchers(path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	candidates := []string{
+		path,
+		strings.TrimPrefix(path, "./"),
+		filepath.Base(path),
+	}
+	out := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		normalized := normalizeArtifactServiceMatcher(candidate)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func normalizeArtifactServiceMatcher(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimPrefix(value, "./")
+	value = strings.Trim(value, "/")
+	return value
+}
+
+func applyArtifactToBlueprintService(service *BlueprintServiceContractRecord, artifact BuildArtifactMetadataStageRecord, forceFallbackOverride bool) {
+	if service == nil {
+		return
+	}
+	service.ImageRef = artifact.ImageRef
+	service.ImageDigest = artifact.ImageDigest
+	service.DetectedPorts = artifact.DetectedPorts
+
+	if artifact.SuggestedTargetPort > 0 {
+		if forceFallbackOverride || service.TargetPort <= 0 {
+			service.TargetPort = artifact.SuggestedTargetPort
+		}
+		if forceFallbackOverride || service.ServicePort <= 0 {
+			service.ServicePort = artifact.SuggestedTargetPort
+		}
+	}
+
+	if artifact.SuggestedHealthcheck == nil {
+		return
+	}
 	if service.Healthcheck == nil {
 		service.Healthcheck = map[string]any{}
 	}
-	service.Healthcheck["path"] = artifact.SuggestedHealthcheck.Path
-	service.Healthcheck["port"] = artifact.SuggestedHealthcheck.Port
-	if _, ok := service.Healthcheck["protocol"]; !ok {
+	if forceFallbackOverride || len(service.Healthcheck) == 0 {
+		service.Healthcheck["path"] = artifact.SuggestedHealthcheck.Path
+		service.Healthcheck["port"] = artifact.SuggestedHealthcheck.Port
 		service.Healthcheck["protocol"] = "http"
 	}
-	blueprint.Compiled.Services[0] = service
 }
 
 func isOneClickGeneratedBlueprint(blueprint BlueprintRecord) bool {

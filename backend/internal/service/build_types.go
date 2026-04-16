@@ -23,13 +23,18 @@ type BuildCallbackExpectationRecord struct {
 }
 
 type BuildArtifactMetadataStageRecord struct {
-	CommitSHA            string                           `json:"commit_sha"`
-	ArtifactRef          string                           `json:"artifact_ref,omitempty"`
-	ImageRef             string                           `json:"image_ref,omitempty"`
-	ImageDigest          string                           `json:"image_digest,omitempty"`
-	DetectedServices     []string                         `json:"detected_services,omitempty"`
-	DetectedFramework    string                           `json:"detected_framework,omitempty"`
-	SuggestedHealthcheck *BuildSuggestedHealthcheckRecord `json:"suggested_healthcheck,omitempty"`
+	CommitSHA               string                           `json:"commit_sha"`
+	ArtifactRef             string                           `json:"artifact_ref,omitempty"`
+	ImageRef                string                           `json:"image_ref,omitempty"`
+	ImageDigest             string                           `json:"image_digest,omitempty"`
+	AppliedServices         []string                         `json:"applied_services,omitempty"`
+	DetectedServices        []string                         `json:"detected_services,omitempty"`
+	DetectedPorts           []ServiceDetectedPortRecord      `json:"detected_ports,omitempty"`
+	PortDetectionSource     string                           `json:"port_detection_source,omitempty"`
+	PortDetectionConfidence string                           `json:"port_detection_confidence,omitempty"`
+	SuggestedTargetPort     int                              `json:"suggested_target_port,omitempty"`
+	DetectedFramework       string                           `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckRecord `json:"suggested_healthcheck,omitempty"`
 }
 
 type BuildSuggestedHealthcheckRecord struct {
@@ -81,15 +86,19 @@ type BuildJobRecord struct {
 }
 
 type BuildCallbackCommand struct {
-	BuildJobID           string
-	ProjectID            string
-	CommitSHA            string
-	Status               string
-	ImageRef             string
-	ImageDigest          string
-	DetectedServices     []string
-	DetectedFramework    string
-	SuggestedHealthcheck *BuildSuggestedHealthcheckRecord
+	BuildJobID              string
+	ProjectID               string
+	CommitSHA               string
+	Status                  string
+	ImageRef                string
+	ImageDigest             string
+	DetectedServices        []string
+	DetectedPorts           []ServiceDetectedPortRecord
+	PortDetectionSource     string
+	PortDetectionConfidence string
+	SuggestedTargetPort     int
+	DetectedFramework       string
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckRecord
 }
 
 type BuildCallbackResult struct {

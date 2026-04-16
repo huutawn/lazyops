@@ -21,10 +21,64 @@ import (
 	"lazyops-agent/internal/state"
 )
 
-func TestContextFromPreparePayloadRejectsK3s(t *testing.T) {
-	_, err := ContextFromPreparePayload(samplePreparePayload(contracts.RuntimeModeDistributedK3s))
-	if err == nil {
-		t.Fatal("expected k3s runtime mode to be rejected by local runtime driver context")
+func TestContextFromPreparePayloadHydratesK3sRuntime(t *testing.T) {
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedK3s)
+	payload.Project.Namespace = "lazy-app-prj-123"
+	payload.Revision.Namespace = "lazy-app-prj-123"
+	payload.Revision.ServiceSpecs = []contracts.K3sServiceSpecPayload{
+		{
+			Name:        "api",
+			Path:        "services/api",
+			Kind:        "app",
+			ImageRef:    "ghcr.io/lazyops/api:rev_123",
+			TargetPort:  8080,
+			ServicePort: 80,
+			Replicas:    2,
+			EnvBundle: map[string]string{
+				"DATABASE_URL": "postgres://lazyops:secret@db-service:5432/lazyops",
+			},
+			HealthCheck: contracts.HealthCheckPayload{
+				Protocol: "http",
+				Port:     8080,
+				Path:     "/health",
+			},
+		},
+		{
+			Name:        "db-service",
+			Path:        "services/db",
+			Kind:        "postgres",
+			TargetPort:  5432,
+			ServicePort: 5432,
+			Replicas:    1,
+			HealthCheck: contracts.HealthCheckPayload{
+				Protocol: "tcp",
+				Port:     5432,
+			},
+		},
+	}
+	payload.Revision.Services = nil
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	if runtimeCtx.Project.Namespace != "lazy-app-prj-123" {
+		t.Fatalf("expected namespace to be hydrated, got %q", runtimeCtx.Project.Namespace)
+	}
+	if len(runtimeCtx.Services) != 2 {
+		t.Fatalf("expected 2 services from k3s specs, got %d", len(runtimeCtx.Services))
+	}
+	if runtimeCtx.Services[0].Name != "api" {
+		t.Fatalf("expected services to be sorted and include api first, got %q", runtimeCtx.Services[0].Name)
+	}
+	if runtimeCtx.Services[0].TargetPort != 8080 || runtimeCtx.Services[0].ServicePort != 80 {
+		t.Fatalf("expected api target/service ports 8080/80, got %d/%d", runtimeCtx.Services[0].TargetPort, runtimeCtx.Services[0].ServicePort)
+	}
+	if runtimeCtx.Services[0].EnvBundle["DATABASE_URL"] == "" {
+		t.Fatal("expected env bundle to be preserved for k3s services")
+	}
+	if runtimeCtx.Runtime.ServiceByName["db-service"].Kind != "postgres" {
+		t.Fatalf("expected db-service kind postgres, got %q", runtimeCtx.Runtime.ServiceByName["db-service"].Kind)
 	}
 }
 

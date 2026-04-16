@@ -23,7 +23,7 @@ type Application struct {
 	GitHubInstallRepo      *repository.GitHubInstallationRepository
 	ProjectRepo            *repository.ProjectRepository
 	ProjectRepoLinkRepo    *repository.ProjectRepoLinkRepository
-	ProjectInternalSvcRepo *repository.ProjectInternalServiceRepository
+	ProjectInternalSvcRepo service.ProjectInternalServiceStore
 	ProjectEnvRepo         *repository.ProjectEnvBundleRepository
 	BuildJobRepo           *repository.BuildJobRepository
 	DeploymentBindingRepo  *repository.DeploymentBindingRepository
@@ -101,7 +101,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	githubInstallRepo := repository.NewGitHubInstallationRepository(db)
 	projectRepo := repository.NewProjectRepository(db)
 	projectRepoLinkRepo := repository.NewProjectRepoLinkRepository(db)
-	projectInternalSvcRepo := repository.NewProjectInternalServiceRepository(db)
+	legacyProjectInternalSvcRepo := repository.NewProjectInternalServiceRepository(db)
+	projectInternalSvcRepo := repository.NewManagedInternalServiceRepository(db, legacyProjectInternalSvcRepo)
 	projectEnvRepo := repository.NewProjectEnvBundleRepository(db)
 	buildJobRepo := repository.NewBuildJobRepository(db)
 	deploymentBindingRepo := repository.NewDeploymentBindingRepository(db)
@@ -151,7 +152,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		githubInstallProvider,
 	)
 	githubOAuthService.WithInstallationSync(githubInstallSvc)
-	projectService := service.NewProjectService(projectRepo, projectInternalSvcRepo)
+	projectService := service.NewProjectService(projectRepo, projectInternalSvcRepo).WithServiceStore(serviceRepo)
 	projectInternalSvc := service.NewProjectInternalServiceService(projectRepo, projectInternalSvcRepo)
 	projectEnvSvc := service.NewProjectEnvService(projectRepo, projectEnvRepo, projectInternalSvcRepo, cfg.Secrets.EncryptionKey)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
@@ -175,7 +176,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	blueprintSvc := service.NewBlueprintService(projectRepo, projectRepoLinkRepo, deploymentBindingRepo, serviceRepo, blueprintRepo)
 	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo).
 		WithIncidentStore(incidentRepo).
-		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo)
+		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo, clusterRepo)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
 	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor()).
@@ -215,7 +216,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		operatorStreamHub,
 	)
 	rolloutPlanner.WithProjectEnvService(projectEnvSvc)
-	rolloutPlanner.WithPublicDomainResolver(service.NewPublicDomainResolver(instanceRepo))
+	rolloutPlanner.WithPublicDomainResolver(service.NewPublicDomainResolver(instanceRepo, clusterRepo))
 	rolloutExecutionSvc := service.NewRolloutExecutionService(
 		deploymentSvc,
 		rolloutPlanner,

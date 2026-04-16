@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lazyops-smoke
+resources:
+  - 00-smoke-namespace.yaml
+  - 10-registry-smoke.yaml
+  - 20-pvc-smoke.yaml
+  - 30-scheduler-smoke.yaml
+  - 40-app-smoke.yaml

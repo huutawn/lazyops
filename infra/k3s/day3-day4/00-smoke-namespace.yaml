@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lazyops-smoke
+  labels:
+    app.kubernetes.io/part-of: lazyops
+    lazyops.test-suite: day3-day4
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-smoke-env
+  namespace: lazyops-smoke
+type: Opaque
+stringData:
+  APP_MODE: "smoke"
+  SMOKE_SECRET: "lazyops-smoke"

@@ -64,12 +64,20 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	store := state.New(statePath)
-	runtimeDriver := agentruntime.NewFilesystemDriver(logger, runtimeRoot).
-		WithStateEncryptionKey(cfg.StateEncryptionKey).
-		WithAgentImageRef(cfg.AgentImageRef)
-	runtimeService := agentruntime.NewService(logger, store, runtimeDriver)
 	logCollector := agentruntime.NewLogCollector(logger, agentruntime.DefaultLogCollectorConfig())
-	runtimeDriver.WithLogCollector(logCollector)
+	var runtimeDriver agentruntime.Driver
+	if cfg.RuntimeMode == contracts.RuntimeModeDistributedK3s {
+		k3sDriver := agentruntime.NewK3sDriver(logger, runtimeRoot, cfg.KubectlBin, cfg.KubeconfigPath).
+			WithLogCollector(logCollector)
+		runtimeDriver = k3sDriver
+	} else {
+		filesystemDriver := agentruntime.NewFilesystemDriver(logger, runtimeRoot).
+			WithStateEncryptionKey(cfg.StateEncryptionKey).
+			WithAgentImageRef(cfg.AgentImageRef).
+			WithLogCollector(logCollector)
+		runtimeDriver = filesystemDriver
+	}
+	runtimeService := agentruntime.NewService(logger, store, runtimeDriver)
 	runtimeService.WithLogCollector(logCollector)
 	runtimeService.WithLogSender(client)
 	metricAggregator := agentruntime.NewMetricAggregator(logger, agentruntime.DefaultMetricAggregatorConfig())

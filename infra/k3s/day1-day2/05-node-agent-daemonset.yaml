@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: lazyops-node-agent
+  namespace: lazyops-system
+  labels:
+    app.kubernetes.io/name: lazyops-node-agent
+    app.kubernetes.io/part-of: lazyops
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lazyops-node-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lazyops-node-agent
+        app.kubernetes.io/part-of: lazyops
+    spec:
+      serviceAccountName: lazyops-node-agent
+      priorityClassName: system-node-critical
+      imagePullSecrets:
+        - name: lazyops-registry
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: agent
+          image: tawn/lazyops-agent:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: lazyops-node-agent-env
+          env:
+            - name: AGENT_KUBECTL_BIN
+              value: kubectl
+          volumeMounts:
+            - name: runtime-root
+              mountPath: /var/lib/lazyops-agent
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: runtime-root
+          hostPath:
+            path: /var/lib/lazyops-agent
+            type: DirectoryOrCreate

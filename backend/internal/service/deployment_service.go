@@ -44,6 +44,8 @@ var (
 type desiredStateRevisionCompiledRecord struct {
 	RevisionID           string                           `json:"revision_id"`
 	ProjectID            string                           `json:"project_id"`
+	ProjectSlug          string                           `json:"project_slug,omitempty"`
+	Namespace            string                           `json:"namespace,omitempty"`
 	BlueprintID          string                           `json:"blueprint_id"`
 	DeploymentBindingID  string                           `json:"deployment_binding_id"`
 	CommitSHA            string                           `json:"commit_sha"`
@@ -52,10 +54,14 @@ type desiredStateRevisionCompiledRecord struct {
 	TriggerKind          string                           `json:"trigger_kind"`
 	RuntimeMode          string                           `json:"runtime_mode"`
 	Services             []BlueprintServiceContractRecord `json:"services"`
+	ServiceSpecs         []K3sServiceSpecRecord           `json:"service_specs,omitempty"`
 	DependencyBindings   []LazyopsYAMLDependencyBinding   `json:"dependency_bindings,omitempty"`
+	InternalBindings     []InternalBindingRecord          `json:"internal_bindings,omitempty"`
 	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy   `json:"compatibility_policy"`
 	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy     `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy     `json:"scale_to_zero_policy"`
+	ManifestBundle       K3sManifestBundleRecord          `json:"manifest_bundle,omitempty"`
+	PublicDomains        []PublicDomainRecord             `json:"public_domains,omitempty"`
 	PlacementAssignments []PlacementAssignmentRecord      `json:"placement_assignments,omitempty"`
 }
 
@@ -91,12 +97,16 @@ func (s *DeploymentService) WithIncidentStore(incidents RuntimeIncidentStore) *D
 	return s
 }
 
-func (s *DeploymentService) WithPublicDomainSupport(bindings DeploymentBindingStore, instances InstanceStore) *DeploymentService {
+func (s *DeploymentService) WithPublicDomainSupport(bindings DeploymentBindingStore, instances InstanceStore, clusters ...ClusterStore) *DeploymentService {
 	if s == nil {
 		return s
 	}
 	s.bindings = bindings
-	s.publicDomains = NewPublicDomainResolver(instances)
+	var clusterStore ClusterStore
+	if len(clusters) > 0 {
+		clusterStore = clusters[0]
+	}
+	s.publicDomains = NewPublicDomainResolver(instances, clusterStore)
 	return s
 }
 
@@ -141,6 +151,7 @@ func (s *DeploymentService) Create(cmd CreateDeploymentCommand) (*CreateDeployme
 		ProjectID:            project.ID,
 		BlueprintID:          blueprintRecord.ID,
 		DeploymentBindingID:  blueprintRecord.Compiled.Binding.ID,
+		Namespace:            compiled.Namespace,
 		CommitSHA:            compiled.CommitSHA,
 		TriggerKind:          triggerKind,
 		Status:               RevisionStatusQueued,
@@ -405,6 +416,8 @@ func buildDesiredStateRevisionCompiledRecord(revisionID string, blueprint Bluepr
 	return desiredStateRevisionCompiledRecord{
 		RevisionID:           revisionID,
 		ProjectID:            blueprint.ProjectID,
+		ProjectSlug:          blueprint.Compiled.ProjectSlug,
+		Namespace:            blueprint.Compiled.Namespace,
 		BlueprintID:          blueprint.ID,
 		DeploymentBindingID:  blueprint.Compiled.Binding.ID,
 		CommitSHA:            blueprint.Compiled.ArtifactMetadata.CommitSHA,
@@ -413,7 +426,9 @@ func buildDesiredStateRevisionCompiledRecord(revisionID string, blueprint Bluepr
 		TriggerKind:          triggerKind,
 		RuntimeMode:          blueprint.Compiled.RuntimeMode,
 		Services:             blueprint.Compiled.Services,
+		ServiceSpecs:         buildK3sServiceSpecs(blueprint.Compiled.Namespace, blueprint.Compiled.Services),
 		DependencyBindings:   copyDependencyBindings(blueprint.Compiled.DependencyBindings),
+		InternalBindings:     buildInternalBindings(blueprint.Compiled.Services, blueprint.Compiled.DependencyBindings),
 		CompatibilityPolicy:  blueprint.Compiled.CompatibilityPolicy,
 		MagicDomainPolicy:    blueprint.Compiled.MagicDomainPolicy,
 		ScaleToZeroPolicy:    blueprint.Compiled.ScaleToZeroPolicy,
@@ -429,12 +444,18 @@ func ToDesiredStateRevisionRecord(item models.DesiredStateRevision) (DesiredStat
 	if compiled.RevisionID == "" {
 		compiled.RevisionID = item.ID
 	}
+	manifestBundle := compiled.ManifestBundle
+	if resolved, err := resolveManifestBundleSnapshot(item); err == nil {
+		manifestBundle = mergeManifestBundleSnapshot(compiled.ManifestBundle, resolved)
+	}
 
 	return DesiredStateRevisionRecord{
 		ID:                   item.ID,
 		ProjectID:            item.ProjectID,
+		ProjectSlug:          compiled.ProjectSlug,
 		BlueprintID:          item.BlueprintID,
 		DeploymentBindingID:  item.DeploymentBindingID,
+		Namespace:            firstNonEmptyCompiledValue(item.Namespace, compiled.Namespace),
 		CommitSHA:            item.CommitSHA,
 		ArtifactRef:          compiled.ArtifactRef,
 		ImageRef:             compiled.ImageRef,
@@ -442,14 +463,202 @@ func ToDesiredStateRevisionRecord(item models.DesiredStateRevision) (DesiredStat
 		Status:               item.Status,
 		RuntimeMode:          compiled.RuntimeMode,
 		Services:             compiled.Services,
+		ServiceSpecs:         compiled.ServiceSpecs,
 		DependencyBindings:   compiled.DependencyBindings,
+		InternalBindings:     compiled.InternalBindings,
 		CompatibilityPolicy:  compiled.CompatibilityPolicy,
 		MagicDomainPolicy:    compiled.MagicDomainPolicy,
 		ScaleToZeroPolicy:    compiled.ScaleToZeroPolicy,
+		ManifestBundle:       manifestBundle,
+		PublicDomains:        compiled.PublicDomains,
 		PlacementAssignments: compiled.PlacementAssignments,
 		CreatedAt:            item.CreatedAt,
 		UpdatedAt:            item.UpdatedAt,
 	}, nil
+}
+
+func resolveManifestBundleSnapshot(item models.DesiredStateRevision) (K3sManifestBundleRecord, error) {
+	manifestRaw := strings.TrimSpace(item.ManifestBundleJSON)
+	if manifestRaw != "" && manifestRaw != "{}" {
+		var manifest K3sManifestBundleRecord
+		if err := json.Unmarshal([]byte(manifestRaw), &manifest); err != nil {
+			return K3sManifestBundleRecord{}, err
+		}
+		return manifest, nil
+	}
+
+	if strings.TrimSpace(item.CompiledRevisionJSON) == "" {
+		return K3sManifestBundleRecord{}, nil
+	}
+	var compiled desiredStateRevisionCompiledRecord
+	if err := json.Unmarshal([]byte(item.CompiledRevisionJSON), &compiled); err != nil {
+		return K3sManifestBundleRecord{}, err
+	}
+	return compiled.ManifestBundle, nil
+}
+
+func mergeManifestBundleSnapshot(primary, fallback K3sManifestBundleRecord) K3sManifestBundleRecord {
+	out := primary
+	if strings.TrimSpace(out.Namespace) == "" {
+		out.Namespace = fallback.Namespace
+	}
+	if strings.TrimSpace(out.CombinedYAML) == "" {
+		out.CombinedYAML = fallback.CombinedYAML
+	}
+	if strings.TrimSpace(out.RollbackYAML) == "" {
+		out.RollbackYAML = fallback.RollbackYAML
+	}
+	if len(out.Documents) == 0 {
+		out.Documents = fallback.Documents
+	}
+	if out.GeneratedAt.IsZero() {
+		out.GeneratedAt = fallback.GeneratedAt
+	}
+	return out
+}
+
+func buildK3sServiceSpecs(namespace string, services []BlueprintServiceContractRecord) []K3sServiceSpecRecord {
+	if len(services) == 0 {
+		return nil
+	}
+	specs := make([]K3sServiceSpecRecord, 0, len(services))
+	for _, svc := range services {
+		specs = append(specs, K3sServiceSpecRecord{
+			Name:           svc.Name,
+			Kind:           firstNonEmptyCompiledValue(svc.Kind, "app"),
+			Namespace:      namespace,
+			Path:           svc.Path,
+			Public:         svc.Public,
+			RuntimeProfile: svc.RuntimeProfile,
+			StartHint:      svc.StartHint,
+			ImageRef:       svc.ImageRef,
+			ImageDigest:    svc.ImageDigest,
+			TargetPort:     svc.TargetPort,
+			ServicePort:    svc.ServicePort,
+			Replicas:       svc.Replicas,
+			Healthcheck:    cloneAnyMap(svc.Healthcheck),
+			DetectedPorts:  cloneDetectedPorts(svc.DetectedPorts),
+			EnvBundle:      cloneStringMap(svc.EnvBundle),
+			PVCSpec:        cloneAnyMap(svc.PVCSpec),
+			DeployStrategy: cloneAnyMap(svc.DeployStrategy),
+		})
+	}
+	return specs
+}
+
+func buildInternalBindings(services []BlueprintServiceContractRecord, bindings []LazyopsYAMLDependencyBinding) []InternalBindingRecord {
+	if len(bindings) == 0 {
+		return nil
+	}
+	serviceIndex := make(map[string]BlueprintServiceContractRecord, len(services))
+	for _, svc := range services {
+		serviceIndex[svc.Name] = svc
+	}
+	out := make([]InternalBindingRecord, 0, len(bindings))
+	for _, item := range bindings {
+		targetName := strings.TrimSpace(item.TargetService)
+		if targetName == "" {
+			targetName = strings.TrimSpace(item.Alias)
+		}
+		targetSvc, ok := serviceIndex[targetName]
+		port := 0
+		if ok {
+			port = firstPositive(targetSvc.ServicePort, targetSvc.TargetPort, detectPrimaryServicePort(targetSvc.DetectedPorts))
+		}
+		url := ""
+		if targetName != "" && port > 0 && strings.TrimSpace(item.Protocol) != "" {
+			url = fmt.Sprintf("%s://%s:%d", strings.ToLower(strings.TrimSpace(item.Protocol)), targetName, port)
+		}
+		connectionString := ""
+		if ok {
+			switch strings.ToLower(strings.TrimSpace(targetSvc.Kind)) {
+			case "postgres", "internal-db":
+				connectionString = postgresConnectionString(targetName, port, targetSvc.EnvBundle)
+			case "mysql":
+				connectionString = mysqlConnectionString(targetName, port, targetSvc.EnvBundle)
+			}
+		}
+		out = append(out, InternalBindingRecord{
+			ServiceName:      item.Service,
+			Alias:            item.Alias,
+			TargetService:    targetName,
+			Host:             targetName,
+			Port:             port,
+			Protocol:         item.Protocol,
+			URL:              url,
+			ConnectionString: connectionString,
+		})
+	}
+	return out
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func detectPrimaryServicePort(items []ServiceDetectedPortRecord) int {
+	for _, item := range items {
+		if item.Port > 0 {
+			return item.Port
+		}
+	}
+	return 0
+}
+
+func cloneDetectedPorts(items []ServiceDetectedPortRecord) []ServiceDetectedPortRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]ServiceDetectedPortRecord, 0, len(items))
+	for _, item := range items {
+		out = append(out, item)
+	}
+	return out
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func firstNonEmptyCompiledValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func postgresConnectionString(host string, port int, env map[string]string) string {
+	if strings.TrimSpace(host) == "" || port <= 0 {
+		return ""
+	}
+	user := firstNonEmptyCompiledValue(env["POSTGRES_USER"], env["DB_USER"], "postgres")
+	password := firstNonEmptyCompiledValue(env["POSTGRES_PASSWORD"], env["DB_PASSWORD"], "postgres")
+	dbName := firstNonEmptyCompiledValue(env["POSTGRES_DB"], env["DB_NAME"], "app")
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s", user, password, host, port, dbName)
+}
+
+func mysqlConnectionString(host string, port int, env map[string]string) string {
+	if strings.TrimSpace(host) == "" || port <= 0 {
+		return ""
+	}
+	user := firstNonEmptyCompiledValue(env["MYSQL_USER"], env["DB_USER"], "root")
+	password := firstNonEmptyCompiledValue(env["MYSQL_PASSWORD"], env["DB_PASSWORD"], "root")
+	dbName := firstNonEmptyCompiledValue(env["MYSQL_DATABASE"], env["DB_NAME"], "app")
+	return fmt.Sprintf("mysql://%s:%s@tcp(%s:%d)/%s", user, password, host, port, dbName)
 }
 
 func ToDeploymentRecord(item models.Deployment) DeploymentRecord {
@@ -601,6 +810,7 @@ func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, rev
 	}
 
 	return s.publicDomains.Resolve(PublicDomainResolveInput{
+		ProjectSlug:          revision.ProjectSlug,
 		RuntimeMode:          revision.RuntimeMode,
 		TargetKind:           binding.TargetKind,
 		TargetID:             binding.TargetID,
@@ -623,7 +833,9 @@ func buildDeploymentOverview(
 	artifactRef := ""
 	imageRef := ""
 	runtimeMode := "standalone"
+	namespace := ""
 	services := []BlueprintServiceContractRecord{}
+	serviceSpecs := []K3sServiceSpecRecord{}
 	placements := []PlacementAssignmentRecord{}
 
 	if rolloutState == "" {
@@ -643,7 +855,9 @@ func buildDeploymentOverview(
 		if strings.TrimSpace(revision.RuntimeMode) != "" {
 			runtimeMode = revision.RuntimeMode
 		}
+		namespace = revision.Namespace
 		services = revision.Services
+		serviceSpecs = revision.ServiceSpecs
 		placements = revision.PlacementAssignments
 	}
 
@@ -665,8 +879,10 @@ func buildDeploymentOverview(
 		RolloutState:         rolloutState,
 		Promoted:             promoted,
 		TriggeredBy:          "system",
+		Namespace:            namespace,
 		RuntimeMode:          runtimeMode,
 		Services:             services,
+		ServiceSpecs:         serviceSpecs,
 		PlacementAssignments: placements,
 		PublicURLs:           append([]string{}, publicDomain.PublicURLs...),
 		PublicURLReason:      publicDomain.Reason,

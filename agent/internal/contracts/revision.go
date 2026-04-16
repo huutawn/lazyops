@@ -3,6 +3,8 @@ package contracts
 type DesiredRevisionPayload struct {
 	RevisionID           string                     `json:"revision_id"`
 	ProjectID            string                     `json:"project_id"`
+	ProjectSlug          string                     `json:"project_slug,omitempty"`
+	Namespace            string                     `json:"namespace,omitempty"`
 	BlueprintID          string                     `json:"blueprint_id"`
 	DeploymentBindingID  string                     `json:"deployment_binding_id"`
 	CommitSHA            string                     `json:"commit_sha"`
@@ -11,11 +13,14 @@ type DesiredRevisionPayload struct {
 	TriggerKind          string                     `json:"trigger_kind"`
 	RuntimeMode          RuntimeMode                `json:"runtime_mode"`
 	Services             []ServicePayload           `json:"services"`
+	ServiceSpecs         []K3sServiceSpecPayload    `json:"service_specs,omitempty"`
 	DependencyBindings   []DependencyBindingPayload `json:"dependency_bindings,omitempty"`
+	InternalBindings     []InternalBindingPayload   `json:"internal_bindings,omitempty"`
 	CompatibilityPolicy  CompatibilityPolicy        `json:"compatibility_policy"`
 	MagicDomainPolicy    MagicDomainPolicy          `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    ScaleToZeroPolicy          `json:"scale_to_zero_policy"`
 	RoutingPolicy        RoutingPolicyPayload       `json:"routing_policy,omitempty"`
+	ManifestBundle       ManifestBundlePayload      `json:"manifest_bundle,omitempty"`
 	PublicDomains        []PublicDomainPayload      `json:"public_domains,omitempty"`
 	PlacementAssignments []PlacementAssignment      `json:"placement_assignments,omitempty"`
 }
@@ -32,6 +37,7 @@ type ProjectMetadataPayload struct {
 	ProjectID string            `json:"project_id"`
 	Name      string            `json:"name,omitempty"`
 	Slug      string            `json:"slug,omitempty"`
+	Namespace string            `json:"namespace,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
@@ -98,13 +104,75 @@ type ScaleToZeroPolicy struct {
 }
 
 type ServicePayload struct {
-	Name           string             `json:"name"`
-	Path           string             `json:"path"`
-	Public         bool               `json:"public"`
-	RuntimeProfile string             `json:"runtime_profile,omitempty"`
-	StartHint      string             `json:"start_hint,omitempty"`
-	HealthCheck    HealthCheckPayload `json:"healthcheck"`
-	Labels         map[string]string  `json:"labels,omitempty"`
+	Name           string                `json:"name"`
+	Path           string                `json:"path"`
+	Kind           string                `json:"kind,omitempty"`
+	Public         bool                  `json:"public"`
+	RuntimeProfile string                `json:"runtime_profile,omitempty"`
+	StartHint      string                `json:"start_hint,omitempty"`
+	ImageRef       string                `json:"image_ref,omitempty"`
+	ImageDigest    string                `json:"image_digest,omitempty"`
+	DetectedPorts  []DetectedPortPayload `json:"detected_ports,omitempty"`
+	TargetPort     int                   `json:"target_port,omitempty"`
+	ServicePort    int                   `json:"service_port,omitempty"`
+	Replicas       int                   `json:"replicas,omitempty"`
+	EnvBundle      map[string]string     `json:"env_bundle,omitempty"`
+	PVCSpec        map[string]any        `json:"pvc_spec,omitempty"`
+	DeployStrategy map[string]any        `json:"deploy_strategy,omitempty"`
+	HealthCheck    HealthCheckPayload    `json:"healthcheck"`
+	Labels         map[string]string     `json:"labels,omitempty"`
+}
+
+type DetectedPortPayload struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Exposed  bool   `json:"exposed,omitempty"`
+}
+
+type K3sServiceSpecPayload struct {
+	Name           string                `json:"name"`
+	Kind           string                `json:"kind,omitempty"`
+	Namespace      string                `json:"namespace,omitempty"`
+	Path           string                `json:"path,omitempty"`
+	Public         bool                  `json:"public"`
+	RuntimeProfile string                `json:"runtime_profile,omitempty"`
+	StartHint      string                `json:"start_hint,omitempty"`
+	ImageRef       string                `json:"image_ref,omitempty"`
+	ImageDigest    string                `json:"image_digest,omitempty"`
+	DetectedPorts  []DetectedPortPayload `json:"detected_ports,omitempty"`
+	TargetPort     int                   `json:"target_port,omitempty"`
+	ServicePort    int                   `json:"service_port,omitempty"`
+	Replicas       int                   `json:"replicas,omitempty"`
+	EnvBundle      map[string]string     `json:"env_bundle,omitempty"`
+	PVCSpec        map[string]any        `json:"pvc_spec,omitempty"`
+	DeployStrategy map[string]any        `json:"deploy_strategy,omitempty"`
+	HealthCheck    HealthCheckPayload    `json:"healthcheck"`
+}
+
+type InternalBindingPayload struct {
+	ServiceName      string `json:"service_name"`
+	Alias            string `json:"alias"`
+	TargetService    string `json:"target_service"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	Protocol         string `json:"protocol"`
+	URL              string `json:"url,omitempty"`
+	ConnectionString string `json:"connection_string,omitempty"`
+}
+
+type ManifestDocumentPayload struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content"`
+}
+
+type ManifestBundlePayload struct {
+	Namespace    string                    `json:"namespace,omitempty"`
+	CombinedYAML string                    `json:"combined_yaml,omitempty"`
+	RollbackYAML string                    `json:"rollback_yaml,omitempty"`
+	Documents    []ManifestDocumentPayload `json:"documents,omitempty"`
 }
 
 type HealthCheckPayload struct {

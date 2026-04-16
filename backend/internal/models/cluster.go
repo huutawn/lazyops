@@ -8,6 +8,7 @@ type Cluster struct {
 	Name                string    `json:"name" gorm:"size:255;not null;uniqueIndex:idx_clusters_user_name"`
 	Provider            string    `json:"provider" gorm:"size:64;not null"`
 	KubeconfigSecretRef string    `json:"kubeconfig_secret_ref" gorm:"size:255;not null"`
+	PublicIP            *string   `json:"public_ip,omitempty" gorm:"size:64"`
 	Status              string    `json:"status" gorm:"size:64;not null;default:'validating'"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`

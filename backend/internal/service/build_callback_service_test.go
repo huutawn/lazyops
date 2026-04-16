@@ -387,6 +387,79 @@ func TestBuildCallbackServiceDoesNotOverrideGenericFallbackForNonOneClickBluepri
 	}
 }
 
+func TestBuildCallbackServiceAppliesArtifactToMatchedServiceInMultiServiceBlueprint(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModel(t, "bp_123", "prj_123"))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/backend",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","project_repo_link_id":"prl_123","github_delivery_id":"delivery_123","github_installation_id":100,"github_repo_id":42,"repo_owner":"lazyops","repo_name":"backend","repo_full_name":"lazyops/backend","tracked_branch":"main","commit_sha":"abc123def456","trigger_kind":"push","preview_enabled":false,"artifact_metadata_stage":{"commit_sha":"abc123def456"},"retry_policy":{"max_attempts":3,"backoff":"linear"},"callback_expectation":{"path":"/api/v1/builds/callback","required_fields":["build_job_id","project_id","commit_sha","status","image_ref","image_digest","metadata.detected_services"]}}`,
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:           "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		Status:               "succeeded",
+		ImageRef:             "ghcr.io/lazyops/api:abc123",
+		ImageDigest:          "sha256:feedface",
+		DetectedServices:     []string{"api"},
+		SuggestedTargetPort:  8080,
+		SuggestedHealthcheck: &BuildSuggestedHealthcheckRecord{Path: "/ready", Port: 8080},
+	})
+	if err != nil {
+		t.Fatalf("build callback success: %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 2 {
+		t.Fatalf("expected multi-service revision, got %#v", result.Revision)
+	}
+
+	var apiSvc, webSvc *BlueprintServiceContractRecord
+	for index := range result.Revision.Services {
+		switch result.Revision.Services[index].Name {
+		case "api":
+			apiSvc = &result.Revision.Services[index]
+		case "web":
+			webSvc = &result.Revision.Services[index]
+		}
+	}
+	if apiSvc == nil || webSvc == nil {
+		t.Fatalf("expected api and web services, got %#v", result.Revision.Services)
+	}
+	if apiSvc.ImageRef != "ghcr.io/lazyops/api:abc123" || apiSvc.ImageDigest != "sha256:feedface" {
+		t.Fatalf("expected api service artifact metadata to be applied, got %#v", apiSvc)
+	}
+	if apiSvc.ServicePort != 8080 || apiSvc.TargetPort != 8080 {
+		t.Fatalf("expected api ports to be hydrated to 8080, got service=%d target=%d", apiSvc.ServicePort, apiSvc.TargetPort)
+	}
+	if len(result.BuildJob.ArtifactMetadata.AppliedServices) != 1 || result.BuildJob.ArtifactMetadata.AppliedServices[0] != "api" {
+		t.Fatalf("expected build metadata to persist applied service api, got %#v", result.BuildJob.ArtifactMetadata)
+	}
+	if webSvc.ImageRef != "" || webSvc.ImageDigest != "" {
+		t.Fatalf("expected unrelated service to stay untouched, got %#v", webSvc)
+	}
+}
+
 func mustBlueprintModelWithSingleService(
 	t *testing.T,
 	blueprintID string,
