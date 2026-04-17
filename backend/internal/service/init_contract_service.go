@@ -23,6 +23,7 @@ var (
 
 	lazyopsProjectSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	lazyopsLogicalNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	lazyopsK8sNamePattern     = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	lazyopsIPv4Pattern        = regexp.MustCompile(`\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b`)
 
 	lazyopsForbiddenMarkers = []string{
@@ -306,7 +307,7 @@ func validateLazyopsDocument(document LazyopsYAMLDocument, project models.Projec
 	serviceNames := make(map[string]struct{}, len(document.Services))
 	servicePaths := make(map[string]struct{}, len(document.Services))
 	for index, svc := range document.Services {
-		if err := validateLazyopsService(svc); err != nil {
+		if err := validateLazyopsService(svc, runtimeMode); err != nil {
 			return fmt.Errorf("%w: services[%d]: %s", ErrInvalidInput, index, err.Error())
 		}
 		if _, exists := serviceNames[svc.Name]; exists {
@@ -345,12 +346,17 @@ func validateLazyopsDocument(document LazyopsYAMLDocument, project models.Projec
 	return nil
 }
 
-func validateLazyopsService(svc LazyopsYAMLService) error {
+func validateLazyopsService(svc LazyopsYAMLService, runtimeMode string) error {
 	if strings.TrimSpace(svc.Name) == "" {
 		return fmt.Errorf("service.name is required")
 	}
 	if !lazyopsLogicalNamePattern.MatchString(svc.Name) {
 		return fmt.Errorf("service.name must contain only letters, digits, dots, underscores, or hyphens")
+	}
+	if strings.TrimSpace(runtimeMode) == "distributed-k3s" {
+		if err := validateK3sResourceName("service.name", svc.Name); err != nil {
+			return err
+		}
 	}
 	if err := validateLazyopsRepoRelativePath("service.path", svc.Path); err != nil {
 		return err
@@ -451,6 +457,20 @@ func validateLazyopsLocalEndpoint(value string) error {
 		return fmt.Errorf("dependency_binding.local_endpoint port is required")
 	}
 
+	return nil
+}
+
+func validateK3sResourceName(fieldPath, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fmt.Errorf("%s is required", fieldPath)
+	}
+	if len(trimmed) > 63 {
+		return fmt.Errorf("%s must be 63 characters or fewer for kubernetes", fieldPath)
+	}
+	if !lazyopsK8sNamePattern.MatchString(trimmed) {
+		return fmt.Errorf("%s must be lowercase alphanumeric or hyphen and stay kubernetes-compatible", fieldPath)
+	}
 	return nil
 }
 

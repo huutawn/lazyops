@@ -69,6 +69,11 @@ func (s *ProjectService) Create(cmd CreateProjectCommand) (*ProjectSummary, erro
 			return nil, err
 		}
 	}
+	if runtimeMode == "distributed-k3s" {
+		if err := validateK3sResourceName("project.namespace_slug", namespaceSlug); err != nil {
+			return nil, err
+		}
+	}
 	internalServiceKinds := []string{}
 	if s.internalServices != nil {
 		internalServiceKinds, err = normalizeInternalServiceKinds(cmd.InternalServices)
@@ -166,7 +171,7 @@ func (s *ProjectService) ConfigureServices(cmd ConfigureProjectServicesCommand) 
 		return &ProjectServiceListResult{Items: []ProjectServiceRecord{}}, nil
 	}
 
-	items, err := buildConfiguredProjectServiceModels(project.ID, cmd.Items)
+	items, err := buildConfiguredProjectServiceModels(project.ID, project.RuntimeMode, cmd.Items)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +256,7 @@ func normalizeNamespaceSlug(raw, fallback string) string {
 	return normalizeProjectSlug(raw)
 }
 
-func buildConfiguredProjectServiceModels(projectID string, items []ConfigureProjectServiceItem) ([]models.Service, error) {
+func buildConfiguredProjectServiceModels(projectID, runtimeMode string, items []ConfigureProjectServiceItem) ([]models.Service, error) {
 	if len(items) == 0 {
 		return []models.Service{}, nil
 	}
@@ -260,7 +265,7 @@ func buildConfiguredProjectServiceModels(projectID string, items []ConfigureProj
 	paths := make(map[string]struct{}, len(items))
 	out := make([]models.Service, 0, len(items))
 	for index, item := range items {
-		model, err := normalizeConfiguredProjectService(projectID, item)
+		model, err := normalizeConfiguredProjectService(projectID, runtimeMode, item)
 		if err != nil {
 			return nil, fmt.Errorf("%w: services[%d]: %s", ErrInvalidInput, index, err.Error())
 		}
@@ -277,13 +282,18 @@ func buildConfiguredProjectServiceModels(projectID string, items []ConfigureProj
 	return out, nil
 }
 
-func normalizeConfiguredProjectService(projectID string, item ConfigureProjectServiceItem) (models.Service, error) {
+func normalizeConfiguredProjectService(projectID, runtimeMode string, item ConfigureProjectServiceItem) (models.Service, error) {
 	name := strings.TrimSpace(item.Name)
 	if name == "" {
 		return models.Service{}, fmt.Errorf("service.name is required")
 	}
 	if !lazyopsLogicalNamePattern.MatchString(name) {
 		return models.Service{}, fmt.Errorf("service.name must contain only letters, digits, dots, underscores, or hyphens")
+	}
+	if strings.TrimSpace(runtimeMode) == "distributed-k3s" {
+		if err := validateK3sResourceName("service.name", name); err != nil {
+			return models.Service{}, err
+		}
 	}
 	if strings.HasPrefix(strings.ToLower(name), "lazyops-internal-") {
 		return models.Service{}, fmt.Errorf("service.name uses a reserved lazyops internal prefix")

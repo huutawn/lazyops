@@ -33,6 +33,7 @@ type App struct {
 	enroll     *enroll.Service
 	reporter   *reporting.Reporter
 	runtime    *agentruntime.Service
+	logTicker  time.Duration
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -64,7 +65,11 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	store := state.New(statePath)
-	logCollector := agentruntime.NewLogCollector(logger, agentruntime.DefaultLogCollectorConfig())
+	logCfg := agentruntime.DefaultLogCollectorConfig()
+	if cfg.LogReportInterval > 0 {
+		logCfg.ReportingInterval = cfg.LogReportInterval
+	}
+	logCollector := agentruntime.NewLogCollector(logger, logCfg)
 	var runtimeDriver agentruntime.Driver
 	if cfg.RuntimeMode == contracts.RuntimeModeDistributedK3s {
 		k3sDriver := agentruntime.NewK3sDriver(logger, runtimeRoot, cfg.KubectlBin, cfg.KubeconfigPath).
@@ -105,6 +110,7 @@ func New(cfg config.Config) (*App, error) {
 		enroll:     enroll.New(store, client, logger, cfg.StateEncryptionKey),
 		reporter:   reporting.New(logger, cfg.HeartbeatInterval),
 		runtime:    runtimeService,
+		logTicker:  logCollector.ReportingInterval(),
 	}, nil
 }
 
@@ -189,11 +195,22 @@ func (a *App) Run(ctx context.Context) error {
 
 	heartbeatTicker := time.NewTicker(a.cfg.HeartbeatInterval)
 	defer heartbeatTicker.Stop()
+	var logTicker *time.Ticker
+	if a.runtime != nil && a.logTicker > 0 {
+		logTicker = time.NewTicker(a.logTicker)
+		defer logTicker.Stop()
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return a.shutdown()
+		case <-logTickerChan(logTicker):
+			if a.runtime != nil {
+				if err := a.runtime.FlushLogBatches(ctx); err != nil {
+					a.logger.Warn("failed to flush runtime log batches", "error", err)
+				}
+			}
 		case <-heartbeatTicker.C:
 			current, err := a.store.Update(ctx, func(local *state.AgentLocalState) error {
 				if err := a.reporter.ReconcileCapabilitySnapshot(&local.CapabilitySnapshot, defaultCapabilities(a.cfg)); err != nil {
@@ -223,12 +240,6 @@ func (a *App) Run(ctx context.Context) error {
 				return fmt.Errorf("persist heartbeat reporting state: %w", err)
 			}
 
-			if a.runtime != nil {
-				if err := a.runtime.FlushLogBatches(ctx); err != nil {
-					a.logger.Warn("failed to flush runtime log batches", "error", err)
-				}
-			}
-
 			a.logger.Debug("heartbeat sent",
 				"agent_id", current.Metadata.AgentID,
 				"session_id", current.Enrollment.SessionID,
@@ -238,6 +249,13 @@ func (a *App) Run(ctx context.Context) error {
 			)
 		}
 	}
+}
+
+func logTickerChan(ticker *time.Ticker) <-chan time.Time {
+	if ticker == nil {
+		return nil
+	}
+	return ticker.C
 }
 
 func (a *App) shutdown() error {

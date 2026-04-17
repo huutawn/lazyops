@@ -188,3 +188,50 @@ func TestInitContractServiceRejectsSecretBearingConfig(t *testing.T) {
 		t.Fatalf("expected start_hint path in error, got %v", err)
 	}
 }
+
+func TestInitContractServiceRejectsK3sIncompatibleServiceName(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Cluster Binding",
+		TargetRef:   "cluster-prod",
+		RuntimeMode: "distributed-k3s",
+		TargetKind:  "cluster",
+		TargetID:    "clu_123",
+	})
+	clusterStore := newFakeClusterStore(&models.Cluster{
+		ID:     "clu_123",
+		UserID: "usr_123",
+		Name:   "cluster-prod",
+		Status: "online",
+	})
+	service := NewInitContractService(projectStore, bindingStore, newFakeInstanceStore(), newFakeMeshNetworkStore(), clusterStore)
+
+	raw := []byte(`{
+		"project_slug":"acme-api",
+		"runtime_mode":"distributed-k3s",
+		"deployment_binding":{"target_ref":"cluster-prod"},
+		"services":[{"name":"api_v1","path":"apps/api"}],
+		"compatibility_policy":{"env_injection":true}
+	}`)
+
+	_, err := service.ValidateLazyopsYAML(ValidateLazyopsYAMLCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		RawDocument:     raw,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "kubernetes-compatible") {
+		t.Fatalf("expected kubernetes-compatible validation error, got %v", err)
+	}
+}

@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-pull-smoke
+  namespace: lazyops-day11-day12
+  labels:
+    app.kubernetes.io/name: image-pull-smoke
+    lazyops.project_id: prj-day11-day12
+    lazyops.revision_id: rev-fail-smoke
+    lazyops.service: image-pull-smoke
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: image-pull-smoke
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: image-pull-smoke
+        lazyops.project_id: prj-day11-day12
+        lazyops.revision_id: rev-fail-smoke
+        lazyops.service: image-pull-smoke
+    spec:
+      containers:
+        - name: image-pull-smoke
+          image: ghcr.io/lazyops/does-not-exist:broken
+          imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schedule-blocked-smoke
+  namespace: lazyops-day11-day12
+  labels:
+    app.kubernetes.io/name: schedule-blocked-smoke
+    lazyops.project_id: prj-day11-day12
+    lazyops.revision_id: rev-fail-smoke
+    lazyops.service: schedule-blocked-smoke
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: schedule-blocked-smoke
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: schedule-blocked-smoke
+        lazyops.project_id: prj-day11-day12
+        lazyops.revision_id: rev-fail-smoke
+        lazyops.service: schedule-blocked-smoke
+    spec:
+      nodeSelector:
+        lazyops.node/unavailable: "true"
+      containers:
+        - name: schedule-blocked-smoke
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-pending-smoke
+  namespace: lazyops-day11-day12
+  labels:
+    app.kubernetes.io/name: pvc-pending-smoke
+    lazyops.project_id: prj-day11-day12
+    lazyops.revision_id: rev-fail-smoke
+    lazyops.service: pvc-pending-smoke
+spec:
+  storageClassName: lazyops-does-not-exist
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dns-fail-smoke
+  namespace: lazyops-day11-day12
+  labels:
+    app.kubernetes.io/name: dns-fail-smoke
+    lazyops.project_id: prj-day11-day12
+    lazyops.revision_id: rev-fail-smoke
+    lazyops.service: dns-fail-smoke
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dns-fail-smoke
+        lazyops.project_id: prj-day11-day12
+        lazyops.revision_id: rev-fail-smoke
+        lazyops.service: dns-fail-smoke
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: dns-fail-smoke
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - nslookup missing-service.lazyops-day11-day12.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-backend-smoke
+  namespace: lazyops-day11-day12
+  labels:
+    app.kubernetes.io/name: ingress-backend-smoke
+    lazyops.project_id: prj-day11-day12
+    lazyops.revision_id: rev-fail-smoke
+    lazyops.service: ingress-backend-smoke
+spec:
+  selector:
+    app.kubernetes.io/name: ingress-backend-smoke
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-not-ready-smoke
+  namespace: lazyops-day11-day12
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    app.kubernetes.io/name: ingress-not-ready-smoke
+    lazyops.project_id: prj-day11-day12
+    lazyops.revision_id: rev-fail-smoke
+    lazyops.service: ingress-backend-smoke
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: fail-smoke.127.0.0.1.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ingress-backend-smoke
+                port:
+                  number: 80

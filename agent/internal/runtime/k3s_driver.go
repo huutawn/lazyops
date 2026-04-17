@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +28,24 @@ type K3sDriver struct {
 
 	mu           sync.Mutex
 	logTailStops map[string]context.CancelFunc
+}
+
+const (
+	k3sLogTailInitialLines   = 20
+	k3sLogTailResumeLines    = 200
+	k3sLogTailScannerMaxSize = 1024 * 1024
+	k3sLogTailResumeOverlap  = 2 * time.Second
+	k3sLogTailRetryBackoff   = 2 * time.Second
+)
+
+type kubectlApplySummary struct {
+	Created    int
+	Configured int
+	Patched    int
+	Deleted    int
+	ServerSide int
+	Unchanged  int
+	Unknown    int
 }
 
 func NewK3sDriver(logger *slog.Logger, root, kubectlBin, kubeconfigPath string) *K3sDriver {
@@ -130,15 +149,24 @@ func (d *K3sDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeCon
 	} else {
 		appliedSteps = append(appliedSteps, "manifest_preflight:passed")
 	}
-	if err := d.runKubectl(ctx, runtimeCtx.Project.Namespace, "apply", "--dry-run=server", "-f", manifestPath); err != nil {
+	if _, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "--dry-run=server", "-f", manifestPath); err != nil {
 		return ReconcileRevisionResult{}, wrapK3sError("k8s_dry_run_failed", err, true)
 	}
 	appliedSteps = append(appliedSteps, "kubectl_apply_dry_run")
 
-	if err := d.runKubectl(ctx, runtimeCtx.Project.Namespace, "apply", "-f", manifestPath); err != nil {
+	applyOutput, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "-f", manifestPath)
+	if err != nil {
 		return ReconcileRevisionResult{}, wrapK3sError("k8s_apply_failed", err, true)
 	}
-	appliedSteps = append(appliedSteps, "kubectl_apply")
+	applySummary := summarizeKubectlApplyOutput(applyOutput)
+	switch {
+	case applySummary.totalMutations() == 0 && applySummary.Unchanged > 0:
+		appliedSteps = append(appliedSteps, fmt.Sprintf("kubectl_apply:idempotent:%d", applySummary.Unchanged))
+	case applySummary.totalChanges() > 0:
+		appliedSteps = append(appliedSteps, fmt.Sprintf("kubectl_apply:changed:%d", applySummary.totalChanges()))
+	default:
+		appliedSteps = append(appliedSteps, "kubectl_apply")
+	}
 
 	for _, spec := range runtimeCtx.Revision.ServiceSpecs {
 		if strings.TrimSpace(spec.Name) == "" {
@@ -179,6 +207,9 @@ func (d *K3sDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeCon
 	d.ensureLiveLogTails(runtimeCtx)
 
 	summary := fmt.Sprintf("applied %d k3s rollout steps in namespace %s", len(appliedSteps), runtimeCtx.Project.Namespace)
+	if applySummary.totalMutations() == 0 && applySummary.Unchanged > 0 {
+		summary = fmt.Sprintf("%s (idempotent re-apply detected)", summary)
+	}
 	if portMismatchCount > 0 {
 		summary = fmt.Sprintf("%s with %d port mismatch warnings", summary, portMismatchCount)
 	}
@@ -359,7 +390,8 @@ func (d *K3sDriver) RollbackRelease(ctx context.Context, runtimeCtx RuntimeConte
 	if err := os.WriteFile(rollbackPath, []byte(rollbackYAML+"\n"), 0o644); err != nil {
 		return RollbackReleaseResult{}, err
 	}
-	if err := d.runKubectl(ctx, runtimeCtx.Project.Namespace, "apply", "-f", rollbackPath); err != nil {
+	rollbackOutput, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "-f", rollbackPath)
+	if err != nil {
 		return RollbackReleaseResult{}, wrapK3sError("k8s_rollback_apply_failed", err, true)
 	}
 	for _, spec := range runtimeCtx.Revision.ServiceSpecs {
@@ -383,7 +415,7 @@ func (d *K3sDriver) RollbackRelease(ctx context.Context, runtimeCtx RuntimeConte
 			BindingID:          runtimeCtx.Binding.BindingID,
 			FailedRevisionID:   failedRevisionID,
 			RestoredRevisionID: restoredRevisionID,
-			Summary:            "rollback manifest applied to k3s cluster",
+			Summary:            rollbackApplySummary(rollbackOutput),
 			RolledBackAt:       d.now(),
 		},
 	}, nil
@@ -430,6 +462,19 @@ func (d *K3sDriver) runKubectl(ctx context.Context, namespace string, args ...st
 }
 
 func (d *K3sDriver) kubectlOutput(ctx context.Context, namespace string, args ...string) ([]byte, error) {
+	if strings.TrimSpace(d.kubeconfigPath) != "" {
+		if _, err := os.Stat(d.kubeconfigPath); err != nil {
+			return nil, &OperationError{
+				Code:      "k8s_kubeconfig_missing",
+				Message:   fmt.Sprintf("kubeconfig %q is not readable", d.kubeconfigPath),
+				Retryable: false,
+				Details: map[string]any{
+					"kubeconfig_path": d.kubeconfigPath,
+				},
+				Err: err,
+			}
+		}
+	}
 	cmdArgs := make([]string, 0, len(args)+4)
 	if strings.TrimSpace(d.kubeconfigPath) != "" {
 		cmdArgs = append(cmdArgs, "--kubeconfig", d.kubeconfigPath)
@@ -441,7 +486,7 @@ func (d *K3sDriver) kubectlOutput(ctx context.Context, namespace string, args ..
 	cmd := exec.CommandContext(ctx, d.kubectlBin, cmdArgs...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+		return nil, classifyKubectlError(ctx, args, output, err)
 	}
 	return output, nil
 }
@@ -479,36 +524,80 @@ func (d *K3sDriver) stopRevisionLogTails(revisionID string) {
 }
 
 func (d *K3sDriver) tailServiceLogs(ctx context.Context, runtimeCtx RuntimeContext, spec contracts.K3sServiceSpecPayload) {
-	cmdArgs := make([]string, 0, 10)
+	var lastSeenAt time.Time
+	firstAttempt := true
+	for {
+		endedAt, err := d.tailServiceLogsOnce(ctx, runtimeCtx, spec, firstAttempt, lastSeenAt)
+		if !endedAt.IsZero() {
+			lastSeenAt = endedAt
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			d.emitK3sSystemLog(runtimeCtx, spec.Name, contracts.SeverityWarning, fmt.Sprintf("live log stream retry for %s: %s", spec.Name, err.Error()))
+		} else {
+			d.emitK3sSystemLog(runtimeCtx, spec.Name, contracts.SeverityInfo, fmt.Sprintf("live log stream restarted for %s after pod update", spec.Name))
+		}
+		firstAttempt = false
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(k3sLogTailRetryBackoff):
+		}
+	}
+}
+
+func (d *K3sDriver) tailServiceLogsOnce(ctx context.Context, runtimeCtx RuntimeContext, spec contracts.K3sServiceSpecPayload, firstAttempt bool, lastSeenAt time.Time) (time.Time, error) {
+	cmdArgs := make([]string, 0, 16)
 	if strings.TrimSpace(d.kubeconfigPath) != "" {
 		cmdArgs = append(cmdArgs, "--kubeconfig", d.kubeconfigPath)
 	}
 	if ns := strings.TrimSpace(runtimeCtx.Project.Namespace); ns != "" {
 		cmdArgs = append(cmdArgs, "-n", ns)
 	}
-	cmdArgs = append(cmdArgs, "logs", "-f", fmt.Sprintf("deployment/%s", spec.Name), "--all-containers=true", "--tail=20")
+	cmdArgs = append(cmdArgs, "logs", "-f", fmt.Sprintf("deployment/%s", spec.Name), "--all-containers=true", "--timestamps=true")
+	if firstAttempt {
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--tail=%d", k3sLogTailInitialLines))
+	} else {
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--tail=%d", k3sLogTailResumeLines))
+		if !lastSeenAt.IsZero() {
+			cmdArgs = append(cmdArgs, "--since-time", lastSeenAt.Add(-k3sLogTailResumeOverlap).UTC().Format(time.RFC3339))
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, d.kubectlBin, cmdArgs...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return
+		return time.Time{}, err
 	}
-	cmd.Stderr = os.Stderr
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return
+		if stderr.Len() > 0 {
+			return time.Time{}, fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+		}
+		return time.Time{}, err
 	}
 
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), k3sLogTailScannerMaxSize)
+	latestSeenAt := lastSeenAt
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		raw := strings.TrimSpace(scanner.Text())
+		if raw == "" {
 			continue
 		}
+		timestamp, message := parseK3sTimestampedLogLine(raw)
+		if !timestamp.IsZero() && timestamp.After(latestSeenAt) {
+			latestSeenAt = timestamp
+		}
 		d.logCollector.Ingest(contracts.LogEntry{
-			Timestamp: d.now(),
+			Timestamp: nonZeroTime(timestamp, d.now()),
 			Severity:  contracts.SeverityInfo,
 			Source:    "k3s-pod",
-			Message:   line,
-			Excerpt:   line,
+			Message:   message,
+			Excerpt:   message,
 			Labels: map[string]string{
 				"project_id":  runtimeCtx.Project.ProjectID,
 				"binding_id":  runtimeCtx.Binding.BindingID,
@@ -518,16 +607,172 @@ func (d *K3sDriver) tailServiceLogs(ctx context.Context, runtimeCtx RuntimeConte
 			},
 		})
 	}
-	_ = cmd.Wait()
+	if scanErr := scanner.Err(); scanErr != nil && ctx.Err() == nil {
+		_ = cmd.Wait()
+		return latestSeenAt, scanErr
+	}
+	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		if stderr.Len() > 0 {
+			return latestSeenAt, fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+		}
+		return latestSeenAt, err
+	}
+	return latestSeenAt, nil
+}
+
+func parseK3sTimestampedLogLine(raw string) (time.Time, string) {
+	parts := strings.SplitN(strings.TrimSpace(raw), " ", 2)
+	if len(parts) != 2 {
+		return time.Time{}, strings.TrimSpace(raw)
+	}
+	timestamp, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, strings.TrimSpace(raw)
+	}
+	return timestamp.UTC(), strings.TrimSpace(parts[1])
+}
+
+func nonZeroTime(value, fallback time.Time) time.Time {
+	if value.IsZero() {
+		return fallback
+	}
+	return value
+}
+
+func (d *K3sDriver) emitK3sSystemLog(runtimeCtx RuntimeContext, serviceName string, severity contracts.Severity, message string) {
+	if d == nil || d.logCollector == nil || strings.TrimSpace(message) == "" {
+		return
+	}
+	d.logCollector.Ingest(contracts.LogEntry{
+		Timestamp: d.now(),
+		Severity:  severity,
+		Source:    "k3s-agent",
+		Message:   strings.TrimSpace(message),
+		Excerpt:   strings.TrimSpace(message),
+		Labels: map[string]string{
+			"project_id":  runtimeCtx.Project.ProjectID,
+			"binding_id":  runtimeCtx.Binding.BindingID,
+			"revision_id": runtimeCtx.Revision.RevisionID,
+			"service":     serviceName,
+			"source_kind": "k3s",
+		},
+	})
 }
 
 func wrapK3sError(code string, err error, retryable bool) error {
+	var opErr *OperationError
+	if errors.As(err, &opErr) {
+		if strings.TrimSpace(opErr.Code) == "" {
+			opErr.Code = code
+		}
+		if opErr.Details == nil {
+			opErr.Details = map[string]any{}
+		}
+		if _, exists := opErr.Details["phase"]; !exists && strings.TrimSpace(code) != "" {
+			opErr.Details["phase"] = code
+		}
+		return opErr
+	}
 	return &OperationError{
 		Code:      code,
 		Message:   err.Error(),
 		Retryable: retryable,
 		Err:       err,
 	}
+}
+
+func summarizeKubectlApplyOutput(output []byte) kubectlApplySummary {
+	summary := kubectlApplySummary{}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(trimmed, " created"):
+			summary.Created++
+		case strings.HasSuffix(trimmed, " configured"):
+			summary.Configured++
+		case strings.HasSuffix(trimmed, " patched"):
+			summary.Patched++
+		case strings.HasSuffix(trimmed, " deleted"):
+			summary.Deleted++
+		case strings.HasSuffix(trimmed, " serverside-applied"):
+			summary.ServerSide++
+		case strings.HasSuffix(trimmed, " unchanged"):
+			summary.Unchanged++
+		default:
+			summary.Unknown++
+		}
+	}
+	return summary
+}
+
+func (s kubectlApplySummary) totalChanges() int {
+	return s.Created + s.Configured + s.Patched + s.Deleted + s.ServerSide
+}
+
+func (s kubectlApplySummary) totalMutations() int {
+	return s.totalChanges() + s.Unknown
+}
+
+func rollbackApplySummary(output []byte) string {
+	summary := summarizeKubectlApplyOutput(output)
+	switch {
+	case summary.totalMutations() == 0 && summary.Unchanged > 0:
+		return "rollback manifest re-applied and cluster was already at the stable revision"
+	case summary.totalChanges() > 0:
+		return fmt.Sprintf("rollback manifest applied to k3s cluster with %d changed resources", summary.totalChanges())
+	default:
+		return "rollback manifest applied to k3s cluster"
+	}
+}
+
+func classifyKubectlError(ctx context.Context, args []string, output []byte, err error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return &OperationError{
+			Code:      "k8s_command_timeout",
+			Message:   fmt.Sprintf("kubectl %s timed out", strings.Join(args, " ")),
+			Retryable: true,
+			Err:       err,
+		}
+	}
+	message := strings.TrimSpace(string(output))
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "certificate has expired"), strings.Contains(lower, "x509:"), strings.Contains(lower, "provide credentials"), strings.Contains(lower, "unauthorized"):
+		return &OperationError{
+			Code:      "k8s_kubeconfig_stale",
+			Message:   firstNonEmptyK3s(message, err.Error()),
+			Retryable: false,
+			Err:       err,
+		}
+	case strings.Contains(lower, "forbidden"):
+		return &OperationError{
+			Code:      "k8s_rbac_denied",
+			Message:   firstNonEmptyK3s(message, err.Error()),
+			Retryable: false,
+			Err:       err,
+		}
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "connection refused"), strings.Contains(lower, "i/o timeout"), strings.Contains(lower, "context deadline exceeded"):
+		return &OperationError{
+			Code:      "k8s_cluster_unreachable",
+			Message:   firstNonEmptyK3s(message, err.Error()),
+			Retryable: true,
+			Err:       err,
+		}
+	default:
+		return fmt.Errorf("%s: %w", firstNonEmptyK3s(message, err.Error()), err)
+	}
+}
+
+func firstNonEmptyK3s(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func countHealthyServices(items []ServiceHealthResult) int {

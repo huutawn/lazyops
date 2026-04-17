@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { listObservedServices, mergeObservedLogs } from '@/modules/observability/observability-live';
 import { useLogs, useIncidents, useLiveLogs, useMetrics, useTrace } from '@/modules/observability/observability-hooks';
 import type { LogLevel, MetricRecord } from '@/modules/observability/observability-types';
 import { useProjects } from '@/modules/projects/project-hooks';
@@ -44,6 +45,7 @@ export function ObservabilityConsole({
 }: ObservabilityConsoleProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'logs' | 'traces' | 'incidents'>('overview');
   const [logFilter, setLogFilter] = useState<LogLevel | 'all'>('all');
+  const [serviceFilter, setServiceFilter] = useState('all');
   const [followMode, setFollowMode] = useState(false);
   const [traceQuery, setTraceQuery] = useState('');
   const [projectId, setProjectId] = useState(fixedProjectId ?? '');
@@ -73,13 +75,26 @@ export function ObservabilityConsole({
   const { data: metrics, isLoading: metricsLoading, isError: metricsError } = useMetrics(activeProjectId);
   const { data: trace, isLoading: traceLoading } = useTrace(traceQuery);
 
+  const mergedLogs = useMemo(() => mergeObservedLogs(logs ?? [], liveLogs), [liveLogs, logs]);
+  const observedServices = useMemo(() => listObservedServices(mergedLogs), [mergedLogs]);
   const filteredLogs = useMemo(
-    () => {
-      const merged = [...(logs ?? []), ...liveLogs].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      return logFilter === 'all' ? merged : merged.filter((l) => l.level === logFilter);
-    },
-    [liveLogs, logFilter, logs],
+    () => mergedLogs.filter((item) => {
+      if (logFilter !== 'all' && item.level !== logFilter) {
+        return false;
+      }
+      if (serviceFilter !== 'all' && item.service !== serviceFilter) {
+        return false;
+      }
+      return true;
+    }),
+    [logFilter, mergedLogs, serviceFilter],
   );
+
+  useEffect(() => {
+    if (serviceFilter !== 'all' && !observedServices.includes(serviceFilter)) {
+      setServiceFilter('all');
+    }
+  }, [observedServices, serviceFilter]);
 
   if ((!fixedProjectId && projectsLoading) || logsLoading || incidentsLoading || metricsLoading) {
     return <SkeletonPage title cards={3} />;
@@ -168,6 +183,9 @@ export function ObservabilityConsole({
           logs={filteredLogs}
           logFilter={logFilter}
           onFilterChange={setLogFilter}
+          serviceFilter={serviceFilter}
+          serviceOptions={observedServices}
+          onServiceFilterChange={setServiceFilter}
           followMode={followMode}
           onFollowToggle={() => setFollowMode(!followMode)}
         />
@@ -324,10 +342,13 @@ function formatBytes(value?: number) {
   return `${size.toFixed(precision)}${units[unitIndex]}`;
 }
 
-function LogsTab({ logs, logFilter, onFilterChange, followMode, onFollowToggle }: {
-  logs?: { id: string; service: string; source?: string; level: LogLevel; message: string; timestamp: string }[];
+function LogsTab({ logs, logFilter, onFilterChange, serviceFilter, serviceOptions, onServiceFilterChange, followMode, onFollowToggle }: {
+  logs?: { id: string; service: string; source?: string; revision_id?: string; level: LogLevel; message: string; timestamp: string }[];
   logFilter: LogLevel | 'all';
   onFilterChange: (f: LogLevel | 'all') => void;
+  serviceFilter: string;
+  serviceOptions: string[];
+  onServiceFilterChange: (value: string) => void;
   followMode: boolean;
   onFollowToggle: () => void;
 }) {
@@ -349,7 +370,7 @@ function LogsTab({ logs, logFilter, onFilterChange, followMode, onFollowToggle }
         </div>
       }
     >
-      <div className="mb-3 flex gap-2">
+      <div className="mb-3 flex flex-wrap gap-2">
         {(['all', 'info', 'warn', 'error', 'debug'] as const).map((level) => (
           <button
             key={level}
@@ -364,6 +385,20 @@ function LogsTab({ logs, logFilter, onFilterChange, followMode, onFollowToggle }
             {level}
           </button>
         ))}
+        {serviceOptions.length > 0 && (
+          <select
+            value={serviceFilter}
+            onChange={(event) => onServiceFilterChange(event.target.value)}
+            className="rounded-md border border-lazyops-border bg-lazyops-bg-accent/50 px-2.5 py-1 text-xs text-lazyops-text outline-none focus:border-primary/60"
+          >
+            <option value="all">all services</option>
+            {serviceOptions.map((service) => (
+              <option key={service} value={service}>
+                {service}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className={`max-h-96 overflow-y-auto rounded-lg border border-lazyops-border bg-lazyops-bg font-mono text-xs ${followMode ? 'animate-pulse' : ''}`}>
@@ -378,7 +413,7 @@ function LogsTab({ logs, logFilter, onFilterChange, followMode, onFollowToggle }
                   {log.level.toUpperCase().padEnd(5)}
                 </span>
                 <span className="shrink-0 text-lazyops-muted/70">
-                  [{log.service}{log.source ? ` / ${log.source}` : ''}]
+                  [{log.service}{log.source ? ` / ${log.source}` : ''}{log.revision_id ? ` / ${log.revision_id}` : ''}]
                 </span>
                 <span className="text-lazyops-text">{log.message}</span>
               </div>

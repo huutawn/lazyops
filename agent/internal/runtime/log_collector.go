@@ -28,7 +28,7 @@ type LogCollectorConfig struct {
 func DefaultLogCollectorConfig() LogCollectorConfig {
 	return LogCollectorConfig{
 		MaxEntriesPerBatch: 100,
-		ReportingInterval:  30 * time.Second,
+		ReportingInterval:  5 * time.Second,
 		MaxBufferAge:       5 * time.Minute,
 		MaxBufferSize:      500,
 		ExcerptMaxLength:   512,
@@ -67,7 +67,7 @@ func NewLogCollector(logger *slog.Logger, cfg LogCollectorConfig) *LogCollector 
 		cfg.MaxEntriesPerBatch = 100
 	}
 	if cfg.ReportingInterval <= 0 {
-		cfg.ReportingInterval = 30 * time.Second
+		cfg.ReportingInterval = 5 * time.Second
 	}
 	if cfg.MaxBufferAge <= 0 {
 		cfg.MaxBufferAge = 5 * time.Minute
@@ -187,7 +187,11 @@ func (c *LogCollector) CollectExpiredBatches() map[string][]contracts.LogEntry {
 		}
 
 		oldest := entries[0].ingested
-		if now.Sub(oldest) < c.cfg.MaxBufferAge && len(entries) < c.cfg.MaxEntriesPerBatch {
+		age := now.Sub(oldest)
+		readyByInterval := age >= c.cfg.ReportingInterval
+		readyByMaxAge := age >= c.cfg.MaxBufferAge
+		readyBySize := len(entries) >= c.cfg.MaxEntriesPerBatch
+		if !readyByInterval && !readyByMaxAge && !readyBySize {
 			continue
 		}
 
@@ -207,6 +211,13 @@ func (c *LogCollector) CollectExpiredBatches() map[string][]contracts.LogEntry {
 	}
 
 	return result
+}
+
+func (c *LogCollector) ReportingInterval() time.Duration {
+	if c == nil {
+		return 0
+	}
+	return c.cfg.ReportingInterval
 }
 
 func (c *LogCollector) BuildLogBatch(projectID, bindingID, revisionID string, entries []contracts.LogEntry) contracts.LogBatchPayload {

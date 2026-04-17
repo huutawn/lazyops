@@ -25,6 +25,7 @@ type Config struct {
 	AgentImageRef       string
 	KubectlBin          string
 	KubeconfigPath      string
+	LogReportInterval   time.Duration
 	ShutdownTimeout     time.Duration
 	HeartbeatInterval   time.Duration
 	HandshakeVersion    string
@@ -53,6 +54,7 @@ func Load() (Config, error) {
 		AgentImageRef:       envOrDefault("AGENT_DEFAULT_IMAGE", envOrDefault("AGENT_IMAGE_REF", "tawn/lazyops-agent:latest")),
 		KubectlBin:          envOrDefault("AGENT_KUBECTL_BIN", "kubectl"),
 		KubeconfigPath:      strings.TrimSpace(os.Getenv("AGENT_KUBECONFIG")),
+		LogReportInterval:   durationOrDefault("AGENT_LOG_REPORT_INTERVAL", 5*time.Second),
 		ShutdownTimeout:     durationOrDefault("AGENT_SHUTDOWN_TIMEOUT", 10*time.Second),
 		HeartbeatInterval:   durationOrDefault("AGENT_HEARTBEAT_INTERVAL", 30*time.Second),
 		HandshakeVersion:    envOrDefault("AGENT_HANDSHAKE_VERSION", "v0"),
@@ -119,6 +121,9 @@ func (c Config) Validate() error {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("shutdown timeout must be positive")
+	}
+	if c.LogReportInterval <= 0 {
+		return fmt.Errorf("log report interval must be positive")
 	}
 	if strings.TrimSpace(c.HandshakeVersion) == "" {
 		return fmt.Errorf("handshake version is required")

@@ -32,8 +32,8 @@ func TestLogCollectorDefaultConfig(t *testing.T) {
 	if c.cfg.MaxEntriesPerBatch != 100 {
 		t.Fatalf("expected default max entries 100, got %d", c.cfg.MaxEntriesPerBatch)
 	}
-	if c.cfg.ReportingInterval != 30*time.Second {
-		t.Fatalf("expected default reporting interval 30s, got %s", c.cfg.ReportingInterval)
+	if c.cfg.ReportingInterval != 5*time.Second {
+		t.Fatalf("expected default reporting interval 5s, got %s", c.cfg.ReportingInterval)
 	}
 	if c.cfg.MaxBufferAge != 5*time.Minute {
 		t.Fatalf("expected default max buffer age 5m, got %s", c.cfg.MaxBufferAge)
@@ -196,6 +196,28 @@ func TestLogCollectorCollectExpiredBatchesNoExpiry(t *testing.T) {
 	batches := c.CollectExpiredBatches()
 	if len(batches) != 0 {
 		t.Fatalf("expected 0 batches before expiry, got %d", len(batches))
+	}
+}
+
+func TestLogCollectorCollectExpiredBatchesUsesReportingInterval(t *testing.T) {
+	c := testLogCollector()
+	c.Ingest(contracts.LogEntry{
+		Timestamp: c.now(),
+		Severity:  contracts.SeverityInfo,
+		Source:    "api",
+		Message:   "request received",
+	})
+
+	c.now = func() time.Time {
+		return time.Date(2026, 4, 4, 10, 0, 2, 0, time.UTC)
+	}
+
+	batches := c.CollectExpiredBatches()
+	if len(batches) != 1 {
+		t.Fatalf("expected 1 batch once reporting interval elapsed, got %d", len(batches))
+	}
+	if len(batches["api"]) != 1 {
+		t.Fatalf("expected 1 entry in api batch, got %d", len(batches["api"]))
 	}
 }
 

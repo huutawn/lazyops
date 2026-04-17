@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -339,11 +340,32 @@ func (ctl *AgentControlController) handleLogBatch(client *service.ControlClient,
 		})
 	}
 
+	projectID := firstNonEmptyControl(
+		payload.ProjectID,
+		deriveLogBatchLabel(entries, "project_id"),
+		deriveLogBatchLabel(entries, "lazyops.project_id"),
+	)
+	bindingID := firstNonEmptyControl(
+		payload.BindingID,
+		deriveLogBatchLabel(entries, "binding_id"),
+	)
+	revisionID := firstNonEmptyControl(
+		payload.RevisionID,
+		deriveLogBatchLabel(entries, "revision_id"),
+		deriveLogBatchLabel(entries, "lazyops.revision_id"),
+	)
+	serviceName := firstNonEmptyControl(
+		payload.ServiceName,
+		deriveLogBatchLabel(entries, "service"),
+		deriveLogBatchLabel(entries, "service_name"),
+		deriveLogBatchLabel(entries, "lazyops.service"),
+	)
+
 	if _, err := ctl.observability.IngestLogBatch(context.Background(), service.IngestLogBatchCommand{
-		ProjectID:   payload.ProjectID,
-		BindingID:   payload.BindingID,
-		RevisionID:  payload.RevisionID,
-		ServiceName: payload.ServiceName,
+		ProjectID:   projectID,
+		BindingID:   bindingID,
+		RevisionID:  revisionID,
+		ServiceName: serviceName,
 		Entries:     entries,
 		CollectedAt: payload.CollectedAt,
 	}); err != nil {
@@ -352,14 +374,37 @@ func (ctl *AgentControlController) handleLogBatch(client *service.ControlClient,
 	}
 	if ctl.operatorHub != nil {
 		_ = ctl.operatorHub.BroadcastEvent("logs.live", map[string]any{
-			"project_id":   payload.ProjectID,
-			"binding_id":   payload.BindingID,
-			"revision_id":  payload.RevisionID,
-			"service_name": payload.ServiceName,
+			"project_id":   projectID,
+			"binding_id":   bindingID,
+			"revision_id":  revisionID,
+			"service_name": serviceName,
 			"collected_at": payload.CollectedAt,
 			"entries":      payload.Entries,
 		})
 	}
+}
+
+func deriveLogBatchLabel(entries []service.LogBatchEntry, keys ...string) string {
+	for _, entry := range entries {
+		if entry.Labels == nil {
+			continue
+		}
+		for _, key := range keys {
+			if value := strings.TrimSpace(entry.Labels[key]); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyControl(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (ctl *AgentControlController) handleTopologyReport(client *service.ControlClient, raw []byte) {

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lazyops-day13-day15
+  labels:
+    app.kubernetes.io/part-of: lazyops
+    lazyops.phase: day13-day15

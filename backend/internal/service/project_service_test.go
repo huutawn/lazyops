@@ -382,3 +382,60 @@ func TestProjectServiceConfigureServicesRejectsReservedInternalPath(t *testing.T
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
 }
+
+func TestProjectServiceConfigureServicesRejectsK3sIncompatibleServiceName(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	service := NewProjectService(projectStore).WithServiceStore(newFakeProjectServiceStoreForProjectSvc(nil))
+
+	_, err := service.ConfigureServices(ConfigureProjectServicesCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleAdmin,
+		ProjectID:       "prj_1",
+		Items: []ConfigureProjectServiceItem{
+			{Name: "api_v1", Path: "apps/api"},
+		},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "kubernetes-compatible") {
+		t.Fatalf("expected kubernetes-compatible validation error, got %v", err)
+	}
+}
+
+func TestProjectServiceConfigureServicesAllowsLegacyStandaloneLogicalNames(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "standalone",
+		DefaultBranch: "main",
+	})
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(nil)
+	service := NewProjectService(projectStore).WithServiceStore(serviceStore)
+
+	result, err := service.ConfigureServices(ConfigureProjectServicesCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleAdmin,
+		ProjectID:       "prj_1",
+		Items: []ConfigureProjectServiceItem{
+			{Name: "api_v1", Path: "apps/api"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected standalone service name to pass, got %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Name != "api_v1" {
+		t.Fatalf("unexpected configured services: %#v", result.Items)
+	}
+}

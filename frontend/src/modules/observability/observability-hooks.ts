@@ -6,6 +6,7 @@ import {
   listProjectLogs,
   listProjectMetrics,
 } from '@/modules/observability/observability-api';
+import { normalizeLiveLogEnvelope } from '@/modules/observability/observability-live';
 import type { Incident, LogEntry, MetricRecord, TraceDetail } from '@/modules/observability/observability-types';
 
 export function useLogs(projectId?: string, level?: string) {
@@ -80,20 +81,6 @@ export function useMetrics(projectId?: string) {
   });
 }
 
-type LiveLogEnvelope = {
-  type?: string;
-  payload?: {
-    project_id?: string;
-    service_name?: string;
-    entries?: Array<{
-      timestamp?: string;
-      severity?: LogEntry['level'];
-      source?: string;
-      message?: string;
-    }>;
-  };
-};
-
 export function useLiveLogs(projectId?: string, enabled = false) {
   const [items, setItems] = useState<LogEntry[]>([]);
 
@@ -108,22 +95,8 @@ export function useLiveLogs(projectId?: string, enabled = false) {
 
     socket.onmessage = (event) => {
       try {
-        const envelope = JSON.parse(event.data) as LiveLogEnvelope;
-        if (envelope.type !== 'logs.live' || envelope.payload?.project_id !== projectId) {
-          return;
-        }
-        const service = envelope.payload.service_name ?? 'app';
-        const next = (envelope.payload.entries ?? [])
-          .filter((entry) => entry.message && entry.timestamp)
-          .map((entry, index) => ({
-            id: `${service}-${entry.timestamp}-${index}`,
-            service,
-            source: entry.source,
-            level: (entry.severity ?? 'info') as LogEntry['level'],
-            message: entry.message ?? '',
-            timestamp: entry.timestamp ?? new Date().toISOString(),
-          }));
-
+        const envelope = JSON.parse(event.data);
+        const next = normalizeLiveLogEnvelope(envelope, projectId);
         if (next.length === 0) {
           return;
         }

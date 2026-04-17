@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -88,5 +90,36 @@ func TestBuildIngressObservationUsesGatewayAddressFallback(t *testing.T) {
 	}
 	if len(observation.ExternalAddresses) != 1 || observation.ExternalAddresses[0] != "10.10.10.10" {
 		t.Fatalf("unexpected external addresses: %#v", observation)
+	}
+}
+
+func TestParseK3sTimestampedLogLine(t *testing.T) {
+	timestamp, message := parseK3sTimestampedLogLine("2026-04-16T10:00:00Z server started")
+	if timestamp.IsZero() {
+		t.Fatal("expected timestamp to be parsed")
+	}
+	if message != "server started" {
+		t.Fatalf("expected message without timestamp, got %q", message)
+	}
+}
+
+func TestSummarizeKubectlApplyOutputDetectsIdempotentApply(t *testing.T) {
+	summary := summarizeKubectlApplyOutput([]byte("deployment.apps/api unchanged\nservice/api unchanged\n"))
+	if summary.Unchanged != 2 {
+		t.Fatalf("expected 2 unchanged resources, got %#v", summary)
+	}
+	if summary.totalMutations() != 0 {
+		t.Fatalf("expected zero mutations, got %#v", summary)
+	}
+}
+
+func TestClassifyKubectlErrorDetectsStaleKubeconfig(t *testing.T) {
+	err := classifyKubectlError(context.Background(), []string{"get", "pods"}, []byte("Unauthorized"), errors.New("exit status 1"))
+	var opErr *OperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected OperationError, got %T", err)
+	}
+	if opErr.Code != "k8s_kubeconfig_stale" {
+		t.Fatalf("expected stale kubeconfig code, got %#v", opErr)
 	}
 }
