@@ -126,6 +126,7 @@ type ClusterStore interface {
 	GetByNameForUser(userID, name string) (*models.Cluster, error)
 	GetByIDForUser(userID, clusterID string) (*models.Cluster, error)
 	GetByID(clusterID string) (*models.Cluster, error)
+	UpdateBootstrapMetadata(clusterID, kubeconfigSecretRef string, publicIP, instanceID *string, status string, at time.Time) error
 	UpdateStatus(clusterID, status string, at time.Time) error
 }
 

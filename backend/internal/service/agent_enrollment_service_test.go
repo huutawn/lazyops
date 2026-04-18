@@ -382,3 +382,71 @@ func TestAgentEnrollmentMarksInstanceOnlineAndHeartbeatUpdatesState(t *testing.T
 		t.Fatalf("expected agent last seen at %s, got %#v", sentAt, agent)
 	}
 }
+
+func TestAgentEnrollmentAllowsNodeAgentForDistributedK3s(t *testing.T) {
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_k3s_1",
+		UserID:                  "usr_1",
+		Name:                    "edge-k3s-1",
+		PublicIP:                ptrString("203.0.113.20"),
+		Status:                  "pending_enrollment",
+		LabelsJSON:              "{}",
+		RuntimeCapabilitiesJSON: "{}",
+	})
+	bootstrapStore := newFakeBootstrapTokenStore(&models.BootstrapToken{
+		ID:                  "boot_k3s_1",
+		UserID:              "usr_1",
+		InstanceID:          "inst_k3s_1",
+		TokenHash:           hashOpaqueToken("lop_boot_k3s_valid"),
+		ExpectedRuntimeMode: "distributed-k3s",
+		ExpectedAgentKind:   "node_agent",
+		ExpectedTargetRef:   "inst_k3s_1",
+		ExpiresAt:           time.Now().UTC().Add(time.Minute),
+	})
+	agentStore := &fakeAgentStore{}
+	agentTokenStore := newFakeAgentTokenStore()
+	service := NewAgentEnrollmentService(agentStore, instanceStore, bootstrapStore, agentTokenStore, testEnrollmentAndAgentTokenConfig())
+
+	enrolled, err := service.Enroll(AgentEnrollmentCommand{
+		BootstrapToken: "lop_boot_k3s_valid",
+		RuntimeMode:    "distributed-k3s",
+		AgentKind:      "node_agent",
+		Machine: AgentMachineInfo{
+			Hostname: "lazyops-node-agent",
+			IPs:      []string{"10.42.0.12"},
+			Labels: map[string]string{
+				"target_ref": "inst_k3s_1",
+			},
+		},
+		Capabilities: map[string]any{
+			"runtime_mode": "distributed-k3s",
+		},
+	})
+	if err != nil {
+		t.Fatalf("enroll node agent: %v", err)
+	}
+	if !strings.HasPrefix(enrolled.AgentID, "agt_") {
+		t.Fatalf("expected enrolled node agent id, got %q", enrolled.AgentID)
+	}
+
+	heartbeat, err := service.Heartbeat(AgentHeartbeatCommand{
+		UserID:       "usr_1",
+		AgentID:      enrolled.AgentID,
+		InstanceID:   "inst_k3s_1",
+		SessionID:    "sess_node",
+		State:        "connected",
+		HealthStatus: "online",
+		RuntimeMode:  "distributed-k3s",
+		AgentKind:    "node_agent",
+		SentAt:       time.Now().UTC().Add(time.Minute),
+		Capabilities: map[string]any{
+			"runtime_mode": "distributed-k3s",
+		},
+	})
+	if err != nil {
+		t.Fatalf("node agent heartbeat: %v", err)
+	}
+	if heartbeat.InstanceStatus != "online" {
+		t.Fatalf("expected node heartbeat instance status online, got %q", heartbeat.InstanceStatus)
+	}
+}

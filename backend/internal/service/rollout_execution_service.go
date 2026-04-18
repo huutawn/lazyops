@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"lazyops-server/internal/models"
 	"lazyops-server/internal/runtime"
 	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
@@ -32,6 +33,7 @@ type RolloutExecutionService struct {
 	deployments         *DeploymentService
 	planner             *RolloutPlanner
 	instances           InstanceStore
+	clusters            ClusterStore
 	dispatcher          RolloutCommandDispatcher
 	operatorHub         OperatorEventBroadcaster
 	healthGateEvaluator HealthGateEvaluator
@@ -75,6 +77,59 @@ func NewRolloutExecutionService(
 func (s *RolloutExecutionService) WithHealthGateEvaluator(evaluator HealthGateEvaluator) *RolloutExecutionService {
 	s.healthGateEvaluator = evaluator
 	return s
+}
+
+func (s *RolloutExecutionService) WithClusterStore(clusters ClusterStore) *RolloutExecutionService {
+	if s == nil {
+		return s
+	}
+	s.clusters = clusters
+	return s
+}
+
+func (s *RolloutExecutionService) resolveRolloutAgent(binding *models.DeploymentBinding) (string, string, error) {
+	if binding == nil {
+		return "", "", ErrInvalidInput
+	}
+
+	switch {
+	case binding.RuntimeMode == runtime.RuntimeModeStandalone && binding.TargetKind == "instance":
+		instance, err := s.instances.GetByID(binding.TargetID)
+		if err != nil {
+			return "", "", err
+		}
+		if instance == nil || instance.AgentID == nil || strings.TrimSpace(*instance.AgentID) == "" || strings.EqualFold(instance.Status, "offline") {
+			return "", "", ErrRolloutAgentUnavailable
+		}
+		return strings.TrimSpace(*instance.AgentID), "instance:" + binding.TargetID, nil
+	case binding.RuntimeMode == runtime.RuntimeModeDistributedK3s && binding.TargetKind == "cluster":
+		if s.clusters == nil {
+			return "", "", ErrRolloutUnsupportedTarget
+		}
+		cluster, err := s.clusters.GetByID(binding.TargetID)
+		if err != nil {
+			return "", "", err
+		}
+		if cluster == nil {
+			return "", "", ErrTargetNotFound
+		}
+		if normalizeClusterStatus(cluster.Status) != ClusterStatusReady {
+			return "", "", ErrClusterNotReady
+		}
+		if cluster.InstanceID == nil || strings.TrimSpace(*cluster.InstanceID) == "" {
+			return "", "", ErrRolloutAgentUnavailable
+		}
+		instance, err := s.instances.GetByID(strings.TrimSpace(*cluster.InstanceID))
+		if err != nil {
+			return "", "", err
+		}
+		if instance == nil || instance.AgentID == nil || strings.TrimSpace(*instance.AgentID) == "" || strings.EqualFold(instance.Status, "offline") {
+			return "", "", ErrRolloutAgentUnavailable
+		}
+		return strings.TrimSpace(*instance.AgentID), "cluster:" + binding.TargetID, nil
+	default:
+		return "", "", ErrRolloutUnsupportedTarget
+	}
 }
 
 func (s *RolloutExecutionService) RecoverRunningDeploymentsForAgent(ctx context.Context, userID, agentID string) error {
@@ -187,36 +242,24 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 	if binding == nil {
 		return nil, ErrInvalidInput
 	}
-	if binding.RuntimeMode != runtime.RuntimeModeStandalone || binding.TargetKind != "instance" {
-		logger.Warn("rollout_unsupported_target",
+	agentID, targetLabel, err := s.resolveRolloutAgent(binding)
+	if err != nil {
+		logger.Warn("rollout_target_resolution_failed",
 			"project_id", projectID,
 			"deployment_id", deploymentID,
 			"runtime_mode", binding.RuntimeMode,
 			"target_kind", binding.TargetKind,
+			"target_id", binding.TargetID,
+			"error", err.Error(),
 		)
-		return nil, ErrRolloutUnsupportedTarget
-	}
-
-	instance, err := s.instances.GetByID(binding.TargetID)
-	if err != nil {
 		return nil, err
 	}
-	if instance == nil || instance.AgentID == nil || strings.TrimSpace(*instance.AgentID) == "" || strings.EqualFold(instance.Status, "offline") {
-		logger.Warn("rollout_agent_unavailable",
-			"project_id", projectID,
-			"deployment_id", deploymentID,
-			"instance_id", binding.TargetID,
-			"instance_status", instance.Status,
-			"has_agent_id", instance.AgentID != nil,
-		)
-		return nil, ErrRolloutAgentUnavailable
-	}
-	agentID := strings.TrimSpace(*instance.AgentID)
 
 	logger.Info("rollout_planning_candidate",
 		"project_id", projectID,
 		"deployment_id", deploymentID,
 		"agent_id", agentID,
+		"target", targetLabel,
 	)
 
 	plan, err := s.planner.PlanCandidate(ctx, projectID, revision.ID)
@@ -253,6 +296,7 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 			"revision_id":    revision.ID,
 			"project_id":     projectID,
 			"runtime_mode":   binding.RuntimeMode,
+			"target_kind":    binding.TargetKind,
 			"target_id":      binding.TargetID,
 			"correlation_id": correlationID,
 		})
@@ -429,12 +473,23 @@ func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.
 
 	targetBindings := make(map[string]struct{})
 	for _, binding := range bindings {
-		if binding.TargetKind != "instance" || binding.RuntimeMode != runtime.RuntimeModeStandalone {
+		switch {
+		case binding.TargetKind == "instance" && binding.RuntimeMode == runtime.RuntimeModeStandalone:
+			if _, ok := targetInstanceIDs[binding.TargetID]; !ok {
+				continue
+			}
+		case binding.TargetKind == "cluster" && binding.RuntimeMode == runtime.RuntimeModeDistributedK3s && s.clusters != nil:
+			cluster, err := s.clusters.GetByID(binding.TargetID)
+			if err != nil || cluster == nil || cluster.InstanceID == nil {
+				continue
+			}
+			if _, ok := targetInstanceIDs[strings.TrimSpace(*cluster.InstanceID)]; !ok {
+				continue
+			}
+		default:
 			continue
 		}
-		if _, ok := targetInstanceIDs[binding.TargetID]; ok {
 			targetBindings[binding.ID] = struct{}{}
-		}
 	}
 	if len(targetBindings) == 0 {
 		return nil

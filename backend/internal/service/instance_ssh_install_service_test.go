@@ -24,6 +24,17 @@ func (f *fakeSSHExecutor) Execute(_ context.Context, input SSHExecutionInput) (S
 	return f.result, nil
 }
 
+func successfulK3sBootstrapStdout(clusterName, publicIP string) string {
+	return strings.Join([]string{
+		"LAZYOPS_BOOTSTRAP_STAGE=k3s_installed",
+		"LAZYOPS_CLUSTER_NAME=" + clusterName,
+		"LAZYOPS_PUBLIC_IP=" + publicIP,
+		"LAZYOPS_KUBECONFIG_B64=YXBpVmVyc2lvbjogdjE=",
+		"LAZYOPS_BOOTSTRAP_STAGE=kubeconfig_captured",
+		"LAZYOPS_BOOTSTRAP_STAGE=node_agent_ready",
+	}, "\n")
+}
+
 func TestInstanceSSHInstallServiceRejectsMissingAuth(t *testing.T) {
 	instanceStore := newFakeInstanceStore(&models.Instance{
 		ID:                      "inst_1",
@@ -69,9 +80,12 @@ func TestInstanceSSHInstallServiceIssuesTokenAndExecutesCommand(t *testing.T) {
 	})
 	instanceSvc := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
 	sshExec := &fakeSSHExecutor{
-		result: SSHExecutionResult{HostKeyFingerprint: "SHA256:abc123"},
+		result: SSHExecutionResult{
+			HostKeyFingerprint: "SHA256:abc123",
+			Stdout:             successfulK3sBootstrapStdout("k3s-inst-1", "203.0.113.10"),
+		},
 	}
-	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec)
+	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec).WithClusterService(NewClusterService(newFakeClusterStore()))
 
 	result, err := installSvc.Install(context.Background(), InstallInstanceAgentSSHCommand{
 		UserID:             "usr_1",
@@ -97,16 +111,38 @@ func TestInstanceSSHInstallServiceIssuesTokenAndExecutesCommand(t *testing.T) {
 	if strings.TrimSpace(result.HostKeyFingerprint) == "" {
 		t.Fatal("expected host key fingerprint in result")
 	}
-	if !strings.Contains(sshExec.lastInput.Command, "run -d --name") {
-		t.Fatalf("expected container run command, got %q", sshExec.lastInput.Command)
+	if result.TargetKind != "cluster" || result.RuntimeMode != "distributed-k3s" {
+		t.Fatalf("expected cluster/distributed-k3s result, got kind=%q runtime=%q", result.TargetKind, result.RuntimeMode)
+	}
+	if result.ClusterID == "" || result.ClusterName == "" {
+		t.Fatalf("expected cluster registration in result, got id=%q name=%q", result.ClusterID, result.ClusterName)
+	}
+	if !strings.Contains(sshExec.lastInput.Command, "https://get.k3s.io") {
+		t.Fatalf("expected k3s bootstrap command, got %q", sshExec.lastInput.Command)
 	}
 	if !strings.Contains(sshExec.lastInput.Command, "AGENT_BOOTSTRAP_TOKEN") {
 		t.Fatalf("expected bootstrap token env in command, got %q", sshExec.lastInput.Command)
+	}
+	if !strings.Contains(sshExec.lastInput.Command, "kind: DaemonSet") {
+		t.Fatalf("expected node agent daemonset manifest in command, got %q", sshExec.lastInput.Command)
 	}
 
 	oldRecord := tokenStore.byID["boot_old"]
 	if oldRecord == nil || oldRecord.UsedAt == nil {
 		t.Fatalf("expected old bootstrap token revoked, got %#v", oldRecord)
+	}
+	if oldRecord.ExpectedRuntimeMode != "" || oldRecord.ExpectedAgentKind != "" {
+		t.Fatalf("expected legacy token profile to remain empty, got %#v", oldRecord)
+	}
+	newRecord, err := tokenStore.GetByHash(hashOpaqueToken(result.Bootstrap.Token))
+	if err != nil {
+		t.Fatalf("load new bootstrap token: %v", err)
+	}
+	if newRecord == nil {
+		t.Fatal("expected new bootstrap token to be stored")
+	}
+	if newRecord.ExpectedRuntimeMode != "distributed-k3s" || newRecord.ExpectedAgentKind != "node_agent" {
+		t.Fatalf("expected k3s node bootstrap token profile, got %#v", newRecord)
 	}
 }
 
@@ -157,7 +193,8 @@ func TestInstanceSSHInstallServiceAutoAttachesProjectBinding(t *testing.T) {
 	tokenStore := newFakeBootstrapTokenStore()
 	instanceSvc := NewInstanceService(instanceStore, tokenStore, testEnrollmentConfig())
 	bindingStore := newFakeDeploymentBindingStore()
-	bindingSvc := NewDeploymentBindingService(projectStore, bindingStore, instanceStore, newFakeMeshNetworkStore(), newFakeClusterStore())
+	clusterStore := newFakeClusterStore()
+	bindingSvc := NewDeploymentBindingService(projectStore, bindingStore, instanceStore, newFakeMeshNetworkStore(), clusterStore)
 	orchestrator := NewBootstrapOrchestrator(
 		projectStore,
 		NewProjectService(projectStore),
@@ -168,14 +205,19 @@ func TestInstanceSSHInstallServiceAutoAttachesProjectBinding(t *testing.T) {
 		newFakeDeploymentStore(),
 		instanceStore,
 		newFakeMeshNetworkStore(),
-		newFakeClusterStore(),
+		clusterStore,
 		nil,
 	)
 
 	sshExec := &fakeSSHExecutor{
-		result: SSHExecutionResult{HostKeyFingerprint: "SHA256:auto"},
+		result: SSHExecutionResult{
+			HostKeyFingerprint: "SHA256:auto",
+			Stdout:             successfulK3sBootstrapStdout("k3s-inst-1", "203.0.113.10"),
+		},
 	}
-	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec).WithBootstrapOrchestrator(orchestrator)
+	installSvc := NewInstanceSSHInstallService(instanceSvc, sshExec).
+		WithBootstrapOrchestrator(orchestrator).
+		WithClusterService(NewClusterService(clusterStore))
 
 	result, err := installSvc.Install(context.Background(), InstallInstanceAgentSSHCommand{
 		UserID:          "usr_1",
@@ -201,8 +243,8 @@ func TestInstanceSSHInstallServiceAutoAttachesProjectBinding(t *testing.T) {
 	if len(bindings) != 1 {
 		t.Fatalf("expected one auto binding, got %d", len(bindings))
 	}
-	if bindings[0].TargetKind != "instance" || bindings[0].TargetID != "inst_1" {
-		t.Fatalf("expected auto binding to instance inst_1, got kind=%q id=%q", bindings[0].TargetKind, bindings[0].TargetID)
+	if bindings[0].TargetKind != "cluster" || bindings[0].TargetID == "" {
+		t.Fatalf("expected auto binding to cluster target, got kind=%q id=%q", bindings[0].TargetKind, bindings[0].TargetID)
 	}
 }
 
@@ -233,7 +275,7 @@ func TestBuildInstallAgentCommandResetsStateBeforeRun(t *testing.T) {
 		InstanceID: "inst_1",
 	}, "lop_boot_123", "enc_key_123", "http://control.example:8080")
 
-	if !strings.Contains(command, "agent-state.json") {
-		t.Fatalf("expected command to reset agent state file before run, got %q", command)
+	if !strings.Contains(command, "lazyops-node-agent-env") {
+		t.Fatalf("expected command to provision node agent secret before run, got %q", command)
 	}
 }

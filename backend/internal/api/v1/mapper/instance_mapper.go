@@ -43,12 +43,27 @@ func ToCreateInstanceResponse(result service.CreateInstanceResult) responsedto.C
 }
 
 func ToInstallInstanceAgentSSHResponse(result service.InstallInstanceAgentSSHResult) responsedto.InstallInstanceAgentSSHResponse {
+	stages := make([]responsedto.BootstrapStepResponse, 0, len(result.Stages))
+	for _, stage := range result.Stages {
+		stages = append(stages, responsedto.BootstrapStepResponse{
+			ID:      stage.ID,
+			State:   stage.State,
+			Summary: stage.Message,
+			Actions: []responsedto.BootstrapStepActionResponse{},
+		})
+	}
 	return responsedto.InstallInstanceAgentSSHResponse{
 		InstanceID:         result.InstanceID,
 		Bootstrap:          ToBootstrapTokenIssueResponse(result.Bootstrap),
 		StartedAt:          result.StartedAt,
 		HostKeyFingerprint: result.HostKeyFingerprint,
 		AttachedProjectID:  result.AttachedProjectID,
+		ClusterID:          result.ClusterID,
+		ClusterName:        result.ClusterName,
+		ClusterStatus:      result.ClusterStatus,
+		TargetKind:         result.TargetKind,
+		RuntimeMode:        result.RuntimeMode,
+		Stages:             stages,
 	}
 }
 

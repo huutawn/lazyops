@@ -53,6 +53,8 @@ func ToClusterSummaryResponse(summary service.ClusterSummary) responsedto.Cluste
 		Name:       summary.Name,
 		Provider:   summary.Provider,
 		Status:     summary.Status,
+		PublicIP:   summary.PublicIP,
+		InstanceID: summary.InstanceID,
 		CreatedAt:  summary.CreatedAt,
 		UpdatedAt:  summary.UpdatedAt,
 	}

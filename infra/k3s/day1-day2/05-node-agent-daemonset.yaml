@@ -18,8 +18,6 @@ spec:
     spec:
       serviceAccountName: lazyops-node-agent
       priorityClassName: system-node-critical
-      imagePullSecrets:
-        - name: lazyops-registry
       tolerations:
         - operator: Exists
       containers:

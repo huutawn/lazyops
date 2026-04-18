@@ -50,7 +50,7 @@ func (s *AgentEnrollmentService) Enroll(cmd AgentEnrollmentCommand) (*AgentEnrol
 	if bootstrapToken == "" {
 		return nil, ErrInvalidInput
 	}
-	if err := validateInstanceEnrollmentMode(cmd.RuntimeMode, cmd.AgentKind); err != nil {
+	if err := validateEnrollmentMode(cmd.RuntimeMode, cmd.AgentKind); err != nil {
 		return nil, err
 	}
 
@@ -60,6 +60,9 @@ func (s *AgentEnrollmentService) Enroll(cmd AgentEnrollmentCommand) (*AgentEnrol
 	}
 	if record == nil {
 		return nil, ErrBootstrapTokenUnknown
+	}
+	if err := validateBootstrapTokenProfile(*record, cmd.RuntimeMode, cmd.AgentKind, cmd.Machine); err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -78,7 +81,7 @@ func (s *AgentEnrollmentService) Enroll(cmd AgentEnrollmentCommand) (*AgentEnrol
 		return nil, ErrBootstrapOwnershipMismatch
 	}
 
-	if err := validateEnrollmentMachineOwnership(*instance, cmd.Machine); err != nil {
+	if err := validateEnrollmentMachineOwnership(*instance, cmd.Machine, cmd.AgentKind); err != nil {
 		return nil, err
 	}
 
@@ -140,7 +143,7 @@ func (s *AgentEnrollmentService) Heartbeat(cmd AgentHeartbeatCommand) (*AgentHea
 	if userID == "" || agentID == "" || instanceID == "" {
 		return nil, ErrInvalidInput
 	}
-	if err := validateInstanceEnrollmentMode(cmd.RuntimeMode, cmd.AgentKind); err != nil {
+	if err := validateEnrollmentMode(cmd.RuntimeMode, cmd.AgentKind); err != nil {
 		return nil, err
 	}
 
@@ -212,24 +215,59 @@ func (s *AgentEnrollmentService) resolveOrCreateAgent(instance *models.Instance,
 	return agent, nil
 }
 
-func validateInstanceEnrollmentMode(runtimeMode, agentKind string) error {
+func validateEnrollmentMode(runtimeMode, agentKind string) error {
 	runtimeMode = strings.TrimSpace(runtimeMode)
 	agentKind = strings.TrimSpace(agentKind)
 	if runtimeMode == "" || agentKind == "" {
 		return ErrInvalidInput
 	}
 
-	if agentKind != "instance_agent" {
-		return ErrInvalidInput
-	}
-	if runtimeMode != "standalone" && runtimeMode != "distributed-mesh" {
+	switch agentKind {
+	case "instance_agent":
+		if runtimeMode != "standalone" && runtimeMode != "distributed-mesh" {
+			return ErrInvalidInput
+		}
+	case "node_agent":
+		if runtimeMode != "distributed-k3s" {
+			return ErrInvalidInput
+		}
+	default:
 		return ErrInvalidInput
 	}
 
 	return nil
 }
 
-func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentMachineInfo) error {
+func validateBootstrapTokenProfile(record models.BootstrapToken, runtimeMode, agentKind string, machine AgentMachineInfo) error {
+	expectedRuntimeMode := strings.TrimSpace(record.ExpectedRuntimeMode)
+	if expectedRuntimeMode != "" && expectedRuntimeMode != strings.TrimSpace(runtimeMode) {
+		return ErrInvalidInput
+	}
+
+	expectedAgentKind := strings.TrimSpace(record.ExpectedAgentKind)
+	if expectedAgentKind != "" && expectedAgentKind != strings.TrimSpace(agentKind) {
+		return ErrInvalidInput
+	}
+
+	expectedTargetRef := strings.TrimSpace(record.ExpectedTargetRef)
+	if expectedTargetRef == "" {
+		return nil
+	}
+	targetRef := ""
+	if machine.Labels != nil {
+		targetRef = strings.TrimSpace(machine.Labels["target_ref"])
+	}
+	if targetRef != expectedTargetRef {
+		return ErrBootstrapOwnershipMismatch
+	}
+	return nil
+}
+
+func validateEnrollmentMachineOwnership(instance models.Instance, machine AgentMachineInfo, agentKind string) error {
+	if strings.TrimSpace(agentKind) == "node_agent" {
+		return nil
+	}
+
 	allowed := make(map[string]struct{}, 2)
 	if instance.PublicIP != nil && *instance.PublicIP != "" {
 		allowed[*instance.PublicIP] = struct{}{}

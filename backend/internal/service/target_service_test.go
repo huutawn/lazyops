@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +202,27 @@ func (f *fakeClusterStore) GetByID(clusterID string) (*models.Cluster, error) {
 		return nil, nil
 	}
 	return item, nil
+}
+
+func (f *fakeClusterStore) UpdateBootstrapMetadata(clusterID, kubeconfigSecretRef string, publicIP, instanceID *string, status string, at time.Time) error {
+	item, ok := f.byID[clusterID]
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(kubeconfigSecretRef) != "" {
+		item.KubeconfigSecretRef = kubeconfigSecretRef
+	}
+	if publicIP != nil {
+		item.PublicIP = publicIP
+	}
+	if instanceID != nil {
+		item.InstanceID = instanceID
+	}
+	if strings.TrimSpace(status) != "" {
+		item.Status = status
+	}
+	item.UpdatedAt = at
+	return nil
 }
 
 func (f *fakeClusterStore) UpdateStatus(clusterID, status string, at time.Time) error {

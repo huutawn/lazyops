@@ -6,6 +6,7 @@ type Cluster struct {
 	ID                  string    `json:"id" gorm:"primaryKey;size:64"`
 	UserID              string    `json:"user_id" gorm:"size:64;not null;index;uniqueIndex:idx_clusters_user_name"`
 	Name                string    `json:"name" gorm:"size:255;not null;uniqueIndex:idx_clusters_user_name"`
+	InstanceID          *string   `json:"instance_id,omitempty" gorm:"size:64;index"`
 	Provider            string    `json:"provider" gorm:"size:64;not null"`
 	KubeconfigSecretRef string    `json:"kubeconfig_secret_ref" gorm:"size:255;not null"`
 	PublicIP            *string   `json:"public_ip,omitempty" gorm:"size:64"`

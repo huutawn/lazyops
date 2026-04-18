@@ -24,6 +24,8 @@ export type ClusterSummary = {
   name: string;
   provider: string;
   status: ClusterStatus;
+  public_ip?: string | null;
+  instance_id?: string | null;
   created_at: string;
   updated_at: string;
 };

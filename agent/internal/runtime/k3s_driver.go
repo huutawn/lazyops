@@ -478,6 +478,12 @@ func (d *K3sDriver) kubectlOutput(ctx context.Context, namespace string, args ..
 	cmdArgs := make([]string, 0, len(args)+4)
 	if strings.TrimSpace(d.kubeconfigPath) != "" {
 		cmdArgs = append(cmdArgs, "--kubeconfig", d.kubeconfigPath)
+	} else if server, tokenPath, caPath, ok := detectInClusterKubectlAuth(); ok {
+		cmdArgs = append(cmdArgs,
+			"--server", server,
+			"--token", readFileTrimmed(tokenPath),
+			"--certificate-authority", caPath,
+		)
 	}
 	if ns := strings.TrimSpace(namespace); ns != "" {
 		cmdArgs = append(cmdArgs, "-n", ns)
@@ -489,6 +495,31 @@ func (d *K3sDriver) kubectlOutput(ctx context.Context, namespace string, args ..
 		return nil, classifyKubectlError(ctx, args, output, err)
 	}
 	return output, nil
+}
+
+func detectInClusterKubectlAuth() (server, tokenPath, caPath string, ok bool) {
+	host := strings.TrimSpace(os.Getenv("KUBERNETES_SERVICE_HOST"))
+	port := strings.TrimSpace(os.Getenv("KUBERNETES_SERVICE_PORT"))
+	if host == "" || port == "" {
+		return "", "", "", false
+	}
+	tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	caPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	if _, err := os.Stat(tokenPath); err != nil {
+		return "", "", "", false
+	}
+	if _, err := os.Stat(caPath); err != nil {
+		return "", "", "", false
+	}
+	return fmt.Sprintf("https://%s:%s", host, port), tokenPath, caPath, true
+}
+
+func readFileTrimmed(path string) string {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(content))
 }
 
 func (d *K3sDriver) ensureLiveLogTails(runtimeCtx RuntimeContext) {

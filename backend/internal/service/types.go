@@ -137,6 +137,12 @@ type BootstrapTokenIssue struct {
 	SingleUse bool
 }
 
+type BootstrapTokenProfile struct {
+	RuntimeMode string
+	AgentKind   string
+	TargetRef   string
+}
+
 type InstallInstanceAgentSSHCommand struct {
 	UserID                  string
 	ProjectID               string
@@ -156,12 +162,24 @@ type InstallInstanceAgentSSHCommand struct {
 	ContainerRuntimeRootDir string
 }
 
+type InstallBootstrapStageRecord struct {
+	ID      string
+	State   string
+	Message string
+}
+
 type InstallInstanceAgentSSHResult struct {
 	InstanceID         string
 	Bootstrap          BootstrapTokenIssue
 	StartedAt          time.Time
 	HostKeyFingerprint string
 	AttachedProjectID  string
+	ClusterID          string
+	ClusterName        string
+	ClusterStatus      string
+	TargetKind         string
+	RuntimeMode        string
+	Stages             []InstallBootstrapStageRecord
 }
 
 type AgentMachineInfo struct {
@@ -266,12 +284,24 @@ type CreateClusterCommand struct {
 	KubeconfigSecretRef string
 }
 
+type UpsertManagedClusterCommand struct {
+	UserID              string
+	InstanceID          string
+	Name                string
+	Provider            string
+	KubeconfigSecretRef string
+	PublicIP            string
+	Status              string
+}
+
 type ClusterSummary struct {
 	ID         string
 	TargetKind string
 	Name       string
 	Provider   string
 	Status     string
+	PublicIP   *string
+	InstanceID *string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

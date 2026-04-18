@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"lazyops-server/internal/models"
 	"lazyops-server/pkg/utils"
@@ -129,6 +130,63 @@ func (s *ClusterService) Create(cmd CreateClusterCommand) (*ClusterSummary, erro
 	return &summary, nil
 }
 
+func (s *ClusterService) UpsertManagedFromBootstrap(cmd UpsertManagedClusterCommand) (*ClusterSummary, error) {
+	userID := strings.TrimSpace(cmd.UserID)
+	instanceID := strings.TrimSpace(cmd.InstanceID)
+	name := utils.NormalizeSpace(cmd.Name)
+	secretRef := utils.NormalizeSpace(cmd.KubeconfigSecretRef)
+	if userID == "" || instanceID == "" || name == "" || len(name) > 255 || secretRef == "" || strings.ContainsAny(secretRef, "\r\n\t") {
+		return nil, ErrInvalidInput
+	}
+
+	provider, err := normalizeClusterProvider(cmd.Provider)
+	if err != nil {
+		return nil, err
+	}
+
+	status := normalizeClusterStatus(cmd.Status)
+	publicIP := strings.TrimSpace(cmd.PublicIP)
+	var normalizedPublicIP *string
+	if publicIP != "" {
+		normalizedPublicIP = &publicIP
+	}
+	instanceRef := instanceID
+
+	existing, err := s.clusters.GetByNameForUser(userID, name)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		if err := s.clusters.UpdateBootstrapMetadata(existing.ID, secretRef, normalizedPublicIP, &instanceRef, status, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		existing.KubeconfigSecretRef = secretRef
+		existing.PublicIP = normalizedPublicIP
+		existing.InstanceID = &instanceRef
+		existing.Provider = provider
+		existing.Status = status
+		summary := ToClusterSummary(*existing)
+		return &summary, nil
+	}
+
+	cluster := &models.Cluster{
+		ID:                  utils.NewPrefixedID("cls"),
+		UserID:              userID,
+		Name:                name,
+		InstanceID:          &instanceRef,
+		Provider:            provider,
+		KubeconfigSecretRef: secretRef,
+		PublicIP:            normalizedPublicIP,
+		Status:              status,
+	}
+	if err := s.clusters.Create(cluster); err != nil {
+		return nil, err
+	}
+
+	summary := ToClusterSummary(*cluster)
+	return &summary, nil
+}
+
 func (s *ClusterService) List(userID string) (*ClusterListResult, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
@@ -168,6 +226,8 @@ func ToClusterSummary(cluster models.Cluster) ClusterSummary {
 		Name:       cluster.Name,
 		Provider:   cluster.Provider,
 		Status:     normalizeClusterStatus(cluster.Status),
+		PublicIP:   cluster.PublicIP,
+		InstanceID: cluster.InstanceID,
 		CreatedAt:  cluster.CreatedAt,
 		UpdatedAt:  cluster.UpdatedAt,
 	}

@@ -220,13 +220,13 @@ func TestAcceptanceMatrixK3sNodeAgentReportsAndDoesNotDeploy(t *testing.T) {
 	}
 
 	err := guard.AssertNotNodeAgent("prepare_release_workspace")
-	if err == nil {
-		t.Fatal("expected node agent to be blocked from prepare_release_workspace")
+	if err != nil {
+		t.Fatalf("expected node agent to allow prepare_release_workspace, got %v", err)
 	}
 
 	err = guard.AssertNotNodeAgent("promote_release")
-	if err == nil {
-		t.Fatal("expected node agent to be blocked from promote_release")
+	if err != nil {
+		t.Fatalf("expected node agent to allow promote_release, got %v", err)
 	}
 
 	err = guard.AssertNotNodeAgent("docker_run")

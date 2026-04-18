@@ -23,6 +23,8 @@ type ClusterSummaryResponse struct {
 	Name       string    `json:"name"`
 	Provider   string    `json:"provider"`
 	Status     string    `json:"status"`
+	PublicIP   *string   `json:"public_ip,omitempty"`
+	InstanceID *string   `json:"instance_id,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

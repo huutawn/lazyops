@@ -34,6 +34,15 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 		RuntimeCapabilitiesJSON: `{}`,
 		LabelsJSON:              `{}`,
 	})
+	clusterStore := newFakeClusterStore(&models.Cluster{
+		ID:                  "cls_123",
+		UserID:              "usr_123",
+		Name:                "prod-k3s",
+		InstanceID:          ptrString("inst_123"),
+		Provider:            "k3s",
+		KubeconfigSecretRef: "secret://clusters/prod-k3s/kubeconfig",
+		Status:              "ready",
+	})
 
 	orchestrator := NewBootstrapOrchestrator(
 		projectStore,
@@ -45,7 +54,7 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 		newFakeDeploymentStore(),
 		instanceStore,
 		newFakeMeshNetworkStore(),
-		newFakeClusterStore(),
+		clusterStore,
 		nil,
 	)
 
@@ -63,7 +72,7 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 		t.Fatalf("expected connect_code healthy, got %q", status.Steps[0].State)
 	}
 	if status.Steps[1].State != "ready" {
-		t.Fatalf("expected connect_infra ready, got %q", status.Steps[1].State)
+		t.Fatalf("expected connect_infra ready with k3s cluster, got %q", status.Steps[1].State)
 	}
 	if status.Steps[2].State != "ready" {
 		t.Fatalf("expected deploy ready, got %q", status.Steps[2].State)
@@ -381,14 +390,8 @@ func TestBootstrapOrchestratorAutoBootstrapCreatesProjectRepoAndBinding(t *testi
 	if err != nil {
 		t.Fatalf("load deployment bindings: %v", err)
 	}
-	if len(bindings) != 1 {
-		t.Fatalf("expected one deployment binding, got %d", len(bindings))
-	}
-	if bindings[0].RuntimeMode != bootstrapModeStandalone {
-		t.Fatalf("expected standalone mode, got %q", bindings[0].RuntimeMode)
-	}
-	if bindings[0].TargetKind != "instance" || bindings[0].TargetID != "inst_123" {
-		t.Fatalf("expected instance binding to inst_123, got kind=%q id=%q", bindings[0].TargetKind, bindings[0].TargetID)
+	if len(bindings) != 0 {
+		t.Fatalf("expected no auto binding before a k3s cluster exists, got %d", len(bindings))
 	}
 }
 
@@ -460,7 +463,7 @@ func TestBootstrapOrchestratorAutoBootstrapPrefersK3sWhenClusterHealthy(t *testi
 	}
 }
 
-func TestBootstrapOrchestratorAutoBootstrapPrefersMeshWhenTwoInstancesHealthy(t *testing.T) {
+func TestBootstrapOrchestratorAutoBootstrapWaitsForK3sClusterWhenOnlyInstancesExist(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",
 		UserID:        "usr_123",
@@ -520,17 +523,8 @@ func TestBootstrapOrchestratorAutoBootstrapPrefersMeshWhenTwoInstancesHealthy(t 
 	if err != nil {
 		t.Fatalf("load deployment bindings: %v", err)
 	}
-	if len(bindings) != 1 {
-		t.Fatalf("expected one deployment binding, got %d", len(bindings))
-	}
-	if bindings[0].RuntimeMode != bootstrapModeDistributedMesh {
-		t.Fatalf("expected distributed-mesh mode, got %q", bindings[0].RuntimeMode)
-	}
-	if bindings[0].TargetKind != "instance" {
-		t.Fatalf("expected instance target for distributed-mesh fallback, got %q", bindings[0].TargetKind)
-	}
-	if bindings[0].TargetID == "" {
-		t.Fatal("expected target id to be set")
+	if len(bindings) != 0 {
+		t.Fatalf("expected no binding until cluster bootstrap completes, got %d", len(bindings))
 	}
 }
 
@@ -607,7 +601,7 @@ func TestBootstrapOrchestratorOnInventoryChangedReevaluatesAutoBinding(t *testin
 	}
 }
 
-func TestBootstrapOrchestratorOnInventoryChangedUpshiftsToMeshWhenSecondInstanceAdded(t *testing.T) {
+func TestBootstrapOrchestratorOnInventoryChangedKeepsLegacyBindingUntilClusterExists(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",
 		UserID:        "usr_123",
@@ -675,8 +669,8 @@ func TestBootstrapOrchestratorOnInventoryChangedUpshiftsToMeshWhenSecondInstance
 	if len(bindings) != 1 {
 		t.Fatalf("expected one binding, got %d", len(bindings))
 	}
-	if bindings[0].RuntimeMode != bootstrapModeDistributedMesh {
-		t.Fatalf("expected runtime mode distributed-mesh, got %q", bindings[0].RuntimeMode)
+	if bindings[0].RuntimeMode != bootstrapModeStandalone {
+		t.Fatalf("expected legacy standalone binding to remain until k3s cluster exists, got %q", bindings[0].RuntimeMode)
 	}
 	if bindings[0].TargetKind != "instance" {
 		t.Fatalf("expected target kind instance, got %q", bindings[0].TargetKind)

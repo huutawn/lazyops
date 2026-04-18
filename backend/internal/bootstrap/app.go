@@ -179,10 +179,11 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo, clusterRepo)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
-	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor()).
-		WithBootstrapOrchestrator(bootstrapOrchestrator)
-	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	clusterService := service.NewClusterService(clusterRepo)
+	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor()).
+		WithBootstrapOrchestrator(bootstrapOrchestrator).
+		WithClusterService(clusterService)
+	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
 	observabilitySvc := service.
 		NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo).
@@ -223,7 +224,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		instanceRepo,
 		controlService,
 		operatorStreamHub,
-	)
+	).WithClusterStore(clusterRepo)
 	buildCallbackSvc.WithRolloutStarter(rolloutExecutionSvc)
 	bootstrapOrchestrator.WithOneClickPipeline(
 		serviceRepo,

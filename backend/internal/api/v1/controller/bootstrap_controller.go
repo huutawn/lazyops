@@ -253,6 +253,10 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 			response.Error(c, http.StatusBadGateway, "infra connect failed", "ssh_connection_failed", err.Error())
 		case errors.Is(err, service.ErrSSHExecutionFailed):
 			response.Error(c, http.StatusBadGateway, "infra connect failed", "ssh_execution_failed", err.Error())
+		case errors.Is(err, service.ErrK3sBootstrapIncomplete):
+			response.Error(c, http.StatusBadGateway, "infra connect failed", "k3s_bootstrap_incomplete", err.Error())
+		case errors.Is(err, service.ErrClusterRegistrationFailed):
+			response.Error(c, http.StatusBadGateway, "infra connect failed", "cluster_registration_failed", err.Error())
 		default:
 			response.Error(c, http.StatusInternalServerError, "infra connect failed", "internal_error", err.Error())
 		}
@@ -263,7 +267,7 @@ func (ctl *BootstrapController) ConnectInfraSSH(c *gin.Context) {
 		RequesterUserID: claims.UserID,
 		RequesterRole:   claims.Role,
 		ProjectID:       projectID,
-		InstanceID:      instanceSummary.ID,
+		ClusterID:       installResult.ClusterID,
 	})
 	if err != nil {
 		switch {

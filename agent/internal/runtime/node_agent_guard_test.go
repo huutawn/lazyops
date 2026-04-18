@@ -34,7 +34,7 @@ func TestNodeAgentGuardAssertTelemetryOnly(t *testing.T) {
 
 func TestNodeAgentGuardAssertTelemetryOnlyRejected(t *testing.T) {
 	g := testNodeAgentGuard()
-	err := g.AssertTelemetryOnly("prepare_release_workspace")
+	err := g.AssertTelemetryOnly("render_sidecars")
 	if err == nil {
 		t.Fatal("expected error in node agent mode")
 	}
@@ -50,7 +50,7 @@ func TestNodeAgentGuardAssertNotNodeAgent(t *testing.T) {
 
 func TestNodeAgentGuardAssertNotNodeAgentRejected(t *testing.T) {
 	g := testNodeAgentGuard()
-	err := g.AssertNotNodeAgent("promote_release")
+	err := g.AssertNotNodeAgent("sleep_service")
 	if err == nil {
 		t.Fatal("expected error in node agent mode")
 	}
@@ -63,6 +63,13 @@ func TestNodeAgentGuardAllowedOperations(t *testing.T) {
 		t.Fatal("expected non-empty allowed operations")
 	}
 	expected := []string{
+		"prepare_release_workspace",
+		"start_release_candidate",
+		"render_gateway_config",
+		"reconcile_revision",
+		"run_health_gate",
+		"promote_release",
+		"rollback_release",
 		"container_log_tailing",
 		"node_metrics_collection",
 		"pod_topology_reporting",
@@ -90,13 +97,7 @@ func TestNodeAgentGuardBlockedOperations(t *testing.T) {
 		t.Fatal("expected non-empty blocked operations")
 	}
 	expected := []string{
-		"prepare_release_workspace",
-		"start_release_candidate",
-		"promote_release",
-		"rollback_release",
-		"render_gateway_config",
 		"render_sidecars",
-		"run_health_gate",
 		"sleep_service",
 		"wake_service",
 		"scale_to_zero",

@@ -1546,15 +1546,16 @@ func policyInt(policy map[string]any, key string) int {
 }
 
 func deriveInfraStateSummary(inventory bootstrapInventorySnapshot) (string, string) {
-	total := totalTargetCount(inventory)
-	healthy := healthyTargetCount(inventory)
-	if total == 0 {
-		return "missing", "Chưa có máy chủ nào được kết nối"
+	if healthyClusterCount(inventory) > 0 {
+		return "ready", fmt.Sprintf("Có %d cụm K3s khả dụng", healthyClusterCount(inventory))
 	}
-	if healthy > 0 {
-		return "ready", fmt.Sprintf("Có %d máy chủ/hạ tầng khả dụng", healthy)
+	if len(inventory.clusters) > 0 {
+		return "degraded", "Đã bootstrap K3s nhưng cụm chưa sẵn sàng cho rollout"
 	}
-	return "degraded", "Đã kết nối hạ tầng nhưng chưa sẵn sàng"
+	if len(inventory.instances) > 0 {
+		return "degraded", "Đã kết nối VPS nhưng chưa bootstrap thành cụm K3s"
+	}
+	return "missing", "Chưa có cụm K3s nào được kết nối"
 }
 
 func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, lockedMode string) bootstrapModeDecision {
@@ -1575,37 +1576,26 @@ func inferBootstrapMode(inventory bootstrapInventorySnapshot, autoEnabled bool, 
 	}
 
 	decision := bootstrapModeDecision{
-		mode:             bootstrapModeStandalone,
+		mode:             bootstrapModeDistributedK3s,
 		source:           "auto",
-		reasonCode:       "single_instance_only",
-		reasonHuman:      "Chỉ có một máy chủ khả dụng",
+		reasonCode:       "k3s_cutover_default",
+		reasonHuman:      "LazyOps đã chuyển mặc định sang K3s Project/Service",
 		upshiftAllowed:   true,
 		downshiftAllowed: false,
-		downshiftBlock:   "already_lowest_mode",
+		downshiftBlock:   "k3s_hard_cutover",
 	}
 
 	if healthyClusterCount(inventory) >= 1 {
 		decision.mode = bootstrapModeDistributedK3s
 		decision.reasonCode = "k3s_detected"
 		decision.reasonHuman = "Phát hiện cụm K3s khả dụng"
-		decision.downshiftBlock = "hysteresis_24h"
+		decision.downshiftBlock = "k3s_hard_cutover"
 		return decision
 	}
 
-	if healthyInstanceCount(inventory) >= 2 {
-		decision.mode = bootstrapModeDistributedMesh
-		decision.reasonCode = "multi_instance_detected"
-		decision.reasonHuman = "Phát hiện từ 2 máy chủ khả dụng"
-		decision.downshiftBlock = "hysteresis_24h"
-		return decision
-	}
-
-	if healthyMeshCount(inventory) >= 1 {
-		decision.mode = bootstrapModeDistributedMesh
-		decision.reasonCode = "mesh_network_detected"
-		decision.reasonHuman = "Phát hiện mạng mesh khả dụng"
-		decision.downshiftBlock = "hysteresis_24h"
-		return decision
+	if len(inventory.instances) > 0 {
+		decision.reasonCode = "k3s_bootstrap_pending"
+		decision.reasonHuman = "Đã có VPS nhưng chưa bootstrap thành cụm K3s"
 	}
 
 	return decision

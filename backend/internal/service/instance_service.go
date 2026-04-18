@@ -88,7 +88,7 @@ func (s *InstanceService) Create(cmd CreateInstanceCommand) (*CreateInstanceResu
 		return nil, err
 	}
 
-	bootstrapToken, err := s.issueBootstrapToken(userID, instance.ID)
+	bootstrapToken, err := s.issueBootstrapToken(userID, instance.ID, BootstrapTokenProfile{})
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +105,10 @@ func (s *InstanceService) Create(cmd CreateInstanceCommand) (*CreateInstanceResu
 }
 
 func (s *InstanceService) IssueBootstrapToken(userID, instanceID string) (*BootstrapTokenIssue, error) {
+	return s.IssueBootstrapTokenWithProfile(userID, instanceID, BootstrapTokenProfile{})
+}
+
+func (s *InstanceService) IssueBootstrapTokenWithProfile(userID, instanceID string, profile BootstrapTokenProfile) (*BootstrapTokenIssue, error) {
 	userID = strings.TrimSpace(userID)
 	instanceID = strings.TrimSpace(instanceID)
 	if userID == "" || instanceID == "" {
@@ -127,7 +131,7 @@ func (s *InstanceService) IssueBootstrapToken(userID, instanceID string) (*Boots
 		return nil, err
 	}
 
-	return s.issueBootstrapToken(userID, instanceID)
+	return s.issueBootstrapToken(userID, instanceID, profile)
 }
 
 func (s *InstanceService) List(userID string) (*InstanceListResult, error) {
@@ -179,7 +183,7 @@ func ToInstanceSummary(instance models.Instance) (InstanceSummary, error) {
 	}, nil
 }
 
-func (s *InstanceService) issueBootstrapToken(userID, instanceID string) (*BootstrapTokenIssue, error) {
+func (s *InstanceService) issueBootstrapToken(userID, instanceID string, profile BootstrapTokenProfile) (*BootstrapTokenIssue, error) {
 	rawToken, err := newOpaqueBootstrapToken()
 	if err != nil {
 		return nil, err
@@ -188,11 +192,14 @@ func (s *InstanceService) issueBootstrapToken(userID, instanceID string) (*Boots
 	now := time.Now().UTC()
 	expiresAt := now.Add(s.bootstrapTokenTTL())
 	record := &models.BootstrapToken{
-		ID:         utils.NewPrefixedID("boot"),
-		UserID:     userID,
-		InstanceID: instanceID,
-		TokenHash:  hashOpaqueToken(rawToken),
-		ExpiresAt:  expiresAt,
+		ID:                  utils.NewPrefixedID("boot"),
+		UserID:              userID,
+		InstanceID:          instanceID,
+		TokenHash:           hashOpaqueToken(rawToken),
+		ExpectedRuntimeMode: strings.TrimSpace(profile.RuntimeMode),
+		ExpectedAgentKind:   strings.TrimSpace(profile.AgentKind),
+		ExpectedTargetRef:   strings.TrimSpace(profile.TargetRef),
+		ExpiresAt:           expiresAt,
 	}
 	if err := s.bootstrap.Create(record); err != nil {
 		return nil, err

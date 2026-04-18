@@ -34,7 +34,7 @@ func (g *NodeAgentGuard) AssertTelemetryOnly(operation string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if g.mode == contracts.RuntimeModeDistributedK3s {
+	if g.mode == contracts.RuntimeModeDistributedK3s && !g.isAllowedInNodeMode(operation) {
 		return fmt.Errorf("node_agent is telemetry/protection only and must not perform %s", operation)
 	}
 
@@ -45,7 +45,7 @@ func (g *NodeAgentGuard) AssertNotNodeAgent(operation string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if g.mode == contracts.RuntimeModeDistributedK3s {
+	if g.mode == contracts.RuntimeModeDistributedK3s && !g.isAllowedInNodeMode(operation) {
 		return fmt.Errorf("operation %s is not allowed in node_agent mode", operation)
 	}
 
@@ -54,6 +54,13 @@ func (g *NodeAgentGuard) AssertNotNodeAgent(operation string) error {
 
 func (g *NodeAgentGuard) AllowedOperations() []string {
 	return []string{
+		"prepare_release_workspace",
+		"start_release_candidate",
+		"render_gateway_config",
+		"reconcile_revision",
+		"run_health_gate",
+		"promote_release",
+		"rollback_release",
 		"container_log_tailing",
 		"node_metrics_collection",
 		"pod_topology_reporting",
@@ -64,15 +71,18 @@ func (g *NodeAgentGuard) AllowedOperations() []string {
 
 func (g *NodeAgentGuard) BlockedOperations() []string {
 	return []string{
-		"prepare_release_workspace",
-		"start_release_candidate",
-		"promote_release",
-		"rollback_release",
-		"render_gateway_config",
 		"render_sidecars",
-		"run_health_gate",
 		"sleep_service",
 		"wake_service",
 		"scale_to_zero",
 	}
+}
+
+func (g *NodeAgentGuard) isAllowedInNodeMode(operation string) bool {
+	for _, item := range g.AllowedOperations() {
+		if item == operation {
+			return true
+		}
+	}
+	return false
 }

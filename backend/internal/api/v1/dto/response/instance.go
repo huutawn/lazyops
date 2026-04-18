@@ -34,6 +34,12 @@ type InstallInstanceAgentSSHResponse struct {
 	StartedAt          time.Time                   `json:"started_at"`
 	HostKeyFingerprint string                      `json:"host_key_fingerprint,omitempty"`
 	AttachedProjectID  string                      `json:"attached_project_id,omitempty"`
+	ClusterID          string                      `json:"cluster_id,omitempty"`
+	ClusterName        string                      `json:"cluster_name,omitempty"`
+	ClusterStatus      string                      `json:"cluster_status,omitempty"`
+	TargetKind         string                      `json:"target_kind,omitempty"`
+	RuntimeMode        string                      `json:"runtime_mode,omitempty"`
+	Stages             []BootstrapStepResponse     `json:"stages,omitempty"`
 }
 
 type InstanceListResponse struct {

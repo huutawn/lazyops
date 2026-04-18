@@ -76,4 +76,15 @@ export type InstallInstanceAgentSSHResponse = {
   bootstrap: BootstrapToken;
   started_at: string;
   host_key_fingerprint?: string;
+  attached_project_id?: string;
+  cluster_id?: string;
+  cluster_name?: string;
+  cluster_status?: string;
+  target_kind?: string;
+  runtime_mode?: string;
+  stages?: Array<{
+    id: string;
+    state: string;
+    summary: string;
+  }>;
 };

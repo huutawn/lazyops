@@ -128,6 +128,10 @@ func (ctl *InstanceController) InstallAgentViaSSH(c *gin.Context) {
 			response.Error(c, http.StatusBadGateway, "ssh install failed", "ssh_connection_failed", err.Error())
 		case errors.Is(err, service.ErrSSHExecutionFailed):
 			response.Error(c, http.StatusBadGateway, "ssh install failed", "ssh_execution_failed", err.Error())
+		case errors.Is(err, service.ErrK3sBootstrapIncomplete):
+			response.Error(c, http.StatusBadGateway, "ssh install failed", "k3s_bootstrap_incomplete", err.Error())
+		case errors.Is(err, service.ErrClusterRegistrationFailed):
+			response.Error(c, http.StatusBadGateway, "ssh install failed", "cluster_registration_failed", err.Error())
 		default:
 			response.Error(c, http.StatusInternalServerError, "ssh install failed", "internal_error", err.Error())
 		}

@@ -4102,7 +4102,7 @@ func TestReportMetricRollupHandlerWithNodeMetrics(t *testing.T) {
 	}
 }
 
-func TestNodeAgentGuardBlocksWorkloadHandlers(t *testing.T) {
+func TestNodeAgentGuardAllowsK3sWorkloadHandlers(t *testing.T) {
 	store := state.New(filepath.Join(t.TempDir(), "agent-state.json"))
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), filepath.Join(t.TempDir(), "runtime-root"))
 	service := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)), store, driver)
@@ -4125,11 +4125,8 @@ func TestNodeAgentGuardBlocksWorkloadHandlers(t *testing.T) {
 	}
 
 	result := service.handlePrepareReleaseWorkspace(context.Background(), envelope)
-	if result.Error == nil {
-		t.Fatal("expected prepare_release_workspace to be blocked by NodeAgentGuard")
-	}
-	if result.Error.Code != "node_agent_guard_blocked" {
-		t.Fatalf("expected node_agent_guard_blocked error, got %s", result.Error.Code)
+	if result.Error != nil && result.Error.Code == "node_agent_guard_blocked" {
+		t.Fatalf("expected prepare_release_workspace to be allowed in node agent mode, got %#v", result.Error)
 	}
 }
 
