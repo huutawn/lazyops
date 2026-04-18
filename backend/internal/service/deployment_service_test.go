@@ -260,6 +260,81 @@ func TestDeploymentServiceCreateSuccess(t *testing.T) {
 	}
 }
 
+func TestDeploymentServiceCreateAutoCompilesHiddenBlueprintWhenBlueprintIDOmitted(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		NamespaceSlug: "acme-api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:          "api",
+			Path:          "apps/api",
+			Kind:          "app",
+			Public:        true,
+			PlacementMode: servicePlacementModeSharedCluster,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed services: %v", err)
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		PlacementPolicyJSON:     `{}`,
+		DomainPolicyJSON:        `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, serviceStore, blueprintStore)
+	service := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	result, err := service.Create(CreateDeploymentCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		TriggerKind:     "manual",
+	})
+	if err != nil {
+		t.Fatalf("create deployment without blueprint id: %v", err)
+	}
+	if result.Revision.BlueprintID == "" {
+		t.Fatal("expected hidden blueprint id to persist on revision")
+	}
+	if len(blueprintStore.items) != 1 {
+		t.Fatalf("expected hidden blueprint snapshot to be persisted, got %d", len(blueprintStore.items))
+	}
+	if blueprintStore.items[0].SourceKind != hiddenServiceInventoryBlueprintSourceKind {
+		t.Fatalf("expected hidden blueprint source kind %q, got %q", hiddenServiceInventoryBlueprintSourceKind, blueprintStore.items[0].SourceKind)
+	}
+}
+
 func TestDeploymentServiceRejectsOwnershipMismatch(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",

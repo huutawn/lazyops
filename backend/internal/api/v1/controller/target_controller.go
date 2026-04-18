@@ -16,6 +16,7 @@ import (
 type TargetController struct {
 	meshNetworks *service.MeshNetworkService
 	clusters     *service.ClusterService
+	clusterNodes *service.ClusterNodeService
 	bootstrap    *service.BootstrapOrchestrator
 }
 
@@ -28,6 +29,11 @@ func NewTargetController(meshNetworks *service.MeshNetworkService, clusters *ser
 
 func (ctl *TargetController) WithBootstrapOrchestrator(bootstrap *service.BootstrapOrchestrator) *TargetController {
 	ctl.bootstrap = bootstrap
+	return ctl
+}
+
+func (ctl *TargetController) WithClusterNodeService(clusterNodes *service.ClusterNodeService) *TargetController {
+	ctl.clusterNodes = clusterNodes
 	return ctl
 }
 
@@ -123,4 +129,66 @@ func (ctl *TargetController) ListClusters(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, "clusters loaded", mapper.ToClusterListResponse(*result))
+}
+
+func (ctl *TargetController) ListClusterNodes(c *gin.Context) {
+	if ctl.clusterNodes == nil {
+		response.JSON(c, http.StatusOK, "cluster nodes loaded", mapper.ToClusterNodeListResponse(service.ClusterNodeListResult{Items: []service.ClusterNodeRecord{}}))
+		return
+	}
+
+	claims := middleware.MustClaims(c)
+	result, err := ctl.clusterNodes.ListClusterNodes(claims.UserID, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load cluster nodes", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrTargetNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load cluster nodes", "cluster_not_found", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load cluster nodes", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "cluster nodes loaded", mapper.ToClusterNodeListResponse(*result))
+}
+
+func (ctl *TargetController) ConnectClusterNodeSSH(c *gin.Context) {
+	if ctl.clusterNodes == nil {
+		response.Error(c, http.StatusNotImplemented, "cluster node join is not enabled", "not_enabled", nil)
+		return
+	}
+
+	var req requestdto.ConnectClusterNodeSSHRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
+		return
+	}
+
+	claims := middleware.MustClaims(c)
+	result, err := ctl.clusterNodes.ConnectNodeViaSSH(c.Request.Context(), mapper.ToConnectClusterNodeSSHCommand(claims.UserID, c.Param("id"), req))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "cluster node join failed", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrSSHAuthenticationRequired):
+			response.Error(c, http.StatusBadRequest, "cluster node join failed", "ssh_auth_required", err.Error())
+		case errors.Is(err, service.ErrSSHConnectionFailed):
+			response.Error(c, http.StatusBadGateway, "cluster node join failed", "ssh_connection_failed", err.Error())
+		case errors.Is(err, service.ErrSSHExecutionFailed):
+			response.Error(c, http.StatusBadGateway, "cluster node join failed", "ssh_execution_failed", err.Error())
+		case errors.Is(err, service.ErrK3sBootstrapIncomplete):
+			response.Error(c, http.StatusBadGateway, "cluster node join failed", "k3s_join_incomplete", err.Error())
+		case errors.Is(err, service.ErrTargetNotFound):
+			response.Error(c, http.StatusNotFound, "cluster node join failed", "cluster_not_found", err.Error())
+		case errors.Is(err, service.ErrClusterNotReady):
+			response.Error(c, http.StatusConflict, "cluster node join failed", "cluster_not_ready", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "cluster node join failed", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusCreated, "cluster node joined via ssh", mapper.ToConnectClusterNodeSSHResponse(*result))
 }

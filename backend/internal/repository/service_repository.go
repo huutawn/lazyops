@@ -16,9 +16,7 @@ func NewServiceRepository(db *gorm.DB) *ServiceRepository {
 
 func (r *ServiceRepository) ReplaceForProject(projectID string, items []models.Service) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.
-			Where("project_id = ? AND path NOT LIKE ?", projectID, managedInternalServicePathPrefix+"%").
-			Delete(&models.Service{}).Error; err != nil {
+		if err := tx.Where("project_id = ?", projectID).Delete(&models.Service{}).Error; err != nil {
 			return err
 		}
 		if len(items) == 0 {

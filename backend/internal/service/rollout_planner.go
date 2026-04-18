@@ -305,6 +305,8 @@ func toManifestServiceSpecs(items []K3sServiceSpecRecord) []k8sgen.ServiceSpec {
 			Kind:           item.Kind,
 			Namespace:      item.Namespace,
 			Public:         item.Public,
+			PlacementMode:  item.PlacementMode,
+			PlacementNodeID: item.PlacementNodeID,
 			ImageRef:       item.ImageRef,
 			ImageDigest:    item.ImageDigest,
 			TargetPort:     item.TargetPort,

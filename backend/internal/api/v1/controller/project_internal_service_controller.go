@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,16 +15,20 @@ import (
 )
 
 type ProjectInternalServiceController struct {
-	services *service.ProjectInternalServiceService
+	services        *service.ProjectInternalServiceService
+	projectServices *service.ProjectService
 }
 
-func NewProjectInternalServiceController(services *service.ProjectInternalServiceService) *ProjectInternalServiceController {
-	return &ProjectInternalServiceController{services: services}
+func NewProjectInternalServiceController(services *service.ProjectInternalServiceService, projectServices *service.ProjectService) *ProjectInternalServiceController {
+	return &ProjectInternalServiceController{
+		services:        services,
+		projectServices: projectServices,
+	}
 }
 
 func (ctl *ProjectInternalServiceController) List(c *gin.Context) {
 	claims := middleware.MustClaims(c)
-	result, err := ctl.services.List(claims.UserID, claims.Role, c.Param("id"))
+	result, err := ctl.listFromUnifiedInventory(claims.UserID, claims.Role, c.Param("id"))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidInput):
@@ -49,7 +54,7 @@ func (ctl *ProjectInternalServiceController) Configure(c *gin.Context) {
 	}
 
 	claims := middleware.MustClaims(c)
-	result, err := ctl.services.Configure(mapper.ToConfigureProjectInternalServicesCommand(claims.UserID, claims.Role, c.Param("id"), req))
+	_, err := ctl.services.Configure(mapper.ToConfigureProjectInternalServicesCommand(claims.UserID, claims.Role, c.Param("id"), req))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidInput):
@@ -64,5 +69,76 @@ func (ctl *ProjectInternalServiceController) Configure(c *gin.Context) {
 		return
 	}
 
+	result, err := ctl.listFromUnifiedInventory(claims.UserID, claims.Role, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load internal services", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load internal services", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load internal services", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load internal services", "internal_error", err.Error())
+		}
+		return
+	}
+
 	response.JSON(c, http.StatusOK, "internal services configured", mapper.ToProjectInternalServiceListResponse(*result))
+}
+
+func (ctl *ProjectInternalServiceController) listFromUnifiedInventory(userID, role, projectID string) (*service.ProjectInternalServiceListResult, error) {
+	if ctl != nil && ctl.projectServices != nil {
+		result, err := ctl.projectServices.ListServices(userID, role, projectID)
+		if err != nil {
+			return nil, err
+		}
+		return filterUnifiedInternalServices(result), nil
+	}
+	return ctl.services.List(userID, role, projectID)
+}
+
+func filterUnifiedInternalServices(result *service.ProjectServiceListResult) *service.ProjectInternalServiceListResult {
+	if result == nil {
+		return &service.ProjectInternalServiceListResult{Items: []service.ProjectInternalServiceRecord{}}
+	}
+
+	items := make([]service.ProjectInternalServiceRecord, 0, len(result.Items))
+	for _, item := range result.Items {
+		if item.SourceType != "internal" {
+			continue
+		}
+		port := item.ServicePort
+		if port <= 0 {
+			port = item.TargetPort
+		}
+		protocol := "tcp"
+		if rawProtocol, ok := item.Healthcheck["protocol"].(string); ok && rawProtocol != "" {
+			protocol = rawProtocol
+		}
+		kind := item.Kind
+		if kind == "" {
+			kind = item.Name
+		}
+		items = append(items, service.ProjectInternalServiceRecord{
+			ID:            item.ID,
+			ProjectID:     item.ProjectID,
+			Kind:          kind,
+			Alias:         kind,
+			Protocol:      protocol,
+			Port:          port,
+			LocalEndpoint: localEndpointForPort(port),
+			CreatedAt:     item.CreatedAt,
+			UpdatedAt:     item.UpdatedAt,
+		})
+	}
+
+	return &service.ProjectInternalServiceListResult{Items: items}
+}
+
+func localEndpointForPort(port int) string {
+	if port <= 0 {
+		return "localhost"
+	}
+	return "localhost:" + strconv.Itoa(port)
 }

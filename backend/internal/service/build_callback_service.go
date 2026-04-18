@@ -36,6 +36,7 @@ type BuildCallbackService struct {
 	buildJobs   BuildJobStore
 	events      UserBroadcaster
 	rollouts    BuildRolloutStarter
+	compiler    *ServiceInventoryBlueprintCompiler
 }
 
 func NewBuildCallbackService(
@@ -61,6 +62,14 @@ func (s *BuildCallbackService) WithRolloutStarter(starter BuildRolloutStarter) *
 		return s
 	}
 	s.rollouts = starter
+	return s
+}
+
+func (s *BuildCallbackService) WithServiceInventoryCompiler(compiler *ServiceInventoryBlueprintCompiler) *BuildCallbackService {
+	if s == nil {
+		return s
+	}
+	s.compiler = compiler
 	return s
 }
 
@@ -172,23 +181,52 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 }
 
 func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, artifact BuildArtifactMetadataStageRecord) (*DesiredStateRevisionRecord, []string, error) {
-	if s.blueprints == nil || s.revisions == nil {
+	if s.revisions == nil {
 		return nil, nil, nil
 	}
 
-	blueprint, err := s.blueprints.GetLatestByProject(job.ProjectID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if blueprint == nil {
-		return nil, nil, nil
+	var blueprintRecord BlueprintRecord
+	appliedServices := []string{}
+	if s.compiler != nil {
+		project, err := s.projects.GetByID(job.ProjectID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if project == nil {
+			return nil, nil, ErrProjectNotFound
+		}
+		compiled, err := s.compiler.Compile(*project, ServiceInventoryBlueprintCompileInput{
+			TriggerKind: job.TriggerKind,
+			Artifact: BlueprintArtifactMetadata{
+				CommitSHA:   artifact.CommitSHA,
+				ArtifactRef: artifact.ArtifactRef,
+				ImageRef:    artifact.ImageRef,
+			},
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		blueprintRecord = compiled.Blueprint
+		appliedServices = compiled.AppliedServices
+	} else {
+		if s.blueprints == nil {
+			return nil, nil, nil
+		}
+		blueprint, err := s.blueprints.GetLatestByProject(job.ProjectID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if blueprint == nil {
+			return nil, nil, nil
+		}
+		parsed, err := ToBlueprintRecord(*blueprint)
+		if err != nil {
+			return nil, nil, err
+		}
+		blueprintRecord = parsed
+		appliedServices = applyArtifactToBlueprintServices(&blueprintRecord, artifact)
 	}
 
-	blueprintRecord, err := ToBlueprintRecord(*blueprint)
-	if err != nil {
-		return nil, nil, err
-	}
-	appliedServices := applyArtifactToBlueprintServices(&blueprintRecord, artifact)
 	blueprintRecord.Compiled.ArtifactMetadata = BlueprintArtifactMetadata{
 		CommitSHA:   artifact.CommitSHA,
 		ArtifactRef: artifact.ArtifactRef,
@@ -205,7 +243,7 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 	revision := &models.DesiredStateRevision{
 		ID:                   revisionID,
 		ProjectID:            job.ProjectID,
-		BlueprintID:          blueprint.ID,
+		BlueprintID:          blueprintRecord.ID,
 		DeploymentBindingID:  blueprintRecord.Compiled.Binding.ID,
 		Namespace:            blueprintRecord.Compiled.Namespace,
 		CommitSHA:            artifact.CommitSHA,

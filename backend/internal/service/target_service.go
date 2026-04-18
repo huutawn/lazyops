@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
 	"strings"
@@ -23,6 +24,11 @@ type MeshNetworkService struct {
 
 type ClusterService struct {
 	clusters ClusterStore
+}
+
+type managedClusterMetadata struct {
+	JoinServerURL string `json:"join_server_url,omitempty"`
+	JoinToken     string `json:"join_token,omitempty"`
 }
 
 func NewMeshNetworkService(meshNetworks MeshNetworkStore) *MeshNetworkService {
@@ -151,6 +157,13 @@ func (s *ClusterService) UpsertManagedFromBootstrap(cmd UpsertManagedClusterComm
 		normalizedPublicIP = &publicIP
 	}
 	instanceRef := instanceID
+	managedMetadataJSON, err := marshalManagedClusterMetadata(managedClusterMetadata{
+		JoinServerURL: strings.TrimSpace(cmd.JoinServerURL),
+		JoinToken:     strings.TrimSpace(cmd.JoinToken),
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	existing, err := s.clusters.GetByNameForUser(userID, name)
 	if err != nil {
@@ -159,6 +172,12 @@ func (s *ClusterService) UpsertManagedFromBootstrap(cmd UpsertManagedClusterComm
 	if existing != nil {
 		if err := s.clusters.UpdateBootstrapMetadata(existing.ID, secretRef, normalizedPublicIP, &instanceRef, status, time.Now().UTC()); err != nil {
 			return nil, err
+		}
+		if managedMetadataJSON != "" {
+			if err := s.clusters.UpdateManagedMetadata(existing.ID, managedMetadataJSON, time.Now().UTC()); err != nil {
+				return nil, err
+			}
+			existing.ManagedMetadataJSON = managedMetadataJSON
 		}
 		existing.KubeconfigSecretRef = secretRef
 		existing.PublicIP = normalizedPublicIP
@@ -176,6 +195,7 @@ func (s *ClusterService) UpsertManagedFromBootstrap(cmd UpsertManagedClusterComm
 		InstanceID:          &instanceRef,
 		Provider:            provider,
 		KubeconfigSecretRef: secretRef,
+		ManagedMetadataJSON: managedMetadataJSON,
 		PublicIP:            normalizedPublicIP,
 		Status:              status,
 	}
@@ -185,6 +205,24 @@ func (s *ClusterService) UpsertManagedFromBootstrap(cmd UpsertManagedClusterComm
 
 	summary := ToClusterSummary(*cluster)
 	return &summary, nil
+}
+
+func DecodeManagedClusterMetadata(cluster models.Cluster) managedClusterMetadata {
+	var meta managedClusterMetadata
+	raw := strings.TrimSpace(cluster.ManagedMetadataJSON)
+	if raw == "" || raw == "{}" {
+		return meta
+	}
+	_ = json.Unmarshal([]byte(raw), &meta)
+	return meta
+}
+
+func marshalManagedClusterMetadata(meta managedClusterMetadata) (string, error) {
+	payload, err := json.Marshal(meta)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
 }
 
 func (s *ClusterService) List(userID string) (*ClusterListResult, error) {

@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"lazyops-server/internal/models"
+	"lazyops-server/pkg/utils"
+
 	"golang.org/x/crypto/ssh"
 )
 
@@ -147,6 +150,7 @@ type InstanceSSHInstallService struct {
 	executor  SSHExecutor
 	bootstrap *BootstrapOrchestrator
 	clusters  *ClusterService
+	topology  TopologyStateStore
 }
 
 func NewInstanceSSHInstallService(instances *InstanceService, executor SSHExecutor) *InstanceSSHInstallService {
@@ -166,6 +170,11 @@ func (s *InstanceSSHInstallService) WithBootstrapOrchestrator(bootstrap *Bootstr
 
 func (s *InstanceSSHInstallService) WithClusterService(clusters *ClusterService) *InstanceSSHInstallService {
 	s.clusters = clusters
+	return s
+}
+
+func (s *InstanceSSHInstallService) WithTopologyStateStore(topology TopologyStateStore) *InstanceSSHInstallService {
+	s.topology = topology
 	return s
 }
 
@@ -257,6 +266,8 @@ func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInst
 			KubeconfigSecretRef: buildManagedClusterSecretRef(clusterName),
 			PublicIP:            firstNonEmpty(metadata.PublicIP, normalizeRemotePublicHost(host)),
 			Status:              clusterStatus,
+			JoinServerURL:       metadata.JoinServerURL,
+			JoinToken:           metadata.JoinToken,
 		})
 		if clusterErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrClusterRegistrationFailed, clusterErr)
@@ -264,6 +275,9 @@ func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInst
 		clusterID = clusterSummary.ID
 		clusterName = clusterSummary.Name
 		clusterStatus = clusterSummary.Status
+	}
+	if s.topology != nil && clusterID != "" {
+		_ = s.topology.Upsert(buildClusterTopologyState(instanceID, clusterID, metadata.NodeName, "bootstrap"))
 	}
 
 	attachedProjectID := ""
@@ -296,8 +310,11 @@ func (s *InstanceSSHInstallService) Install(ctx context.Context, cmd InstallInst
 
 type installBootstrapMetadata struct {
 	ClusterName     string
+	NodeName        string
 	PublicIP        string
 	KubeconfigB64   string
+	JoinServerURL   string
+	JoinToken       string
 	K3sInstalled    bool
 	KubeconfigReady bool
 	NodeAgentReady  bool
@@ -320,10 +337,44 @@ func parseInstallBootstrapMetadata(stdout string) installBootstrapMetadata {
 			meta.NodeAgentReady = true
 		case strings.HasPrefix(line, "LAZYOPS_CLUSTER_NAME="):
 			meta.ClusterName = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_CLUSTER_NAME="))
+		case strings.HasPrefix(line, "LAZYOPS_NODE_NAME="):
+			meta.NodeName = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_NODE_NAME="))
 		case strings.HasPrefix(line, "LAZYOPS_PUBLIC_IP="):
 			meta.PublicIP = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_PUBLIC_IP="))
 		case strings.HasPrefix(line, "LAZYOPS_KUBECONFIG_B64="):
 			meta.KubeconfigB64 = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_KUBECONFIG_B64="))
+		case strings.HasPrefix(line, "LAZYOPS_JOIN_SERVER_URL="):
+			meta.JoinServerURL = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_JOIN_SERVER_URL="))
+		case strings.HasPrefix(line, "LAZYOPS_JOIN_TOKEN="):
+			meta.JoinToken = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_JOIN_TOKEN="))
+		}
+	}
+	return meta
+}
+
+type joinClusterNodeMetadata struct {
+	NodeName        string
+	AgentJoined     bool
+	K3sAgentReady   bool
+	RuntimePrepared bool
+}
+
+func (m joinClusterNodeMetadata) completed() bool {
+	return m.K3sAgentReady && strings.TrimSpace(m.NodeName) != ""
+}
+
+func parseJoinClusterNodeMetadata(stdout string) joinClusterNodeMetadata {
+	meta := joinClusterNodeMetadata{}
+	for _, rawLine := range strings.Split(stdout, "\n") {
+		line := strings.TrimSpace(rawLine)
+		switch {
+		case line == "LAZYOPS_BOOTSTRAP_STAGE=k3s_agent_joined":
+			meta.AgentJoined = true
+			meta.K3sAgentReady = true
+		case line == "LAZYOPS_BOOTSTRAP_STAGE=runtime_prepared":
+			meta.RuntimePrepared = true
+		case strings.HasPrefix(line, "LAZYOPS_NODE_NAME="):
+			meta.NodeName = strings.TrimSpace(strings.TrimPrefix(line, "LAZYOPS_NODE_NAME="))
 		}
 	}
 	return meta
@@ -355,6 +406,26 @@ func buildInstallBootstrapStages(metadata installBootstrapMetadata, clusterRegis
 	return stages
 }
 
+func buildJoinClusterNodeStages(metadata joinClusterNodeMetadata, labeled bool) []InstallBootstrapStageRecord {
+	return []InstallBootstrapStageRecord{
+		{
+			ID:      "k3s_agent_joined",
+			State:   stageState(metadata.K3sAgentReady),
+			Message: stageMessage(metadata.K3sAgentReady, "K3s agent joined the existing cluster", "K3s agent did not join the cluster"),
+		},
+		{
+			ID:      "runtime_prepared",
+			State:   stageState(metadata.RuntimePrepared),
+			Message: stageMessage(metadata.RuntimePrepared, "Runtime directories prepared for node placement", "Runtime directories were not prepared"),
+		},
+		{
+			ID:      "node_labeled",
+			State:   stageState(labeled),
+			Message: stageMessage(labeled, "Node labeled for pinned placement", "Node was not labeled for placement"),
+		},
+	}
+}
+
 func stageState(done bool) string {
 	if done {
 		return "completed"
@@ -384,12 +455,78 @@ func normalizeK3sInstallProfile(runtimeMode, agentKind string) (string, string, 
 	return mode, kind, nil
 }
 
+func (s *InstanceSSHInstallService) JoinClusterNode(ctx context.Context, cmd JoinClusterNodeSSHCommand) (*JoinClusterNodeSSHResult, error) {
+	userID := strings.TrimSpace(cmd.UserID)
+	clusterID := strings.TrimSpace(cmd.ClusterID)
+	instanceID := strings.TrimSpace(cmd.InstanceID)
+	host := strings.TrimSpace(cmd.Host)
+	username := strings.TrimSpace(cmd.Username)
+	if userID == "" || clusterID == "" || instanceID == "" || host == "" || username == "" || strings.TrimSpace(cmd.JoinServerURL) == "" || strings.TrimSpace(cmd.JoinToken) == "" {
+		return nil, ErrInvalidInput
+	}
+	if strings.TrimSpace(cmd.Password) == "" && strings.TrimSpace(cmd.PrivateKey) == "" {
+		return nil, ErrSSHAuthenticationRequired
+	}
+
+	port := cmd.Port
+	if port <= 0 || port > 65535 {
+		port = defaultSSHPort
+	}
+
+	command := buildJoinClusterNodeCommand(cmd)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	execResult, err := s.executor.Execute(ctx, SSHExecutionInput{
+		Address:            address,
+		Username:           username,
+		Password:           cmd.Password,
+		PrivateKey:         cmd.PrivateKey,
+		HostKeyFingerprint: cmd.HostKeyFingerprint,
+		Command:            command,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := parseJoinClusterNodeMetadata(execResult.Stdout)
+	if !metadata.completed() {
+		return nil, ErrK3sBootstrapIncomplete
+	}
+
+	return &JoinClusterNodeSSHResult{
+		ClusterID:          clusterID,
+		InstanceID:         instanceID,
+		StartedAt:          time.Now().UTC(),
+		HostKeyFingerprint: strings.TrimSpace(execResult.HostKeyFingerprint),
+		NodeName:           metadata.NodeName,
+		JoinServerURL:      strings.TrimSpace(cmd.JoinServerURL),
+		Stages:             buildJoinClusterNodeStages(metadata, false),
+	}, nil
+}
+
 func buildManagedClusterSecretRef(clusterName string) string {
 	clusterName = normalizeBindingTargetRef(clusterName)
 	if clusterName == "" {
 		clusterName = "lazyops-k3s"
 	}
 	return "secret://clusters/" + clusterName + "/kubeconfig"
+}
+
+func buildClusterTopologyState(instanceID, clusterID, nodeName, provisionedBy string) *models.TopologyState {
+	now := time.Now().UTC()
+	metadata := map[string]any{
+		"k8s_node_name": strings.TrimSpace(nodeName),
+		"provisioned_by": strings.TrimSpace(provisionedBy),
+	}
+	return &models.TopologyState{
+		ID:           utils.NewPrefixedID("topo"),
+		InstanceID:   instanceID,
+		MeshID:       clusterID,
+		State:        TopologyStateOnline,
+		MetadataJSON: marshalOrEmpty(metadata),
+		LastSeenAt:   now,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
 }
 
 func defaultManagedClusterName(instanceID string) string {
@@ -488,9 +625,14 @@ if [ -n "$SUDO" ]; then $SUDO mkdir -p "$STATE_DIR" "$RUNTIME_ROOT"; $SUDO chmod
 KUBECONFIG_RAW=$(if [ -n "$SUDO" ]; then $SUDO cat /etc/rancher/k3s/k3s.yaml; else cat /etc/rancher/k3s/k3s.yaml; fi)
 if [ -n "$PUBLIC_HOST" ]; then KUBECONFIG_RAW=$(printf '%%s' "$KUBECONFIG_RAW" | sed "s#https://127.0.0.1:6443#https://$PUBLIC_HOST:6443#g"); fi
 KUBECONFIG_B64=$(printf '%%s' "$KUBECONFIG_RAW" | base64 | tr -d '\n')
+JOIN_TOKEN=$(if [ -n "$SUDO" ]; then $SUDO cat /var/lib/rancher/k3s/server/node-token; else cat /var/lib/rancher/k3s/server/node-token; fi)
+NODE_NAME=$(hostname)
 printf 'LAZYOPS_CLUSTER_NAME=%%s\n' "$CLUSTER_NAME"
+printf 'LAZYOPS_NODE_NAME=%%s\n' "$NODE_NAME"
 printf 'LAZYOPS_PUBLIC_IP=%%s\n' "$PUBLIC_HOST"
 printf 'LAZYOPS_KUBECONFIG_B64=%%s\n' "$KUBECONFIG_B64"
+printf 'LAZYOPS_JOIN_SERVER_URL=https://%%s:6443\n' "$PUBLIC_HOST"
+printf 'LAZYOPS_JOIN_TOKEN=%%s\n' "$JOIN_TOKEN"
 printf 'LAZYOPS_BOOTSTRAP_STAGE=kubeconfig_captured\n'
 cat <<EOF >/tmp/lazyops-bootstrap.yaml
 apiVersion: v1
@@ -599,6 +741,43 @@ if kctl -n lazyops-system rollout status daemonset/lazyops-node-agent --timeout=
 `, shellQuote(stateDir), shellQuote(runtimeRoot), shellQuote(publicHost), shellQuote(bootstrapToken), shellQuote(encryptionKey), shellQuote(controlPlaneURL), shellQuote(agentImage), shellQuote(runtimeMode), shellQuote(agentKind), shellQuote(targetRef), shellQuote(clusterName), runtimeMode, agentKind, targetRef, bootstrapToken, encryptionKey, controlPlaneURL, stateDir, runtimeRoot, agentImage, stateDir, stateDir)
 
 	return script
+}
+
+func buildJoinClusterNodeCommand(cmd JoinClusterNodeSSHCommand) string {
+	stateDir := strings.TrimSpace(cmd.StateDir)
+	if stateDir == "" {
+		stateDir = defaultAgentStateDir
+	}
+	runtimeRoot := strings.TrimSpace(cmd.ContainerRuntimeRootDir)
+	if runtimeRoot == "" {
+		runtimeRoot = defaultAgentRuntimeRootDir
+	}
+
+	return fmt.Sprintf(`set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then SUDO="sudo -n"; else SUDO=""; fi
+STATE_DIR=%s
+RUNTIME_ROOT=%s
+K3S_URL=%s
+K3S_TOKEN=%s
+if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then STATE_DIR="${HOME:-/tmp}/.lazyops-agent"; RUNTIME_ROOT="${STATE_DIR}/runtime"; fi
+if ! command -v curl >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then if [ -n "$SUDO" ]; then $SUDO apt-get update -y >/dev/null 2>&1 || $SUDO apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y curl >/dev/null 2>&1; else apt-get update -y >/dev/null 2>&1 || apt-get update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y curl >/dev/null 2>&1; fi; elif command -v dnf >/dev/null 2>&1; then if [ -n "$SUDO" ]; then $SUDO dnf install -y curl >/dev/null 2>&1; else dnf install -y curl >/dev/null 2>&1; fi; elif command -v yum >/dev/null 2>&1; then if [ -n "$SUDO" ]; then $SUDO yum install -y curl >/dev/null 2>&1; else yum install -y curl >/dev/null 2>&1; fi; else echo 'curl_not_found_and_pkg_manager_unsupported' >&2; exit 1; fi
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  if [ -n "$SUDO" ]; then $SUDO systemctl disable --now k3s >/dev/null 2>&1 || true; else systemctl disable --now k3s >/dev/null 2>&1 || true; fi
+fi
+if [ -n "$SUDO" ]; then
+  curl -sfL https://get.k3s.io | $SUDO env K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" INSTALL_K3S_EXEC="agent" sh - >/dev/null 2>&1
+else
+  curl -sfL https://get.k3s.io | env K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" INSTALL_K3S_EXEC="agent" sh - >/dev/null 2>&1
+fi
+if command -v systemctl >/dev/null 2>&1; then if [ -n "$SUDO" ]; then $SUDO systemctl enable --now k3s-agent >/dev/null 2>&1 || true; else systemctl enable --now k3s-agent >/dev/null 2>&1 || true; fi; fi
+NODE_NAME=$(hostname)
+printf 'LAZYOPS_NODE_NAME=%%s\n' "$NODE_NAME"
+printf 'LAZYOPS_BOOTSTRAP_STAGE=k3s_agent_joined\n'
+if [ -n "$SUDO" ]; then $SUDO mkdir -p "$STATE_DIR" "$RUNTIME_ROOT"; $SUDO chmod 0777 "$STATE_DIR" "$RUNTIME_ROOT"; else mkdir -p "$STATE_DIR" "$RUNTIME_ROOT"; chmod 0777 "$STATE_DIR" "$RUNTIME_ROOT"; fi
+printf 'LAZYOPS_BOOTSTRAP_STAGE=runtime_prepared\n'
+`, shellQuote(stateDir), shellQuote(runtimeRoot), shellQuote(strings.TrimSpace(cmd.JoinServerURL)), shellQuote(strings.TrimSpace(cmd.JoinToken)))
 }
 
 func defaultAgentImageFromEnv() string {

@@ -2,6 +2,9 @@ export type ProjectFixture = {
   id: string;
   name: string;
   slug: string;
+  namespace_slug: string;
+  cluster_id?: string;
+  runtime_mode: string;
   default_branch: string;
   created_at: string;
   updated_at: string;

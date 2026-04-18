@@ -8,6 +8,7 @@ type CreateDeploymentCommand struct {
 	ProjectID       string
 	BlueprintID     string
 	TriggerKind     string
+	ServiceIDs      []string
 }
 
 type DesiredStateRevisionRecord struct {

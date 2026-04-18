@@ -182,6 +182,36 @@ type InstallInstanceAgentSSHResult struct {
 	Stages             []InstallBootstrapStageRecord
 }
 
+type JoinClusterNodeSSHCommand struct {
+	UserID                  string
+	ClusterID               string
+	InstanceID              string
+	Host                    string
+	Port                    int
+	Username                string
+	Password                string
+	PrivateKey              string
+	HostKeyFingerprint      string
+	ControlPlaneURL         string
+	JoinServerURL           string
+	JoinToken               string
+	StateDir                string
+	ContainerRuntimeRootDir string
+}
+
+type JoinClusterNodeSSHResult struct {
+	ClusterID           string
+	InstanceID          string
+	StartedAt           time.Time
+	HostKeyFingerprint  string
+	NodeName            string
+	JoinServerURL       string
+	LabeledByControl    bool
+	PlacementLabelKey   string
+	PlacementLabelValue string
+	Stages              []InstallBootstrapStageRecord
+}
+
 type AgentMachineInfo struct {
 	Hostname string
 	OS       string
@@ -292,6 +322,8 @@ type UpsertManagedClusterCommand struct {
 	KubeconfigSecretRef string
 	PublicIP            string
 	Status              string
+	JoinServerURL       string
+	JoinToken           string
 }
 
 type ClusterSummary struct {
@@ -308,6 +340,50 @@ type ClusterSummary struct {
 
 type ClusterListResult struct {
 	Items []ClusterSummary
+}
+
+type ClusterNodeRecord struct {
+	ClusterID   string
+	InstanceID  string
+	Name        string
+	Status      string
+	K8sNodeName string
+	Labels      map[string]string
+	LastSeenAt  *time.Time
+	IsReady     bool
+}
+
+type ClusterNodeListResult struct {
+	Items []ClusterNodeRecord
+}
+
+type ConnectClusterNodeSSHCommand struct {
+	UserID             string
+	ClusterID          string
+	InstanceName       string
+	PublicIP           string
+	PrivateIP          string
+	Labels             map[string]string
+	Host               string
+	Port               int
+	Username           string
+	Password           string
+	PrivateKey         string
+	HostKeyFingerprint string
+	ControlPlaneURL    string
+	AgentImage         string
+	ContainerName      string
+}
+
+type ConnectClusterNodeSSHResult struct {
+	ClusterID string
+	Instance  InstanceSummary
+	Join      JoinClusterNodeSSHResult
+}
+
+type PlacementNodeListResult struct {
+	ClusterID string
+	Items     []ClusterNodeRecord
 }
 
 type CreateDeploymentBindingCommand struct {
@@ -496,46 +572,54 @@ type InternalBindingRecord struct {
 }
 
 type K3sServiceSpecRecord struct {
-	Name           string                      `json:"name"`
-	Kind           string                      `json:"kind"`
-	Namespace      string                      `json:"namespace,omitempty"`
-	Path           string                      `json:"path,omitempty"`
-	Public         bool                        `json:"public"`
-	RuntimeProfile string                      `json:"runtime_profile,omitempty"`
-	StartHint      string                      `json:"start_hint,omitempty"`
-	ImageRef       string                      `json:"image_ref,omitempty"`
-	ImageDigest    string                      `json:"image_digest,omitempty"`
-	TargetPort     int                         `json:"target_port,omitempty"`
-	ServicePort    int                         `json:"service_port,omitempty"`
-	Replicas       int                         `json:"replicas,omitempty"`
-	Healthcheck    map[string]any              `json:"healthcheck,omitempty"`
-	DetectedPorts  []ServiceDetectedPortRecord `json:"detected_ports,omitempty"`
-	EnvBundle      map[string]string           `json:"env_bundle,omitempty"`
-	PVCSpec        map[string]any              `json:"pvc_spec,omitempty"`
-	DeployStrategy map[string]any              `json:"deploy_strategy,omitempty"`
+	Name            string                      `json:"name"`
+	Kind            string                      `json:"kind"`
+	Namespace       string                      `json:"namespace,omitempty"`
+	Path            string                      `json:"path,omitempty"`
+	Public          bool                        `json:"public"`
+	PlacementMode   string                      `json:"placement_mode,omitempty"`
+	PlacementNodeID string                      `json:"placement_node_id,omitempty"`
+	RuntimeProfile  string                      `json:"runtime_profile,omitempty"`
+	StartHint       string                      `json:"start_hint,omitempty"`
+	ImageRef        string                      `json:"image_ref,omitempty"`
+	ImageDigest     string                      `json:"image_digest,omitempty"`
+	TargetPort      int                         `json:"target_port,omitempty"`
+	ServicePort     int                         `json:"service_port,omitempty"`
+	Replicas        int                         `json:"replicas,omitempty"`
+	Healthcheck     map[string]any              `json:"healthcheck,omitempty"`
+	DetectedPorts   []ServiceDetectedPortRecord `json:"detected_ports,omitempty"`
+	EnvBundle       map[string]string           `json:"env_bundle,omitempty"`
+	PVCSpec         map[string]any              `json:"pvc_spec,omitempty"`
+	DeployStrategy  map[string]any              `json:"deploy_strategy,omitempty"`
 }
 
 type ProjectServiceRecord struct {
-	ID             string
-	ProjectID      string
-	Name           string
-	Path           string
-	Kind           string
-	Public         bool
-	RuntimeProfile string
-	StartHint      string
-	ImageRef       string
-	ImageDigest    string
-	DetectedPorts  []ServiceDetectedPortRecord
-	TargetPort     int
-	ServicePort    int
-	Replicas       int
-	EnvBundle      map[string]string
-	PVCSpec        map[string]any
-	DeployStrategy map[string]any
-	Healthcheck    map[string]any
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                      string
+	ProjectID               string
+	Name                    string
+	Path                    string
+	Kind                    string
+	SourceType              string
+	Public                  bool
+	RuntimeProfile          string
+	PlacementMode           string
+	PlacementNodeID         string
+	ConnectionTemplateKey   string
+	ConnectionTargetService string
+	ManagedByLazyops        bool
+	StartHint               string
+	ImageRef                string
+	ImageDigest             string
+	DetectedPorts           []ServiceDetectedPortRecord
+	TargetPort              int
+	ServicePort             int
+	Replicas                int
+	EnvBundle               map[string]string
+	PVCSpec                 map[string]any
+	DeployStrategy          map[string]any
+	Healthcheck             map[string]any
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 type ProjectServiceListResult struct {
@@ -549,22 +633,109 @@ type ConfigureProjectServicesCommand struct {
 	Items           []ConfigureProjectServiceItem
 }
 
+type ProjectServiceActionResult struct {
+	Action       string
+	ServiceID    string
+	ServiceName  string
+	Status       string
+	TriggerKind  string
+	DeploymentID string
+	RevisionID   string
+	Message      string
+}
+
+type ProjectRuntimeLogPreviewRecord struct {
+	ID            string
+	Source        string
+	Level         string
+	Message       string
+	Timestamp     time.Time
+	Node          string
+	CorrelationID string
+}
+
+type ProjectRuntimeDependencyRecord struct {
+	ServiceID        string
+	ServiceName      string
+	Status           string
+	StatusReason     string
+	InternalEndpoint string
+}
+
+type ProjectRuntimeNodeRecord struct {
+	ClusterID   string
+	InstanceID  string
+	Name        string
+	Status      string
+	K8sNodeName string
+	Labels      map[string]string
+	LastSeenAt  *time.Time
+	IsReady     bool
+}
+
+type ProjectRuntimeServiceRecord struct {
+	ServiceID         string
+	Name              string
+	Kind              string
+	SourceType        string
+	Public            bool
+	RuntimeProfile    string
+	RuntimeStatus     string
+	RuntimeReason     string
+	BuildState        string
+	RolloutState      string
+	PlacementMode     string
+	RequestedNodeID   string
+	EffectiveNodeIDs  []string
+	ImageRef          string
+	ImageDigest       string
+	RevisionID        string
+	Revision          int
+	DeploymentID      string
+	PublicURLs        []string
+	InternalEndpoints []string
+	Dependencies      []ProjectRuntimeDependencyRecord
+	RecentLogs        []ProjectRuntimeLogPreviewRecord
+}
+
+type ProjectRuntimeSummaryResult struct {
+	ProjectID        string
+	RuntimeMode      string
+	ClusterID        string
+	Namespace        string
+	LiveRevisionID   string
+	LiveRevision     int
+	StableRevisionID string
+	StableRevision   int
+	SyncState        string
+	SyncReason       string
+	PublicURLs       []string
+	Nodes            []ProjectRuntimeNodeRecord
+	Services         []ProjectRuntimeServiceRecord
+}
+
 type ConfigureProjectServiceItem struct {
-	Name           string
-	Path           string
-	Kind           string
-	Public         bool
-	RuntimeProfile string
-	StartHint      string
-	ImageRef       string
-	ImageDigest    string
-	TargetPort     int
-	ServicePort    int
-	Replicas       int
-	EnvBundle      map[string]string
-	PVCSpec        map[string]any
-	DeployStrategy map[string]any
-	Healthcheck    map[string]any
+	Name                    string
+	Path                    string
+	Kind                    string
+	SourceType              string
+	Public                  bool
+	RuntimeProfile          string
+	PlacementMode           string
+	PlacementNodeID         string
+	ConnectionTemplateKey   string
+	ConnectionTargetService string
+	ManagedByLazyops        bool
+	StartHint               string
+	ImageRef                string
+	ImageDigest             string
+	TargetPort              int
+	ServicePort             int
+	Replicas                int
+	EnvBundle               map[string]string
+	PVCSpec                 map[string]any
+	DeployStrategy          map[string]any
+	Healthcheck             map[string]any
 }
 
 type BlueprintRepoStateRecord struct {
@@ -577,22 +748,28 @@ type BlueprintRepoStateRecord struct {
 }
 
 type BlueprintServiceContractRecord struct {
-	Name           string
-	Path           string
-	Kind           string
-	Public         bool
-	RuntimeProfile string
-	StartHint      string
-	ImageRef       string
-	ImageDigest    string
-	DetectedPorts  []ServiceDetectedPortRecord
-	TargetPort     int
-	ServicePort    int
-	Replicas       int
-	EnvBundle      map[string]string
-	PVCSpec        map[string]any
-	DeployStrategy map[string]any
-	Healthcheck    map[string]any
+	Name                    string
+	Path                    string
+	Kind                    string
+	SourceType              string
+	Public                  bool
+	RuntimeProfile          string
+	PlacementMode           string
+	PlacementNodeID         string
+	ConnectionTemplateKey   string
+	ConnectionTargetService string
+	ManagedByLazyops        bool
+	StartHint               string
+	ImageRef                string
+	ImageDigest             string
+	DetectedPorts           []ServiceDetectedPortRecord
+	TargetPort              int
+	ServicePort             int
+	Replicas                int
+	EnvBundle               map[string]string
+	PVCSpec                 map[string]any
+	DeployStrategy          map[string]any
+	Healthcheck             map[string]any
 }
 
 type PlacementAssignmentRecord struct {

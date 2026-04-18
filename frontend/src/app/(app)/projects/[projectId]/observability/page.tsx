@@ -1,4 +1,4 @@
-import { ObservabilityConsole } from '@/modules/observability/observability-console';
+import { ProjectRuntimeWorkspace } from '@/modules/project-runtime/project-runtime-workspace';
 
 type ProjectObservabilityPageProps = {
   params: Promise<{ projectId: string }>;
@@ -7,11 +7,5 @@ type ProjectObservabilityPageProps = {
 export default async function ProjectObservabilityPage({ params }: ProjectObservabilityPageProps) {
   const { projectId } = await params;
 
-  return (
-    <ObservabilityConsole
-      fixedProjectId={projectId}
-      title="Giám sát"
-      subtitle="Theo dõi logs, traces, incidents và metric trong phạm vi project này."
-    />
-  );
+  return <ProjectRuntimeWorkspace projectId={projectId} />;
 }

@@ -87,6 +87,101 @@ func TestBuildCallbackServiceSuccessCreatesArtifactReadyRevision(t *testing.T) {
 	}
 }
 
+func TestBuildCallbackServiceAutoCompilesHiddenBlueprintWithoutExistingBlueprint(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		NamespaceSlug: "acme-api",
+		RuntimeMode:   "distributed-k3s",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:          "api",
+			Path:          "apps/api",
+			Kind:          "app",
+			Public:        true,
+			PlacementMode: servicePlacementModeSharedCluster,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		DomainPolicyJSON:        `{}`,
+		PlacementPolicyJSON:     `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/backend",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","artifact_metadata_stage":{"commit_sha":"abc123def456"}}`,
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, serviceStore, blueprintStore)
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil).
+		WithServiceInventoryCompiler(compiler)
+
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:  "bld_123",
+		ProjectID:   "prj_123",
+		CommitSHA:   "abc123def456",
+		Status:      "succeeded",
+		ImageRef:    "ghcr.io/lazyops/backend:abc123",
+		ImageDigest: "sha256:deadbeef",
+	})
+	if err != nil {
+		t.Fatalf("build callback with hidden compiler: %v", err)
+	}
+	if result.Revision == nil {
+		t.Fatal("expected revision to be created from hidden service inventory blueprint")
+	}
+	if len(blueprintStore.items) != 1 {
+		t.Fatalf("expected one hidden blueprint snapshot, got %d", len(blueprintStore.items))
+	}
+	if blueprintStore.items[0].SourceKind != hiddenServiceInventoryBlueprintSourceKind {
+		t.Fatalf("expected hidden service inventory source kind, got %q", blueprintStore.items[0].SourceKind)
+	}
+	if result.Revision.BlueprintID == "" {
+		t.Fatal("expected revision to keep hidden blueprint id for compatibility")
+	}
+}
+
 func TestBuildCallbackServiceRejectsArtifactMismatch(t *testing.T) {
 	buildStore := newFakeBuildJobStore(&models.BuildJob{
 		ID:                   "bld_123",

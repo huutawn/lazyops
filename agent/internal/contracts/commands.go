@@ -21,6 +21,8 @@ const (
 	CommandReportMetricRollup      CommandType = "report_metric_rollup"
 	CommandReportLogBatch          CommandType = "report_log_batch"
 	CommandGarbageCollectRuntime   CommandType = "garbage_collect_runtime"
+	CommandRestartK3sService       CommandType = "restart_k3s_service"
+	CommandLabelK3sNode            CommandType = "label_k3s_node"
 )
 
 var MinimumCommandSet = []CommandType{
@@ -42,6 +44,8 @@ var MinimumCommandSet = []CommandType{
 	CommandReportMetricRollup,
 	CommandReportLogBatch,
 	CommandGarbageCollectRuntime,
+	CommandRestartK3sService,
+	CommandLabelK3sNode,
 }
 
 type CommandHandlerSpec struct {
@@ -159,5 +163,17 @@ var CommandHandlerBindings = map[CommandType]CommandHandlerSpec{
 		Module:      "instance/runtime",
 		HandlerKey:  "runtime.garbage_collect_runtime",
 		Description: "Clean stale workspaces, revisions, and rendered runtime artifacts.",
+	},
+	CommandRestartK3sService: {
+		Command:     CommandRestartK3sService,
+		Module:      "instance/deploy",
+		HandlerKey:  "deploy.restart_k3s_service",
+		Description: "Restart a specific Kubernetes deployment inside a managed K3s namespace.",
+	},
+	CommandLabelK3sNode: {
+		Command:     CommandLabelK3sNode,
+		Module:      "instance/cluster",
+		HandlerKey:  "cluster.label_k3s_node",
+		Description: "Label a Kubernetes node so service placement can pin workloads by LazyOps instance id.",
 	},
 }

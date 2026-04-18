@@ -9,6 +9,7 @@ type Cluster struct {
 	InstanceID          *string   `json:"instance_id,omitempty" gorm:"size:64;index"`
 	Provider            string    `json:"provider" gorm:"size:64;not null"`
 	KubeconfigSecretRef string    `json:"kubeconfig_secret_ref" gorm:"size:255;not null"`
+	ManagedMetadataJSON string    `json:"managed_metadata_json" gorm:"type:jsonb;not null;default:'{}'"`
 	PublicIP            *string   `json:"public_ip,omitempty" gorm:"size:64"`
 	Status              string    `json:"status" gorm:"size:64;not null;default:'validating'"`
 	CreatedAt           time.Time `json:"created_at"`

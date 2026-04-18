@@ -18,6 +18,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { useDeployment, useDeploymentAction } from '@/modules/deployments/deployment-hooks';
+import { useProjectPlacementNodes } from '@/modules/project-services/project-service-hooks';
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
@@ -98,6 +99,29 @@ function emptyLogMessage(view: DeploymentLogView): string {
   }
 }
 
+function formatPlacementTarget(
+  targetKind: string,
+  targetID: string,
+  placementNodeMap: Map<string, { name: string }>,
+): string {
+  if (targetKind !== 'instance') {
+    return targetID;
+  }
+  return placementNodeMap.get(targetID)?.name ?? targetID;
+}
+
+function describePlacementTarget(
+  targetID: string,
+  placementNodeMap: Map<string, { name: string; status: string; is_ready: boolean; k8s_node_name?: string }>,
+): string {
+  const node = placementNodeMap.get(targetID);
+  if (!node) {
+    return `Instance ID ${targetID}`;
+  }
+  const readiness = node.is_ready ? 'Ready' : formatState(node.status);
+  return `${node.name} · ${readiness}${node.k8s_node_name ? ` · ${node.k8s_node_name}` : ''}`;
+}
+
 export default function DeploymentDetailPage() {
   const params = useParams();
   const projectId = params?.projectId as string | undefined;
@@ -106,6 +130,7 @@ export default function DeploymentDetailPage() {
   
   const { data, isLoading, isError } = useDeployment(projectId, deploymentId);
   const deploymentAction = useDeploymentAction(projectId, deploymentId);
+  const placementNodes = useProjectPlacementNodes(projectId ?? '');
   
   const revisionID = data?.revision_id;
   const deploymentLogs = useQuery({
@@ -157,6 +182,7 @@ export default function DeploymentDetailPage() {
   const incident = dep.incident_summary;
   const services = Array.isArray(dep.services) ? dep.services : [];
   const placementAssignments = Array.isArray(dep.placement_assignments) ? dep.placement_assignments : [];
+  const placementNodeMap = new Map((placementNodes.data?.items ?? []).map((node) => [node.instance_id, node]));
   const safetyPolicy = dep.safety_policy ?? {
     auto_rollback_enabled: false,
     triggers: [] as string[],
@@ -357,7 +383,16 @@ export default function DeploymentDetailPage() {
                 {services.map((svc) => (
                   <div key={svc.name} className="flex items-center justify-between rounded-xl bg-[#131c31] border border-[#1e293b] px-4 py-3">
                     <div className="flex flex-col">
-                      <span className="text-[15px] font-bold text-white">{svc.name}</span>
+                      {projectId ? (
+                        <Link
+                          href={`/projects/${projectId}/observability?service=${encodeURIComponent(svc.name)}`}
+                          className="text-[15px] font-bold text-white transition-colors hover:text-[#38BDF8]"
+                        >
+                          {svc.name}
+                        </Link>
+                      ) : (
+                        <span className="text-[15px] font-bold text-white">{svc.name}</span>
+                      )}
                       <span className="text-xs text-[#64748b] font-mono">{svc.path}</span>
                     </div>
                     <StatusBadge label={svc.runtime_profile} variant="neutral" size="sm" dot={false} />
@@ -371,8 +406,19 @@ export default function DeploymentDetailPage() {
                 {placementAssignments.map((pa) => (
                   <div key={pa.service_name} className="flex flex-col gap-1 rounded-xl bg-[#131c31] border border-[#1e293b] px-4 py-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-white">{pa.service_name}</span>
-                      <span className="text-xs text-[#38BDF8] font-mono">{pa.target_id}</span>
+                      {projectId ? (
+                        <Link
+                          href={`/projects/${projectId}/observability?service=${encodeURIComponent(pa.service_name)}`}
+                          className="text-sm font-bold text-white transition-colors hover:text-[#38BDF8]"
+                        >
+                          {pa.service_name}
+                        </Link>
+                      ) : (
+                        <span className="text-sm font-bold text-white">{pa.service_name}</span>
+                      )}
+                      <span className="text-xs text-[#38BDF8] font-mono">
+                        {formatPlacementTarget(pa.target_kind, pa.target_id, placementNodeMap)}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-[#64748b] uppercase font-bold tracking-widest">{pa.target_kind}</span>
@@ -384,6 +430,11 @@ export default function DeploymentDetailPage() {
                         ))}
                       </div>
                     </div>
+                    {pa.target_kind === 'instance' ? (
+                      <div className="text-xs text-[#94a3b8]">
+                        {describePlacementTarget(pa.target_id, placementNodeMap)}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

@@ -127,3 +127,49 @@ func TestProjectEnvServiceRejectsInvalidLine(t *testing.T) {
 		t.Fatal("expected invalid env line to fail")
 	}
 }
+
+func TestProjectEnvServiceBuildsPostgresHelpersFromUnifiedServiceInventory(t *testing.T) {
+	projects := newFakeProjectStore(&models.Project{
+		ID:          "prj_123",
+		UserID:      "usr_123",
+		Slug:        "demo",
+		RuntimeMode: "distributed-k3s",
+	})
+	bundles := newFakeProjectEnvBundleStore()
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:       "db",
+			Kind:       "postgres",
+			SourceType: serviceSourceTypeInternal,
+			EnvBundle: map[string]string{
+				"POSTGRES_DB":       "app",
+				"POSTGRES_USER":     "postgres",
+				"POSTGRES_PASSWORD": "supersecret",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+
+	service := NewProjectEnvService(projects, bundles, newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{}), "backend-secret-key").
+		WithServiceStore(serviceStore)
+	record, err := service.Get("usr_123", RoleOperator, "prj_123")
+	if err != nil {
+		t.Fatalf("get project env helpers: %v", err)
+	}
+	if len(record.HelperSnippets) != 1 {
+		t.Fatalf("expected one postgres helper snippet, got %#v", record.HelperSnippets)
+	}
+	snippet := record.HelperSnippets[0]
+	if snippet.Env["DB_HOST"] != "db" {
+		t.Fatalf("expected K3s internal dns host db, got %#v", snippet.Env)
+	}
+	if snippet.Env["DB_URL"] != "postgres://postgres:supersecret@db:5432/app" {
+		t.Fatalf("expected postgres helper URL to use internal dns, got %#v", snippet.Env)
+	}
+}

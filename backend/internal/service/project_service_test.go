@@ -20,13 +20,7 @@ func newFakeProjectServiceStoreForProjectSvc(items map[string][]models.Service) 
 }
 
 func (f *fakeProjectServiceStoreForProjectSvc) ReplaceForProject(projectID string, items []models.Service) error {
-	existing := f.items[projectID]
-	cloned := make([]models.Service, 0, len(existing)+len(items))
-	for _, item := range existing {
-		if strings.HasPrefix(item.Path, reservedManagedInternalServicePathPrefix) {
-			cloned = append(cloned, item)
-		}
-	}
+	cloned := make([]models.Service, 0, len(items))
 	cloned = append(cloned, items...)
 	if f.items == nil {
 		f.items = make(map[string][]models.Service)
@@ -44,6 +38,44 @@ func (f *fakeProjectServiceStoreForProjectSvc) ListByProject(projectID string) (
 	copy(cloned, items)
 	sort.Slice(cloned, func(i, j int) bool {
 		return cloned[i].Name < cloned[j].Name
+	})
+	return cloned, nil
+}
+
+type fakeProjectInternalServiceStoreForProjectSvc struct {
+	items map[string][]models.ProjectInternalService
+	err   error
+}
+
+func newFakeProjectInternalServiceStoreForProjectSvc(items map[string][]models.ProjectInternalService) *fakeProjectInternalServiceStoreForProjectSvc {
+	return &fakeProjectInternalServiceStoreForProjectSvc{items: items}
+}
+
+func (f *fakeProjectInternalServiceStoreForProjectSvc) ReplaceForProject(projectID string, items []models.ProjectInternalService) error {
+	if f.err != nil {
+		return f.err
+	}
+	cloned := make([]models.ProjectInternalService, len(items))
+	copy(cloned, items)
+	if f.items == nil {
+		f.items = make(map[string][]models.ProjectInternalService)
+	}
+	f.items[projectID] = cloned
+	return nil
+}
+
+func (f *fakeProjectInternalServiceStoreForProjectSvc) ListByProject(projectID string) ([]models.ProjectInternalService, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	items := f.items[projectID]
+	cloned := make([]models.ProjectInternalService, len(items))
+	copy(cloned, items)
+	sort.Slice(cloned, func(i, j int) bool {
+		if cloned[i].Kind != cloned[j].Kind {
+			return cloned[i].Kind < cloned[j].Kind
+		}
+		return cloned[i].Alias < cloned[j].Alias
 	})
 	return cloned, nil
 }
@@ -276,6 +308,140 @@ func TestProjectServiceListServicesReturnsPersistedServices(t *testing.T) {
 	if result.Items[0].Name != "api" || result.Items[0].TargetPort != 8080 || result.Items[0].ServicePort != 80 {
 		t.Fatalf("unexpected service record %#v", result.Items[0])
 	}
+	if result.Items[0].SourceType != serviceSourceTypeRepo {
+		t.Fatalf("expected repo source type, got %#v", result.Items[0])
+	}
+	if result.Items[0].PlacementMode != servicePlacementModeSharedCluster {
+		t.Fatalf("expected shared_cluster placement, got %#v", result.Items[0])
+	}
+	if result.Items[0].ManagedByLazyops {
+		t.Fatalf("expected repo service to stay unmanaged, got %#v", result.Items[0])
+	}
+}
+
+func TestProjectServiceListServicesBridgesLegacyInternalServices(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(map[string][]models.Service{
+		"prj_1": {
+			{
+				ID:          "svc_api",
+				ProjectID:   "prj_1",
+				Name:        "api",
+				Path:        "apps/api",
+				Kind:        "app",
+				TargetPort:  8080,
+				ServicePort: 8080,
+			},
+		},
+	})
+	internalStore := newFakeProjectInternalServiceStoreForProjectSvc(map[string][]models.ProjectInternalService{
+		"prj_1": {
+			{
+				ID:            "insvc_postgres",
+				ProjectID:     "prj_1",
+				Kind:          "postgres",
+				Alias:         "postgres",
+				Protocol:      "tcp",
+				Port:          5432,
+				LocalEndpoint: "localhost:5432",
+			},
+		},
+	})
+
+	svc := NewProjectService(projectStore, internalStore).WithServiceStore(serviceStore)
+	result, err := svc.ListServices("usr_123", RoleAdmin, "prj_1")
+	if err != nil {
+		t.Fatalf("list services: %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected repo and bridged internal services, got %d", len(result.Items))
+	}
+	if result.Items[0].Name != "api" || result.Items[0].SourceType != serviceSourceTypeRepo {
+		t.Fatalf("expected repo service first, got %#v", result.Items[0])
+	}
+	internal := result.Items[1]
+	if internal.SourceType != serviceSourceTypeInternal || !internal.ManagedByLazyops {
+		t.Fatalf("expected bridged internal metadata, got %#v", internal)
+	}
+	if internal.Name != "lazyops-internal-postgres" || internal.Path != ".lazyops/internal/postgres" {
+		t.Fatalf("expected bridged internal identity, got %#v", internal)
+	}
+	if internal.TargetPort != 5432 || internal.ServicePort != 5432 {
+		t.Fatalf("expected bridged internal ports, got %#v", internal)
+	}
+}
+
+func TestProjectServiceListServicesDedupesManagedInternalMirror(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(map[string][]models.Service{
+		"prj_1": {
+			{
+				ID:          "svc_api",
+				ProjectID:   "prj_1",
+				Name:        "api",
+				Path:        "apps/api",
+				Kind:        "app",
+				TargetPort:  8080,
+				ServicePort: 8080,
+			},
+			{
+				ID:          "svc_postgres",
+				ProjectID:   "prj_1",
+				Name:        "lazyops-internal-postgres",
+				Path:        ".lazyops/internal/postgres",
+				Kind:        "postgres",
+				TargetPort:  5432,
+				ServicePort: 5432,
+			},
+		},
+	})
+	internalStore := newFakeProjectInternalServiceStoreForProjectSvc(map[string][]models.ProjectInternalService{
+		"prj_1": {
+			{
+				ID:            "insvc_postgres",
+				ProjectID:     "prj_1",
+				Kind:          "postgres",
+				Alias:         "postgres",
+				Protocol:      "tcp",
+				Port:          5432,
+				LocalEndpoint: "localhost:5432",
+			},
+		},
+	})
+
+	svc := NewProjectService(projectStore, internalStore).WithServiceStore(serviceStore)
+	result, err := svc.ListServices("usr_123", RoleAdmin, "prj_1")
+	if err != nil {
+		t.Fatalf("list services: %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected managed internal service to avoid duplication, got %#v", result.Items)
+	}
+	internalCount := 0
+	for _, item := range result.Items {
+		if item.SourceType == serviceSourceTypeInternal {
+			internalCount++
+		}
+	}
+	if internalCount != 1 {
+		t.Fatalf("expected a single internal service in unified inventory, got %#v", result.Items)
+	}
 }
 
 func TestProjectServiceConfigureServicesPersistsServiceCatalog(t *testing.T) {
@@ -336,15 +502,18 @@ func TestProjectServiceConfigureServicesPersistsServiceCatalog(t *testing.T) {
 
 	var apiSvc *ProjectServiceRecord
 	var webSvc *ProjectServiceRecord
+	var internalSvc *ProjectServiceRecord
 	for index := range result.Items {
 		switch result.Items[index].Name {
 		case "api":
 			apiSvc = &result.Items[index]
 		case "web":
 			webSvc = &result.Items[index]
+		case "lazyops-internal-postgres":
+			internalSvc = &result.Items[index]
 		}
 	}
-	if apiSvc == nil || webSvc == nil {
+	if apiSvc == nil || webSvc == nil || internalSvc == nil {
 		t.Fatalf("expected api and web services in result, got %#v", result.Items)
 	}
 	if apiSvc.Kind != "backend" || apiSvc.Replicas != 2 || apiSvc.TargetPort != 8080 || apiSvc.ServicePort != 8080 {
@@ -355,6 +524,9 @@ func TestProjectServiceConfigureServicesPersistsServiceCatalog(t *testing.T) {
 	}
 	if webSvc.RuntimeProfile != "web" || !webSvc.Public {
 		t.Fatalf("expected web service to infer runtime profile web, got %#v", webSvc)
+	}
+	if internalSvc.SourceType != serviceSourceTypeInternal || !internalSvc.ManagedByLazyops {
+		t.Fatalf("expected preserved internal service metadata, got %#v", internalSvc)
 	}
 }
 
@@ -380,6 +552,55 @@ func TestProjectServiceConfigureServicesRejectsReservedInternalPath(t *testing.T
 	})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestProjectServiceConfigureServicesSupportsInternalPostgresCatalogItem(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(nil)
+	service := NewProjectService(projectStore).WithServiceStore(serviceStore)
+
+	result, err := service.ConfigureServices(ConfigureProjectServicesCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleAdmin,
+		ProjectID:       "prj_1",
+		Items: []ConfigureProjectServiceItem{
+			{
+				Name:       "db",
+				Kind:       "postgres",
+				SourceType: serviceSourceTypeInternal,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure internal postgres service: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected one internal service, got %#v", result.Items)
+	}
+	item := result.Items[0]
+	if item.Path != ".lazyops/internal/postgres/db" {
+		t.Fatalf("expected normalized internal postgres path, got %q", item.Path)
+	}
+	if item.ImageRef != "postgres:16-alpine" {
+		t.Fatalf("expected default postgres image, got %q", item.ImageRef)
+	}
+	if item.TargetPort != 5432 || item.ServicePort != 5432 {
+		t.Fatalf("expected postgres ports 5432, got %#v", item)
+	}
+	if item.RuntimeProfile != "internal-db" || !item.ManagedByLazyops {
+		t.Fatalf("expected managed internal-db profile, got %#v", item)
+	}
+	if extractHealthcheckPort(item.Healthcheck) != 5432 {
+		t.Fatalf("expected tcp healthcheck on 5432, got %#v", item.Healthcheck)
 	}
 }
 

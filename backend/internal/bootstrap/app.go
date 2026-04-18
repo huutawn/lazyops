@@ -14,73 +14,76 @@ import (
 )
 
 type Application struct {
-	Config                 config.Config
-	DB                     *gorm.DB
-	Hub                    *hub.Hub
-	AI                     *ai.GeminiClient
-	UserRepo               *repository.UserRepository
-	OAuthIdentityRepo      *repository.OAuthIdentityRepository
-	GitHubInstallRepo      *repository.GitHubInstallationRepository
-	ProjectRepo            *repository.ProjectRepository
-	ProjectRepoLinkRepo    *repository.ProjectRepoLinkRepository
-	ProjectInternalSvcRepo service.ProjectInternalServiceStore
-	ProjectEnvRepo         *repository.ProjectEnvBundleRepository
-	BuildJobRepo           *repository.BuildJobRepository
-	DeploymentBindingRepo  *repository.DeploymentBindingRepository
-	ServiceRepo            *repository.ServiceRepository
-	BlueprintRepo          *repository.BlueprintRepository
-	RevisionRepo           *repository.DesiredStateRevisionRepository
-	DeploymentRepo         *repository.DeploymentRepository
-	InstanceRepo           *repository.InstanceRepository
-	MeshNetworkRepo        *repository.MeshNetworkRepository
-	ClusterRepo            *repository.ClusterRepository
-	TunnelSessionRepo      *repository.TunnelSessionRepository
-	TraceSummaryRepo       *repository.TraceSummaryRepository
-	MetricRollupRepo       *repository.MetricRollupRepository
-	LogStreamRepo          *repository.LogStreamRepository
-	TopologyStateRepo      *repository.TopologyStateRepository
-	TopologyNodeRepo       *repository.TopologyNodeRepository
-	TopologyEdgeRepo       *repository.TopologyEdgeRepository
-	BootstrapTokenRepo     *repository.BootstrapTokenRepository
-	AgentTokenRepo         *repository.AgentTokenRepository
-	PATRepo                *repository.PersonalAccessTokenRepository
-	AgentRepo              *repository.AgentRepository
-	AuthService            *service.AuthService
-	GoogleOAuthService     *service.GoogleOAuthService
-	GitHubOAuthService     *service.GitHubOAuthService
-	GitHubInstallSvc       *service.GitHubInstallationService
-	GitHubWebhookSvc       *service.GitHubWebhookService
-	BuildCallbackSvc       *service.BuildCallbackService
-	ProjectService         *service.ProjectService
-	ProjectInternalSvc     *service.ProjectInternalServiceService
-	ProjectEnvSvc          *service.ProjectEnvService
-	ProjectRepoLinkSvc     *service.ProjectRepoLinkService
-	BootstrapOrchestrator  *service.BootstrapOrchestrator
-	BuildJobSvc            *service.BuildJobService
-	DeploymentBindingSvc   *service.DeploymentBindingService
-	InitContractSvc        *service.InitContractService
-	BlueprintSvc           *service.BlueprintService
-	DeploymentSvc          *service.DeploymentService
-	InstanceService        *service.InstanceService
-	InstanceSSHInstallSvc  *service.InstanceSSHInstallService
-	MeshNetworkService     *service.MeshNetworkService
-	ClusterService         *service.ClusterService
-	MeshPlanningSvc        *service.MeshPlanningService
-	ObservabilitySvc       *service.ObservabilityService
-	AgentEnrollmentSvc     *service.AgentEnrollmentService
-	UserService            *service.UserService
-	AgentService           *service.AgentService
-	ControlService         *service.ControlService
-	ControlHub             *service.ControlHub
-	CommandTracker         *service.CommandTracker
-	OperatorStreamHub      *service.OperatorStreamHub
-	RuntimeRegistry        *runtime.Registry
-	RolloutPlanner         *service.RolloutPlanner
-	RolloutExecutionSvc    *service.RolloutExecutionService
-	IncidentRepo           *repository.RuntimeIncidentRepository
-	PreviewRepo            *repository.PreviewEnvironmentRepository
-	PreviewService         *service.PreviewEnvironmentService
-	RoutingSvc             *service.RoutingService
+	Config                  config.Config
+	DB                      *gorm.DB
+	Hub                     *hub.Hub
+	AI                      *ai.GeminiClient
+	UserRepo                *repository.UserRepository
+	OAuthIdentityRepo       *repository.OAuthIdentityRepository
+	GitHubInstallRepo       *repository.GitHubInstallationRepository
+	ProjectRepo             *repository.ProjectRepository
+	ProjectRepoLinkRepo     *repository.ProjectRepoLinkRepository
+	ProjectInternalSvcRepo  service.ProjectInternalServiceStore
+	ProjectEnvRepo          *repository.ProjectEnvBundleRepository
+	BuildJobRepo            *repository.BuildJobRepository
+	DeploymentBindingRepo   *repository.DeploymentBindingRepository
+	ServiceRepo             *repository.ServiceRepository
+	BlueprintRepo           *repository.BlueprintRepository
+	RevisionRepo            *repository.DesiredStateRevisionRepository
+	DeploymentRepo          *repository.DeploymentRepository
+	InstanceRepo            *repository.InstanceRepository
+	MeshNetworkRepo         *repository.MeshNetworkRepository
+	ClusterRepo             *repository.ClusterRepository
+	TunnelSessionRepo       *repository.TunnelSessionRepository
+	TraceSummaryRepo        *repository.TraceSummaryRepository
+	MetricRollupRepo        *repository.MetricRollupRepository
+	LogStreamRepo           *repository.LogStreamRepository
+	TopologyStateRepo       *repository.TopologyStateRepository
+	TopologyNodeRepo        *repository.TopologyNodeRepository
+	TopologyEdgeRepo        *repository.TopologyEdgeRepository
+	BootstrapTokenRepo      *repository.BootstrapTokenRepository
+	AgentTokenRepo          *repository.AgentTokenRepository
+	PATRepo                 *repository.PersonalAccessTokenRepository
+	AgentRepo               *repository.AgentRepository
+	AuthService             *service.AuthService
+	GoogleOAuthService      *service.GoogleOAuthService
+	GitHubOAuthService      *service.GitHubOAuthService
+	GitHubInstallSvc        *service.GitHubInstallationService
+	GitHubWebhookSvc        *service.GitHubWebhookService
+	BuildCallbackSvc        *service.BuildCallbackService
+	ProjectService          *service.ProjectService
+	ProjectInternalSvc      *service.ProjectInternalServiceService
+	ProjectEnvSvc           *service.ProjectEnvService
+	ProjectRepoLinkSvc      *service.ProjectRepoLinkService
+	ProjectServiceActionSvc *service.ProjectServiceActionService
+	ProjectRuntimeSvc       *service.ProjectRuntimeService
+	BootstrapOrchestrator   *service.BootstrapOrchestrator
+	BuildJobSvc             *service.BuildJobService
+	DeploymentBindingSvc    *service.DeploymentBindingService
+	InitContractSvc         *service.InitContractService
+	BlueprintSvc            *service.BlueprintService
+	DeploymentSvc           *service.DeploymentService
+	InstanceService         *service.InstanceService
+	InstanceSSHInstallSvc   *service.InstanceSSHInstallService
+	MeshNetworkService      *service.MeshNetworkService
+	ClusterService          *service.ClusterService
+	ClusterNodeService      *service.ClusterNodeService
+	MeshPlanningSvc         *service.MeshPlanningService
+	ObservabilitySvc        *service.ObservabilityService
+	AgentEnrollmentSvc      *service.AgentEnrollmentService
+	UserService             *service.UserService
+	AgentService            *service.AgentService
+	ControlService          *service.ControlService
+	ControlHub              *service.ControlHub
+	CommandTracker          *service.CommandTracker
+	OperatorStreamHub       *service.OperatorStreamHub
+	RuntimeRegistry         *runtime.Registry
+	RolloutPlanner          *service.RolloutPlanner
+	RolloutExecutionSvc     *service.RolloutExecutionService
+	IncidentRepo            *repository.RuntimeIncidentRepository
+	PreviewRepo             *repository.PreviewEnvironmentRepository
+	PreviewService          *service.PreviewEnvironmentService
+	RoutingSvc              *service.RoutingService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -154,7 +157,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	githubOAuthService.WithInstallationSync(githubInstallSvc)
 	projectService := service.NewProjectService(projectRepo, projectInternalSvcRepo).WithServiceStore(serviceRepo)
 	projectInternalSvc := service.NewProjectInternalServiceService(projectRepo, projectInternalSvcRepo)
-	projectEnvSvc := service.NewProjectEnvService(projectRepo, projectEnvRepo, projectInternalSvcRepo, cfg.Secrets.EncryptionKey)
+	projectEnvSvc := service.NewProjectEnvService(projectRepo, projectEnvRepo, projectInternalSvcRepo, cfg.Secrets.EncryptionKey).
+		WithServiceStore(serviceRepo)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
 	buildJobSvc := service.NewBuildJobService(projectRepoLinkRepo, buildJobRepo)
 	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
@@ -174,15 +178,19 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	bootstrapOrchestrator.WithInternalServiceStore(projectInternalSvcRepo)
 	initContractSvc := service.NewInitContractService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
 	blueprintSvc := service.NewBlueprintService(projectRepo, projectRepoLinkRepo, deploymentBindingRepo, serviceRepo, blueprintRepo)
+	serviceInventoryCompiler := service.NewServiceInventoryBlueprintCompiler(projectRepoLinkRepo, deploymentBindingRepo, serviceRepo, blueprintRepo).
+		WithProjectEnvService(projectEnvSvc)
 	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo).
 		WithIncidentStore(incidentRepo).
-		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo, clusterRepo)
+		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo, clusterRepo).
+		WithServiceInventoryCompiler(serviceInventoryCompiler)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)
 	clusterService := service.NewClusterService(clusterRepo)
 	instanceSSHInstallSvc := service.NewInstanceSSHInstallService(instanceService, service.NewNativeSSHExecutor()).
 		WithBootstrapOrchestrator(bootstrapOrchestrator).
-		WithClusterService(clusterService)
+		WithClusterService(clusterService).
+		WithTopologyStateStore(topologyStateRepo)
 	meshNetworkService := service.NewMeshNetworkService(meshNetworkRepo)
 	meshPlanningSvc := service.NewMeshPlanningService(instanceRepo, deploymentBindingRepo, revisionRepo, tunnelSessionRepo, topologyStateRepo)
 	observabilitySvc := service.
@@ -194,7 +202,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	agentService := service.NewAgentService(agentRepo)
 	wsHub := hub.New()
 	wsHub.Start()
-	buildCallbackSvc := service.NewBuildCallbackService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo, buildJobRepo, wsHub)
+	buildCallbackSvc := service.NewBuildCallbackService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo, buildJobRepo, wsHub).
+		WithServiceInventoryCompiler(serviceInventoryCompiler)
 	controlHub := service.NewControlHub()
 	controlHub.Start()
 	operatorStreamHub := service.NewOperatorStreamHub()
@@ -206,6 +215,15 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	rtRegistry.Register(runtime.NewDistributedK3sDriver())
 	commandTracker := service.NewCommandTracker()
 	controlService := service.NewControlService(controlHub, commandTracker, rtRegistry, instanceRepo, agentRepo)
+	clusterNodeService := service.NewClusterNodeService(
+		projectRepo,
+		deploymentBindingRepo,
+		clusterRepo,
+		instanceService,
+		topologyStateRepo,
+		instanceSSHInstallSvc,
+		controlService,
+	)
 	projectInternalSvc.WithRuntimeProvisioner(deploymentBindingRepo, instanceRepo, controlService)
 
 	rolloutPlanner := service.NewRolloutPlanner(
@@ -225,6 +243,24 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		controlService,
 		operatorStreamHub,
 	).WithClusterStore(clusterRepo)
+	projectServiceActionSvc := service.NewProjectServiceActionService(
+		projectRepo,
+		serviceRepo,
+		deploymentSvc,
+		rolloutExecutionSvc,
+		deploymentBindingRepo,
+		clusterRepo,
+		instanceRepo,
+		controlService,
+	)
+	projectRuntimeSvc := service.NewProjectRuntimeService(
+		projectRepo,
+		projectService,
+		deploymentSvc,
+		deploymentBindingRepo,
+		clusterNodeService,
+		observabilitySvc,
+	)
 	buildCallbackSvc.WithRolloutStarter(rolloutExecutionSvc)
 	bootstrapOrchestrator.WithOneClickPipeline(
 		serviceRepo,
@@ -249,72 +285,75 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	routingSvc := service.NewRoutingService(routingPolicyRepo, serviceRepo)
 
 	return &Application{
-		Config:                 cfg,
-		DB:                     db,
-		Hub:                    wsHub,
-		AI:                     ai.NewGeminiClient(""),
-		UserRepo:               userRepo,
-		OAuthIdentityRepo:      oauthIdentityRepo,
-		GitHubInstallRepo:      githubInstallRepo,
-		ProjectRepo:            projectRepo,
-		ProjectRepoLinkRepo:    projectRepoLinkRepo,
-		ProjectInternalSvcRepo: projectInternalSvcRepo,
-		ProjectEnvRepo:         projectEnvRepo,
-		BuildJobRepo:           buildJobRepo,
-		DeploymentBindingRepo:  deploymentBindingRepo,
-		ServiceRepo:            serviceRepo,
-		BlueprintRepo:          blueprintRepo,
-		RevisionRepo:           revisionRepo,
-		DeploymentRepo:         deploymentRepo,
-		InstanceRepo:           instanceRepo,
-		MeshNetworkRepo:        meshNetworkRepo,
-		ClusterRepo:            clusterRepo,
-		TunnelSessionRepo:      tunnelSessionRepo,
-		TraceSummaryRepo:       traceSummaryRepo,
-		MetricRollupRepo:       metricRollupRepo,
-		LogStreamRepo:          logStreamRepo,
-		TopologyStateRepo:      topologyStateRepo,
-		TopologyNodeRepo:       topologyNodeRepo,
-		TopologyEdgeRepo:       topologyEdgeRepo,
-		BootstrapTokenRepo:     bootstrapTokenRepo,
-		AgentTokenRepo:         agentTokenRepo,
-		PATRepo:                patRepo,
-		AgentRepo:              agentRepo,
-		AuthService:            authService,
-		GoogleOAuthService:     googleOAuthService,
-		GitHubOAuthService:     githubOAuthService,
-		GitHubInstallSvc:       githubInstallSvc,
-		GitHubWebhookSvc:       githubWebhookSvc,
-		BuildCallbackSvc:       buildCallbackSvc,
-		ProjectService:         projectService,
-		ProjectInternalSvc:     projectInternalSvc,
-		ProjectEnvSvc:          projectEnvSvc,
-		ProjectRepoLinkSvc:     projectRepoLinkSvc,
-		BootstrapOrchestrator:  bootstrapOrchestrator,
-		BuildJobSvc:            buildJobSvc,
-		DeploymentBindingSvc:   deploymentBindingSvc,
-		InitContractSvc:        initContractSvc,
-		BlueprintSvc:           blueprintSvc,
-		DeploymentSvc:          deploymentSvc,
-		InstanceService:        instanceService,
-		InstanceSSHInstallSvc:  instanceSSHInstallSvc,
-		MeshNetworkService:     meshNetworkService,
-		ClusterService:         clusterService,
-		MeshPlanningSvc:        meshPlanningSvc,
-		ObservabilitySvc:       observabilitySvc,
-		AgentEnrollmentSvc:     agentEnrollmentSvc,
-		UserService:            userService,
-		AgentService:           agentService,
-		ControlService:         controlService,
-		ControlHub:             controlHub,
-		CommandTracker:         commandTracker,
-		OperatorStreamHub:      operatorStreamHub,
-		RuntimeRegistry:        rtRegistry,
-		RolloutPlanner:         rolloutPlanner,
-		RolloutExecutionSvc:    rolloutExecutionSvc,
-		IncidentRepo:           incidentRepo,
-		PreviewRepo:            previewRepo,
-		PreviewService:         previewService,
-		RoutingSvc:             routingSvc,
+		Config:                  cfg,
+		DB:                      db,
+		Hub:                     wsHub,
+		AI:                      ai.NewGeminiClient(""),
+		UserRepo:                userRepo,
+		OAuthIdentityRepo:       oauthIdentityRepo,
+		GitHubInstallRepo:       githubInstallRepo,
+		ProjectRepo:             projectRepo,
+		ProjectRepoLinkRepo:     projectRepoLinkRepo,
+		ProjectInternalSvcRepo:  projectInternalSvcRepo,
+		ProjectEnvRepo:          projectEnvRepo,
+		BuildJobRepo:            buildJobRepo,
+		DeploymentBindingRepo:   deploymentBindingRepo,
+		ServiceRepo:             serviceRepo,
+		BlueprintRepo:           blueprintRepo,
+		RevisionRepo:            revisionRepo,
+		DeploymentRepo:          deploymentRepo,
+		InstanceRepo:            instanceRepo,
+		MeshNetworkRepo:         meshNetworkRepo,
+		ClusterRepo:             clusterRepo,
+		TunnelSessionRepo:       tunnelSessionRepo,
+		TraceSummaryRepo:        traceSummaryRepo,
+		MetricRollupRepo:        metricRollupRepo,
+		LogStreamRepo:           logStreamRepo,
+		TopologyStateRepo:       topologyStateRepo,
+		TopologyNodeRepo:        topologyNodeRepo,
+		TopologyEdgeRepo:        topologyEdgeRepo,
+		BootstrapTokenRepo:      bootstrapTokenRepo,
+		AgentTokenRepo:          agentTokenRepo,
+		PATRepo:                 patRepo,
+		AgentRepo:               agentRepo,
+		AuthService:             authService,
+		GoogleOAuthService:      googleOAuthService,
+		GitHubOAuthService:      githubOAuthService,
+		GitHubInstallSvc:        githubInstallSvc,
+		GitHubWebhookSvc:        githubWebhookSvc,
+		BuildCallbackSvc:        buildCallbackSvc,
+		ProjectService:          projectService,
+		ProjectInternalSvc:      projectInternalSvc,
+		ProjectEnvSvc:           projectEnvSvc,
+		ProjectRepoLinkSvc:      projectRepoLinkSvc,
+		ProjectServiceActionSvc: projectServiceActionSvc,
+		ProjectRuntimeSvc:       projectRuntimeSvc,
+		BootstrapOrchestrator:   bootstrapOrchestrator,
+		BuildJobSvc:             buildJobSvc,
+		DeploymentBindingSvc:    deploymentBindingSvc,
+		InitContractSvc:         initContractSvc,
+		BlueprintSvc:            blueprintSvc,
+		DeploymentSvc:           deploymentSvc,
+		InstanceService:         instanceService,
+		InstanceSSHInstallSvc:   instanceSSHInstallSvc,
+		MeshNetworkService:      meshNetworkService,
+		ClusterService:          clusterService,
+		ClusterNodeService:      clusterNodeService,
+		MeshPlanningSvc:         meshPlanningSvc,
+		ObservabilitySvc:        observabilitySvc,
+		AgentEnrollmentSvc:      agentEnrollmentSvc,
+		UserService:             userService,
+		AgentService:            agentService,
+		ControlService:          controlService,
+		ControlHub:              controlHub,
+		CommandTracker:          commandTracker,
+		OperatorStreamHub:       operatorStreamHub,
+		RuntimeRegistry:         rtRegistry,
+		RolloutPlanner:          rolloutPlanner,
+		RolloutExecutionSvc:     rolloutExecutionSvc,
+		IncidentRepo:            incidentRepo,
+		PreviewRepo:             previewRepo,
+		PreviewService:          previewService,
+		RoutingSvc:              routingSvc,
 	}, nil
 }

@@ -23,6 +23,8 @@ const (
 	CommandTypeReportMetricRollup      = "report_metric_rollup"
 	CommandTypeReportLogBatch          = "report_log_batch"
 	CommandTypeGarbageCollectRuntime   = "garbage_collect_runtime"
+	CommandTypeRestartK3sService       = "restart_k3s_service"
+	CommandTypeLabelK3sNode            = "label_k3s_node"
 )
 
 var ValidAgentCommands = map[string]struct{}{
@@ -44,6 +46,8 @@ var ValidAgentCommands = map[string]struct{}{
 	CommandTypeReportMetricRollup:      {},
 	CommandTypeReportLogBatch:          {},
 	CommandTypeGarbageCollectRuntime:   {},
+	CommandTypeRestartK3sService:       {},
+	CommandTypeLabelK3sNode:            {},
 }
 
 const (

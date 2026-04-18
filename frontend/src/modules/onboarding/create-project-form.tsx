@@ -122,8 +122,8 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
 
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1 mb-2">
-            <span className="text-[13px] font-bold text-[#94a3b8] uppercase tracking-wider ml-1">Dịch vụ nội bộ</span>
-            <p className="text-xs text-[#64748b] ml-1">Kích hoạt sẵn các hạ tầng bổ trợ cho ứng dụng.</p>
+            <span className="text-[13px] font-bold text-[#94a3b8] uppercase tracking-wider ml-1">Service presets</span>
+            <p className="text-xs text-[#64748b] ml-1">Thêm nhanh managed services vào service inventory của project ngay từ lúc tạo.</p>
           </div>
           
           <div className="grid grid-cols-2 gap-3">

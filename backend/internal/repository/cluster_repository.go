@@ -91,6 +91,15 @@ func (r *ClusterRepository) UpdateBootstrapMetadata(clusterID, kubeconfigSecretR
 		Updates(updates).Error
 }
 
+func (r *ClusterRepository) UpdateManagedMetadata(clusterID, managedMetadataJSON string, at time.Time) error {
+	return r.db.Model(&models.Cluster{}).
+		Where("id = ?", clusterID).
+		Updates(map[string]any{
+			"managed_metadata_json": managedMetadataJSON,
+			"updated_at":            at,
+		}).Error
+}
+
 func (r *ClusterRepository) UpdateStatus(clusterID, status string, at time.Time) error {
 	return r.db.Model(&models.Cluster{}).
 		Where("id = ?", clusterID).

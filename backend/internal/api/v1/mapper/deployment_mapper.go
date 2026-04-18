@@ -13,6 +13,7 @@ func ToCreateDeploymentCommand(userID, role, projectID string, req requestdto.Cr
 		ProjectID:       projectID,
 		BlueprintID:     req.BlueprintID,
 		TriggerKind:     req.TriggerKind,
+		ServiceIDs:      append([]string{}, req.ServiceIDs...),
 	}
 }
 
@@ -27,8 +28,11 @@ func ToCreateDeploymentResponse(result service.CreateDeploymentResult) responsed
 			Name:           item.Name,
 			Path:           item.Path,
 			Kind:           item.Kind,
+			SourceType:     "repo",
 			Public:         item.Public,
 			RuntimeProfile: item.RuntimeProfile,
+			PlacementMode:  item.PlacementMode,
+			PlacementNodeID: item.PlacementNodeID,
 			StartHint:      item.StartHint,
 			ImageRef:       item.ImageRef,
 			ImageDigest:    item.ImageDigest,
@@ -92,8 +96,11 @@ func ToDeploymentOverviewResponse(record service.DeploymentOverviewRecord) respo
 			Name:           item.Name,
 			Path:           item.Path,
 			Kind:           item.Kind,
+			SourceType:     "repo",
 			Public:         item.Public,
 			RuntimeProfile: item.RuntimeProfile,
+			PlacementMode:  item.PlacementMode,
+			PlacementNodeID: item.PlacementNodeID,
 			StartHint:      item.StartHint,
 			ImageRef:       item.ImageRef,
 			ImageDigest:    item.ImageDigest,

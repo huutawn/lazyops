@@ -68,3 +68,71 @@ func ToClusterListResponse(result service.ClusterListResult) responsedto.Cluster
 
 	return responsedto.ClusterListResponse{Items: items}
 }
+
+func ToConnectClusterNodeSSHCommand(userID, clusterID string, req requestdto.ConnectClusterNodeSSHRequest) service.ConnectClusterNodeSSHCommand {
+	return service.ConnectClusterNodeSSHCommand{
+		UserID:             userID,
+		ClusterID:          clusterID,
+		InstanceName:       req.InstanceName,
+		PublicIP:           req.PublicIP,
+		PrivateIP:          req.PrivateIP,
+		Labels:             req.Labels,
+		Host:               req.SSHHost,
+		Port:               req.SSHPort,
+		Username:           req.SSHUsername,
+		Password:           req.SSHPassword,
+		PrivateKey:         req.SSHPrivateKey,
+		HostKeyFingerprint: req.SSHHostKeyFingerprint,
+		ControlPlaneURL:    req.ControlPlaneURL,
+		AgentImage:         req.AgentImage,
+		ContainerName:      req.ContainerName,
+	}
+}
+
+func ToClusterNodeResponse(record service.ClusterNodeRecord) responsedto.ClusterNodeResponse {
+	return responsedto.ClusterNodeResponse{
+		ClusterID:   record.ClusterID,
+		InstanceID:  record.InstanceID,
+		Name:        record.Name,
+		Status:      record.Status,
+		K8sNodeName: record.K8sNodeName,
+		Labels:      record.Labels,
+		LastSeenAt:  record.LastSeenAt,
+		IsReady:     record.IsReady,
+	}
+}
+
+func ToClusterNodeListResponse(result service.ClusterNodeListResult) responsedto.ClusterNodeListResponse {
+	items := make([]responsedto.ClusterNodeResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, ToClusterNodeResponse(item))
+	}
+	return responsedto.ClusterNodeListResponse{Items: items}
+}
+
+func ToConnectClusterNodeSSHResponse(result service.ConnectClusterNodeSSHResult) responsedto.ConnectClusterNodeSSHResponse {
+	stages := make([]responsedto.BootstrapStepResponse, 0, len(result.Join.Stages))
+	for _, stage := range result.Join.Stages {
+		stages = append(stages, responsedto.BootstrapStepResponse{
+			ID:      stage.ID,
+			State:   stage.State,
+			Summary: stage.Message,
+			Actions: []responsedto.BootstrapStepActionResponse{},
+		})
+	}
+	response := responsedto.ConnectClusterNodeSSHResponse{
+		ClusterID: result.ClusterID,
+		Instance:  ToInstanceSummaryResponse(result.Instance),
+	}
+	response.Join.ClusterID = result.Join.ClusterID
+	response.Join.InstanceID = result.Join.InstanceID
+	response.Join.StartedAt = result.Join.StartedAt
+	response.Join.HostKeyFingerprint = result.Join.HostKeyFingerprint
+	response.Join.NodeName = result.Join.NodeName
+	response.Join.JoinServerURL = result.Join.JoinServerURL
+	response.Join.LabeledByControl = result.Join.LabeledByControl
+	response.Join.PlacementLabelKey = result.Join.PlacementLabelKey
+	response.Join.PlacementLabelValue = result.Join.PlacementLabelValue
+	response.Join.Stages = stages
+	return response
+}

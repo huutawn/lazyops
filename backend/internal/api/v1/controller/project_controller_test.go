@@ -28,7 +28,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	blueprintController := NewBlueprintController(nil)
 	deploymentController := NewDeploymentController(nil, nil)
 	observabilityController := NewObservabilityController(nil, nil)
-	internalServiceController := NewProjectInternalServiceController(nil)
+	internalServiceController := NewProjectInternalServiceController(nil, nil)
 	projectEnvController := NewProjectEnvController(nil)
 
 	protected := router.Group("/api/v1")

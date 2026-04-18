@@ -374,10 +374,10 @@ export function ProjectThreeStepWizard({
             </div>
 
             <Link
-              href={`/projects/${projectId}/internal-services`}
+              href={`/projects/${projectId}/services?source=internal`}
               className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
             >
-              Dịch vụ nội bộ
+              Services
             </Link>
           </div>
 

@@ -12,6 +12,8 @@ function mockCreateProject(data: { name: string; slug: string; default_branch: s
     id: `proj_${Date.now()}`,
     name: data.name,
     slug: data.slug,
+    namespace_slug: data.slug,
+    runtime_mode: 'distributed-k3s',
     default_branch: data.default_branch,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

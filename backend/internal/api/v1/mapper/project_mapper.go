@@ -19,25 +19,44 @@ func ToCreateProjectCommand(userID string, req requestdto.CreateProjectRequest) 
 	}
 }
 
+func ToProjectServiceActionResponse(result service.ProjectServiceActionResult) responsedto.ProjectServiceActionResponse {
+	return responsedto.ProjectServiceActionResponse{
+		Action:       result.Action,
+		ServiceID:    result.ServiceID,
+		ServiceName:  result.ServiceName,
+		Status:       result.Status,
+		TriggerKind:  result.TriggerKind,
+		DeploymentID: result.DeploymentID,
+		RevisionID:   result.RevisionID,
+		Message:      result.Message,
+	}
+}
+
 func ToConfigureProjectServicesCommand(userID, role, projectID string, req requestdto.ConfigureProjectServicesRequest) service.ConfigureProjectServicesCommand {
 	items := make([]service.ConfigureProjectServiceItem, 0, len(req.Items))
 	for _, item := range req.Items {
 		items = append(items, service.ConfigureProjectServiceItem{
-			Name:           item.Name,
-			Path:           item.Path,
-			Kind:           item.Kind,
-			Public:         item.Public,
-			RuntimeProfile: item.RuntimeProfile,
-			StartHint:      item.StartHint,
-			ImageRef:       item.ImageRef,
-			ImageDigest:    item.ImageDigest,
-			TargetPort:     item.TargetPort,
-			ServicePort:    item.ServicePort,
-			Replicas:       item.Replicas,
-			EnvBundle:      item.EnvBundle,
-			PVCSpec:        item.PVCSpec,
-			DeployStrategy: item.DeployStrategy,
-			Healthcheck:    item.Healthcheck,
+			Name:                    item.Name,
+			Path:                    item.Path,
+			Kind:                    item.Kind,
+			SourceType:              item.SourceType,
+			Public:                  item.Public,
+			RuntimeProfile:          item.RuntimeProfile,
+			PlacementMode:           item.PlacementMode,
+			PlacementNodeID:         item.PlacementNodeID,
+			ConnectionTemplateKey:   item.ConnectionTemplateKey,
+			ConnectionTargetService: item.ConnectionTargetService,
+			ManagedByLazyops:        item.ManagedByLazyops,
+			StartHint:               item.StartHint,
+			ImageRef:                item.ImageRef,
+			ImageDigest:             item.ImageDigest,
+			TargetPort:              item.TargetPort,
+			ServicePort:             item.ServicePort,
+			Replicas:                item.Replicas,
+			EnvBundle:               item.EnvBundle,
+			PVCSpec:                 item.PVCSpec,
+			DeployStrategy:          item.DeployStrategy,
+			Healthcheck:             item.Healthcheck,
 		})
 	}
 
@@ -145,30 +164,140 @@ func ToProjectServiceListResponse(result service.ProjectServiceListResult) respo
 	items := make([]responsedto.ProjectServiceResponse, 0, len(result.Items))
 	for _, item := range result.Items {
 		items = append(items, responsedto.ProjectServiceResponse{
-			ID:             item.ID,
-			ProjectID:      item.ProjectID,
-			Name:           item.Name,
-			Path:           item.Path,
-			Kind:           item.Kind,
-			Public:         item.Public,
-			RuntimeProfile: item.RuntimeProfile,
-			StartHint:      item.StartHint,
-			ImageRef:       item.ImageRef,
-			ImageDigest:    item.ImageDigest,
-			DetectedPorts:  toBuildDetectedPortResponses(item.DetectedPorts),
-			TargetPort:     item.TargetPort,
-			ServicePort:    item.ServicePort,
-			Replicas:       item.Replicas,
-			EnvBundle:      item.EnvBundle,
-			PVCSpec:        item.PVCSpec,
-			DeployStrategy: item.DeployStrategy,
-			Healthcheck:    item.Healthcheck,
-			CreatedAt:      item.CreatedAt,
-			UpdatedAt:      item.UpdatedAt,
+			ID:                      item.ID,
+			ProjectID:               item.ProjectID,
+			Name:                    item.Name,
+			Path:                    item.Path,
+			Kind:                    item.Kind,
+			SourceType:              item.SourceType,
+			Public:                  item.Public,
+			RuntimeProfile:          item.RuntimeProfile,
+			PlacementMode:           item.PlacementMode,
+			PlacementNodeID:         item.PlacementNodeID,
+			ConnectionTemplateKey:   item.ConnectionTemplateKey,
+			ConnectionTargetService: item.ConnectionTargetService,
+			ManagedByLazyops:        item.ManagedByLazyops,
+			StartHint:               item.StartHint,
+			ImageRef:                item.ImageRef,
+			ImageDigest:             item.ImageDigest,
+			DetectedPorts:           toBuildDetectedPortResponses(item.DetectedPorts),
+			TargetPort:              item.TargetPort,
+			ServicePort:             item.ServicePort,
+			Replicas:                item.Replicas,
+			EnvBundle:               item.EnvBundle,
+			PVCSpec:                 item.PVCSpec,
+			DeployStrategy:          item.DeployStrategy,
+			Healthcheck:             item.Healthcheck,
+			CreatedAt:               item.CreatedAt,
+			UpdatedAt:               item.UpdatedAt,
 		})
 	}
 
 	return responsedto.ProjectServiceListResponse{Items: items}
+}
+
+func ToPlacementNodeListResponse(result service.PlacementNodeListResult) responsedto.PlacementNodeListResponse {
+	items := make([]responsedto.ClusterNodeResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, responsedto.ClusterNodeResponse{
+			ClusterID:   item.ClusterID,
+			InstanceID:  item.InstanceID,
+			Name:        item.Name,
+			Status:      item.Status,
+			K8sNodeName: item.K8sNodeName,
+			Labels:      item.Labels,
+			LastSeenAt:  item.LastSeenAt,
+			IsReady:     item.IsReady,
+		})
+	}
+	return responsedto.PlacementNodeListResponse{
+		ClusterID: result.ClusterID,
+		Items:     items,
+	}
+}
+
+func ToProjectRuntimeSummaryResponse(result service.ProjectRuntimeSummaryResult) responsedto.ProjectRuntimeSummaryResponse {
+	nodes := make([]responsedto.ProjectRuntimeNodeResponse, 0, len(result.Nodes))
+	for _, item := range result.Nodes {
+		nodes = append(nodes, responsedto.ProjectRuntimeNodeResponse{
+			ClusterID:   item.ClusterID,
+			InstanceID:  item.InstanceID,
+			Name:        item.Name,
+			Status:      item.Status,
+			K8sNodeName: item.K8sNodeName,
+			Labels:      item.Labels,
+			LastSeenAt:  item.LastSeenAt,
+			IsReady:     item.IsReady,
+		})
+	}
+
+	services := make([]responsedto.ProjectRuntimeServiceResponse, 0, len(result.Services))
+	for _, item := range result.Services {
+		dependencies := make([]responsedto.ProjectRuntimeDependencyResponse, 0, len(item.Dependencies))
+		for _, dep := range item.Dependencies {
+			dependencies = append(dependencies, responsedto.ProjectRuntimeDependencyResponse{
+				ServiceID:        dep.ServiceID,
+				ServiceName:      dep.ServiceName,
+				Status:           dep.Status,
+				StatusReason:     dep.StatusReason,
+				InternalEndpoint: dep.InternalEndpoint,
+			})
+		}
+
+		recentLogs := make([]responsedto.ProjectRuntimeLogPreviewResponse, 0, len(item.RecentLogs))
+		for _, log := range item.RecentLogs {
+			recentLogs = append(recentLogs, responsedto.ProjectRuntimeLogPreviewResponse{
+				ID:            log.ID,
+				Source:        log.Source,
+				Level:         log.Level,
+				Message:       log.Message,
+				Timestamp:     log.Timestamp,
+				Node:          log.Node,
+				CorrelationID: log.CorrelationID,
+			})
+		}
+
+		services = append(services, responsedto.ProjectRuntimeServiceResponse{
+			ServiceID:         item.ServiceID,
+			Name:              item.Name,
+			Kind:              item.Kind,
+			SourceType:        item.SourceType,
+			Public:            item.Public,
+			RuntimeProfile:    item.RuntimeProfile,
+			RuntimeStatus:     item.RuntimeStatus,
+			RuntimeReason:     item.RuntimeReason,
+			BuildState:        item.BuildState,
+			RolloutState:      item.RolloutState,
+			PlacementMode:     item.PlacementMode,
+			RequestedNodeID:   item.RequestedNodeID,
+			EffectiveNodeIDs:  append([]string{}, item.EffectiveNodeIDs...),
+			ImageRef:          item.ImageRef,
+			ImageDigest:       item.ImageDigest,
+			RevisionID:        item.RevisionID,
+			Revision:          item.Revision,
+			DeploymentID:      item.DeploymentID,
+			PublicURLs:        append([]string{}, item.PublicURLs...),
+			InternalEndpoints: append([]string{}, item.InternalEndpoints...),
+			Dependencies:      dependencies,
+			RecentLogs:        recentLogs,
+		})
+	}
+
+	return responsedto.ProjectRuntimeSummaryResponse{
+		ProjectID:        result.ProjectID,
+		RuntimeMode:      result.RuntimeMode,
+		ClusterID:        result.ClusterID,
+		Namespace:        result.Namespace,
+		LiveRevisionID:   result.LiveRevisionID,
+		LiveRevision:     result.LiveRevision,
+		StableRevisionID: result.StableRevisionID,
+		StableRevision:   result.StableRevision,
+		SyncState:        result.SyncState,
+		SyncReason:       result.SyncReason,
+		PublicURLs:       append([]string{}, result.PublicURLs...),
+		Nodes:            nodes,
+		Services:         services,
+	}
 }
 
 func ToProjectEnvBundleResponse(record service.ProjectEnvBundleRecord) responsedto.ProjectEnvBundleResponse {

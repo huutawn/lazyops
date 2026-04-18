@@ -195,6 +195,8 @@ func (s *Service) Register(registry *dispatcher.Registry) {
 	registry.Register(contracts.CommandReportTopologyState, dispatcher.HandlerFunc(s.handleReportTopologyState))
 	registry.Register(contracts.CommandSleepService, dispatcher.HandlerFunc(s.handleSleepService))
 	registry.Register(contracts.CommandWakeService, dispatcher.HandlerFunc(s.handleWakeService))
+	registry.Register(contracts.CommandRestartK3sService, dispatcher.HandlerFunc(s.handleRestartK3sService))
+	registry.Register(contracts.CommandLabelK3sNode, dispatcher.HandlerFunc(s.handleLabelK3sNode))
 }
 
 func (s *Service) handleProvisionInternalServices(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
@@ -776,6 +778,75 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 	}
 
 	return dispatcher.Done(report.Summary)
+}
+
+func (s *Service) handleRestartK3sService(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	k3sDriver, ok := s.driver.(*K3sDriver)
+	if !ok {
+		return dispatcher.NonRetryable("unsupported_runtime_driver", "restart_k3s_service requires the k3s runtime driver", nil)
+	}
+
+	namespace := strings.TrimSpace(stringFromMap(envelope.Payload, "namespace"))
+	serviceName := strings.TrimSpace(stringFromMap(envelope.Payload, "service_name"))
+	if namespace == "" || serviceName == "" {
+		return dispatcher.NonRetryable("invalid_restart_payload", "namespace and service_name are required", nil)
+	}
+
+	if err := k3sDriver.RestartDeployment(ctx, namespace, serviceName); err != nil {
+		return dispatcher.Retryable("restart_k3s_service_failed", err.Error(), map[string]any{
+			"namespace":    namespace,
+			"service_name": serviceName,
+		})
+	}
+
+	return dispatcher.DoneWithDetails(
+		fmt.Sprintf("deployment/%s restarted in namespace %s", serviceName, namespace),
+		map[string]any{
+			"namespace":    namespace,
+			"service_name": serviceName,
+		},
+	)
+}
+
+func (s *Service) handleLabelK3sNode(ctx context.Context, envelope contracts.CommandEnvelope) dispatcher.Result {
+	k3sDriver, ok := s.driver.(*K3sDriver)
+	if !ok {
+		return dispatcher.NonRetryable("unsupported_runtime_driver", "label_k3s_node requires the k3s runtime driver", nil)
+	}
+
+	nodeName := strings.TrimSpace(stringFromMap(envelope.Payload, "node_name"))
+	labelKey := strings.TrimSpace(stringFromMap(envelope.Payload, "label_key"))
+	labelValue := strings.TrimSpace(stringFromMap(envelope.Payload, "label_value"))
+	if nodeName == "" || labelKey == "" || labelValue == "" {
+		return dispatcher.NonRetryable("invalid_label_payload", "node_name, label_key, and label_value are required", nil)
+	}
+
+	if err := k3sDriver.LabelNode(ctx, nodeName, labelKey, labelValue); err != nil {
+		return dispatcher.Retryable("label_k3s_node_failed", err.Error(), map[string]any{
+			"node_name":   nodeName,
+			"label_key":   labelKey,
+			"label_value": labelValue,
+		})
+	}
+
+	return dispatcher.DoneWithDetails(
+		fmt.Sprintf("node %s labeled with %s=%s", nodeName, labelKey, labelValue),
+		map[string]any{
+			"node_name":   nodeName,
+			"label_key":   labelKey,
+			"label_value": labelValue,
+		},
+	)
+}
+
+func stringFromMap(input map[string]any, key string) string {
+	if input == nil {
+		return ""
+	}
+	if value, ok := input[key].(string); ok {
+		return value
+	}
+	return ""
 }
 
 func (s *Service) workspaceRootForRuntimeContext(runtimeCtx RuntimeContext) string {

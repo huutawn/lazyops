@@ -73,6 +73,7 @@ type DeploymentService struct {
 	incidents     RuntimeIncidentStore
 	bindings      DeploymentBindingStore
 	publicDomains *PublicDomainResolver
+	compiler      *ServiceInventoryBlueprintCompiler
 }
 
 func NewDeploymentService(
@@ -110,26 +111,16 @@ func (s *DeploymentService) WithPublicDomainSupport(bindings DeploymentBindingSt
 	return s
 }
 
+func (s *DeploymentService) WithServiceInventoryCompiler(compiler *ServiceInventoryBlueprintCompiler) *DeploymentService {
+	if s == nil {
+		return s
+	}
+	s.compiler = compiler
+	return s
+}
+
 func (s *DeploymentService) Create(cmd CreateDeploymentCommand) (*CreateDeploymentResult, error) {
 	project, err := resolveProjectForAccess(s.projects, cmd.RequesterUserID, cmd.RequesterRole, cmd.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-
-	blueprintID := strings.TrimSpace(cmd.BlueprintID)
-	if blueprintID == "" {
-		return nil, ErrInvalidInput
-	}
-
-	blueprint, err := s.blueprints.GetByIDForProject(project.ID, blueprintID)
-	if err != nil {
-		return nil, err
-	}
-	if blueprint == nil {
-		return nil, ErrBlueprintNotFound
-	}
-
-	blueprintRecord, err := ToBlueprintRecord(*blueprint)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +128,35 @@ func (s *DeploymentService) Create(cmd CreateDeploymentCommand) (*CreateDeployme
 	triggerKind, err := normalizeManualDeploymentTriggerKind(cmd.TriggerKind)
 	if err != nil {
 		return nil, err
+	}
+
+	blueprintID := strings.TrimSpace(cmd.BlueprintID)
+	var blueprintRecord BlueprintRecord
+	if blueprintID != "" && len(cmd.ServiceIDs) == 0 {
+		blueprint, err := s.blueprints.GetByIDForProject(project.ID, blueprintID)
+		if err != nil {
+			return nil, err
+		}
+		if blueprint == nil {
+			return nil, ErrBlueprintNotFound
+		}
+		parsed, err := ToBlueprintRecord(*blueprint)
+		if err != nil {
+			return nil, err
+		}
+		blueprintRecord = parsed
+	} else {
+		if s.compiler == nil {
+			return nil, ErrInvalidInput
+		}
+		compiled, err := s.compiler.Compile(*project, ServiceInventoryBlueprintCompileInput{
+			TriggerKind: triggerKind,
+			ServiceIDs:  append([]string{}, cmd.ServiceIDs...),
+		})
+		if err != nil {
+			return nil, err
+		}
+		blueprintRecord = compiled.Blueprint
 	}
 
 	revisionID := utils.NewPrefixedID("rev")
@@ -529,6 +549,8 @@ func buildK3sServiceSpecs(namespace string, services []BlueprintServiceContractR
 			Namespace:      namespace,
 			Path:           svc.Path,
 			Public:         svc.Public,
+			PlacementMode:  firstNonEmptyCompiledValue(svc.PlacementMode, servicePlacementModeSharedCluster),
+			PlacementNodeID: svc.PlacementNodeID,
 			RuntimeProfile: svc.RuntimeProfile,
 			StartHint:      svc.StartHint,
 			ImageRef:       svc.ImageRef,

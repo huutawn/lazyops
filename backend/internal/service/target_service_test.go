@@ -225,6 +225,14 @@ func (f *fakeClusterStore) UpdateBootstrapMetadata(clusterID, kubeconfigSecretRe
 	return nil
 }
 
+func (f *fakeClusterStore) UpdateManagedMetadata(clusterID, managedMetadataJSON string, at time.Time) error {
+	if item, ok := f.byID[clusterID]; ok {
+		item.ManagedMetadataJSON = managedMetadataJSON
+		item.UpdatedAt = at
+	}
+	return nil
+}
+
 func (f *fakeClusterStore) UpdateStatus(clusterID, status string, at time.Time) error {
 	if item, ok := f.byID[clusterID]; ok {
 		item.Status = status

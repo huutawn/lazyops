@@ -15,8 +15,11 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	githubController := controller.NewGitHubController(app.GitHubInstallSvc, app.Config)
 	integrationController := controller.NewIntegrationController(app.GitHubWebhookSvc)
 	buildController := controller.NewBuildController(app.BuildCallbackSvc)
-	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc)
-	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc)
+	projectController := controller.NewProjectController(app.ProjectService, app.ProjectRepoLinkSvc).
+		WithClusterNodeService(app.ClusterNodeService).
+		WithRuntimeService(app.ProjectRuntimeSvc).
+		WithServiceActionService(app.ProjectServiceActionSvc)
+	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc, app.ProjectService)
 	projectEnvController := controller.NewProjectEnvController(app.ProjectEnvSvc)
 	routingController := controller.NewRoutingController(app.RoutingSvc)
 	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator, app.InstanceService, app.InstanceSSHInstallSvc)
@@ -25,7 +28,9 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	blueprintController := controller.NewBlueprintController(app.BlueprintSvc)
 	deploymentController := controller.NewDeploymentController(app.DeploymentSvc, app.RolloutExecutionSvc)
 	instanceController := controller.NewInstanceController(app.InstanceService, app.InstanceSSHInstallSvc).WithBootstrapOrchestrator(app.BootstrapOrchestrator)
-	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService).WithBootstrapOrchestrator(app.BootstrapOrchestrator)
+	targetController := controller.NewTargetController(app.MeshNetworkService, app.ClusterService).
+		WithBootstrapOrchestrator(app.BootstrapOrchestrator).
+		WithClusterNodeService(app.ClusterNodeService)
 	observabilityController := controller.NewObservabilityController(app.ProjectRepo, app.ObservabilitySvc)
 	tunnelController := controller.NewTunnelController(app.ProjectRepo, app.DeploymentBindingRepo, app.TunnelSessionRepo, app.MeshPlanningSvc)
 	agentRuntimeController := controller.NewAgentRuntimeController(app.AgentEnrollmentSvc)
@@ -94,9 +99,15 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.POST("/projects", projectController.Create)
 			userProtected.GET("/projects", projectController.List)
 			userProtected.GET("/projects/:id/services", projectController.ListServices)
+			userProtected.GET("/projects/:id/runtime", projectController.GetRuntimeSummary)
+			userProtected.GET("/projects/:id/placement-nodes", projectController.ListPlacementNodes)
 			userProtected.PUT("/projects/:id/services",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				projectController.ConfigureServices,
+			)
+			userProtected.POST("/projects/:id/services/:service_id/actions",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectController.ActOnService,
 			)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
 			userProtected.GET("/projects/:id/env", projectEnvController.Get)
@@ -165,6 +176,11 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/mesh-networks", targetController.ListMeshNetworks)
 			userProtected.POST("/clusters", targetController.CreateCluster)
 			userProtected.GET("/clusters", targetController.ListClusters)
+			userProtected.GET("/clusters/:id/nodes", targetController.ListClusterNodes)
+			userProtected.POST("/clusters/:id/nodes/connect-ssh",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				targetController.ConnectClusterNodeSSH,
+			)
 			userProtected.POST("/tunnels/db/sessions",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				tunnelController.CreateDBSession,

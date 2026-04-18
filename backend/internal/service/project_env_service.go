@@ -19,6 +19,7 @@ type ProjectEnvService struct {
 	projects         ProjectStore
 	bundles          ProjectEnvBundleStore
 	internalServices ProjectInternalServiceStore
+	services         ProjectServiceStore
 	encryptionKey    string
 }
 
@@ -29,6 +30,14 @@ func NewProjectEnvService(projects ProjectStore, bundles ProjectEnvBundleStore, 
 		internalServices: internalServices,
 		encryptionKey:    strings.TrimSpace(encryptionKey),
 	}
+}
+
+func (s *ProjectEnvService) WithServiceStore(services ProjectServiceStore) *ProjectEnvService {
+	if s == nil {
+		return s
+	}
+	s.services = services
+	return s
 }
 
 func (s *ProjectEnvService) Get(requesterUserID, requesterRole, projectID string) (*ProjectEnvBundleRecord, error) {
@@ -141,18 +150,15 @@ func (s *ProjectEnvService) getForProject(projectID string) (*ProjectEnvBundleRe
 	if err != nil {
 		return nil, err
 	}
-	internalServices := []models.ProjectInternalService{}
-	if s.internalServices != nil {
-		internalServices, err = s.internalServices.ListByProject(projectID)
-		if err != nil {
-			return nil, err
-		}
+	helperSnippets, err := s.loadHelperSnippets(projectID)
+	if err != nil {
+		return nil, err
 	}
 	record := &ProjectEnvBundleRecord{
 		Configured:     bundle != nil,
 		Keys:           []string{},
 		ParseWarnings:  []string{},
-		HelperSnippets: buildProjectEnvHelperSnippets(internalServices),
+		HelperSnippets: helperSnippets,
 	}
 	if bundle == nil {
 		return record, nil
@@ -169,6 +175,45 @@ func (s *ProjectEnvService) getForProject(projectID string) (*ProjectEnvBundleRe
 		return nil, fmt.Errorf("decode env warnings: %w", err)
 	}
 	return record, nil
+}
+
+func (s *ProjectEnvService) loadHelperSnippets(projectID string) ([]ProjectEnvHelperSnippet, error) {
+	runtimeMode := ""
+	if s.projects != nil {
+		project, err := s.projects.GetByID(projectID)
+		if err != nil {
+			return nil, err
+		}
+		if project != nil {
+			runtimeMode = strings.TrimSpace(project.RuntimeMode)
+		}
+	}
+	if s.services != nil {
+		items, err := s.services.ListByProject(projectID)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) > 0 {
+			records := make([]ProjectServiceRecord, 0, len(items))
+			for _, item := range items {
+				record, err := ToProjectServiceRecord(item)
+				if err != nil {
+					return nil, err
+				}
+				records = append(records, record)
+			}
+			return buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode, records), nil
+		}
+	}
+	internalServices := []models.ProjectInternalService{}
+	if s.internalServices != nil {
+		items, err := s.internalServices.ListByProject(projectID)
+		if err != nil {
+			return nil, err
+		}
+		internalServices = items
+	}
+	return buildProjectEnvHelperSnippets(internalServices), nil
 }
 
 func parseProjectEnvContent(content string) (map[string]string, []string, error) {
@@ -330,6 +375,43 @@ func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []P
 			entry.Env["DB_NAME"] = "app"
 		}
 		items = append(items, entry)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].ServiceKind == items[j].ServiceKind {
+			return items[i].Alias < items[j].Alias
+		}
+		return items[i].ServiceKind < items[j].ServiceKind
+	})
+	return items
+}
+
+func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord) []ProjectEnvHelperSnippet {
+	items := make([]ProjectEnvHelperSnippet, 0)
+	for _, item := range services {
+		if item.SourceType != serviceSourceTypeInternal || !strings.EqualFold(strings.TrimSpace(item.Kind), "postgres") {
+			continue
+		}
+		host := strings.TrimSpace(item.Name)
+		if runtimeMode != "distributed-k3s" {
+			host = "localhost"
+		}
+		port := firstPositive(item.ServicePort, item.TargetPort, 5432)
+		dbName := firstNonEmptyCompiledValue(item.EnvBundle["POSTGRES_DB"], item.EnvBundle["DB_NAME"], "app")
+		username := firstNonEmptyCompiledValue(item.EnvBundle["POSTGRES_USER"], item.EnvBundle["DB_USER"], "postgres")
+		password := firstNonEmptyCompiledValue(item.EnvBundle["POSTGRES_PASSWORD"], item.EnvBundle["DB_PASSWORD"], "postgres")
+		portString := strconv.Itoa(port)
+		items = append(items, ProjectEnvHelperSnippet{
+			ServiceKind: item.Kind,
+			Alias:       item.Name,
+			Env: map[string]string{
+				"DB_URL":      fmt.Sprintf("postgres://%s:%s@%s:%s/%s", username, password, host, portString, dbName),
+				"DB_NAME":     dbName,
+				"DB_HOST":     host,
+				"DB_PORT":     portString,
+				"DB_USERNAME": username,
+				"DB_PASSWORD": password,
+			},
+		})
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].ServiceKind == items[j].ServiceKind {

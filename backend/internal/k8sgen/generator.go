@@ -21,6 +21,8 @@ type ServiceSpec struct {
 	Kind           string
 	Namespace      string
 	Public         bool
+	PlacementMode  string
+	PlacementNodeID string
 	ImageRef       string
 	ImageDigest    string
 	TargetPort     int
@@ -159,6 +161,8 @@ type normalizedServiceSpec struct {
 	Name           string
 	Namespace      string
 	Public         bool
+	PlacementMode  string
+	PlacementNodeID string
 	ImageRef       string
 	TargetPort     int
 	ServicePort    int
@@ -199,6 +203,8 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceS
 		Name:           strings.TrimSpace(spec.Name),
 		Namespace:      namespace,
 		Public:         spec.Public,
+		PlacementMode:  strings.TrimSpace(spec.PlacementMode),
+		PlacementNodeID: strings.TrimSpace(spec.PlacementNodeID),
 		ImageRef:       firstNonEmpty(spec.ImageRef, "nginx:stable-alpine"),
 		TargetPort:     targetPort,
 		ServicePort:    servicePort,
@@ -413,6 +419,10 @@ spec:
         app.kubernetes.io/name: {{ .Name }}
         lazyops.service: {{ .Name }}
     spec:
+{{- if and (eq .PlacementMode "pinned_node") .PlacementNodeID }}
+      nodeSelector:
+        lazyops.io/instance-id: {{ .PlacementNodeID }}
+{{- end }}
       containers:
         - name: {{ .Name }}
           image: {{ .ImageRef }}

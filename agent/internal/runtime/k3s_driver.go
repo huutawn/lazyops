@@ -497,6 +497,40 @@ func (d *K3sDriver) kubectlOutput(ctx context.Context, namespace string, args ..
 	return output, nil
 }
 
+func (d *K3sDriver) RestartDeployment(ctx context.Context, namespace, serviceName string) error {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(serviceName) == "" {
+		return fmt.Errorf("namespace and service name are required")
+	}
+	if err := d.runKubectl(ctx, namespace, "rollout", "restart", fmt.Sprintf("deployment/%s", serviceName)); err != nil {
+		return err
+	}
+	return d.runKubectl(ctx, namespace, "rollout", "status", fmt.Sprintf("deployment/%s", serviceName), "--timeout=120s")
+}
+
+func (d *K3sDriver) LabelNode(ctx context.Context, nodeName, labelKey, labelValue string) error {
+	if strings.TrimSpace(nodeName) == "" || strings.TrimSpace(labelKey) == "" || strings.TrimSpace(labelValue) == "" {
+		return fmt.Errorf("node name, label key, and label value are required")
+	}
+	ready := false
+	for i := 0; i < 60; i++ {
+		output, err := d.kubectlOutput(ctx, "", "get", "node", nodeName, "-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+		if err == nil && strings.TrimSpace(string(output)) == "True" {
+			ready = true
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if !ready {
+		return fmt.Errorf("node %s did not become Ready before labeling", nodeName)
+	}
+	_, err := d.kubectlOutput(ctx, "", "label", "node", nodeName, fmt.Sprintf("%s=%s", labelKey, labelValue), "--overwrite")
+	return err
+}
+
 func detectInClusterKubectlAuth() (server, tokenPath, caPath string, ok bool) {
 	host := strings.TrimSpace(os.Getenv("KUBERNETES_SERVICE_HOST"))
 	port := strings.TrimSpace(os.Getenv("KUBERNETES_SERVICE_PORT"))

@@ -242,8 +242,10 @@ func compileProjectServices(projectID string, services []LazyopsYAMLService) ([]
 			Name:           model.Name,
 			Path:           model.Path,
 			Kind:           model.Kind,
+			SourceType:     serviceSourceTypeRepo,
 			Public:         item.Public,
 			RuntimeProfile: runtimeProfile,
+			PlacementMode:  servicePlacementModeSharedCluster,
 			StartHint:      model.StartHint,
 			Replicas:       1,
 			Healthcheck:    healthcheck,
@@ -252,8 +254,10 @@ func compileProjectServices(projectID string, services []LazyopsYAMLService) ([]
 			Name:           model.Name,
 			Path:           model.Path,
 			Kind:           model.Kind,
+			SourceType:     serviceSourceTypeRepo,
 			Public:         item.Public,
 			RuntimeProfile: runtimeProfile,
+			PlacementMode:  servicePlacementModeSharedCluster,
 			StartHint:      strings.TrimSpace(item.StartHint),
 			Replicas:       1,
 			Healthcheck:    healthcheck,
@@ -392,10 +396,16 @@ func buildPlacementAssignments(services []BlueprintServiceContractRecord, bindin
 	assignments := make([]PlacementAssignmentRecord, 0, len(services))
 	labels := toStringMap(binding.PlacementPolicy["labels"])
 	for _, service := range services {
+		targetKind := binding.TargetKind
+		targetID := binding.TargetID
+		if strings.TrimSpace(service.PlacementMode) == servicePlacementModePinnedNode && strings.TrimSpace(service.PlacementNodeID) != "" {
+			targetKind = "instance"
+			targetID = strings.TrimSpace(service.PlacementNodeID)
+		}
 		assignments = append(assignments, PlacementAssignmentRecord{
 			ServiceName: service.Name,
-			TargetID:    binding.TargetID,
-			TargetKind:  binding.TargetKind,
+			TargetID:    targetID,
+			TargetKind:  targetKind,
 			Labels:      labels,
 		})
 	}
@@ -439,6 +449,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	if err := unmarshalJSONWithFallback(item.DeployStrategyJSON, &deployStrategy, map[string]any{}); err != nil {
 		return ProjectServiceRecord{}, err
 	}
+	sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTargetService, managedByLazyops := extractServiceContractMetadata(deployStrategy, item.Path)
 
 	runtimeProfile := ""
 	if item.RuntimeProfile != nil {
@@ -446,27 +457,75 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	}
 
 	return ProjectServiceRecord{
-		ID:             item.ID,
-		ProjectID:      item.ProjectID,
-		Name:           item.Name,
-		Path:           item.Path,
-		Kind:           item.Kind,
-		Public:         item.Public,
-		RuntimeProfile: runtimeProfile,
-		StartHint:      item.StartHint,
-		ImageRef:       item.ImageRef,
-		ImageDigest:    item.ImageDigest,
-		DetectedPorts:  detectedPorts,
-		TargetPort:     item.TargetPort,
-		ServicePort:    item.ServicePort,
-		Replicas:       item.Replicas,
-		EnvBundle:      envBundle,
-		PVCSpec:        pvcSpec,
-		DeployStrategy: deployStrategy,
-		Healthcheck:    healthcheck,
-		CreatedAt:      item.CreatedAt,
-		UpdatedAt:      item.UpdatedAt,
+		ID:                      item.ID,
+		ProjectID:               item.ProjectID,
+		Name:                    item.Name,
+		Path:                    item.Path,
+		Kind:                    item.Kind,
+		SourceType:              sourceType,
+		Public:                  item.Public,
+		RuntimeProfile:          runtimeProfile,
+		PlacementMode:           placementMode,
+		PlacementNodeID:         placementNodeID,
+		ConnectionTemplateKey:   connectionTemplateKey,
+		ConnectionTargetService: connectionTargetService,
+		ManagedByLazyops:        managedByLazyops,
+		StartHint:               item.StartHint,
+		ImageRef:                item.ImageRef,
+		ImageDigest:             item.ImageDigest,
+		DetectedPorts:           detectedPorts,
+		TargetPort:              item.TargetPort,
+		ServicePort:             item.ServicePort,
+		Replicas:                item.Replicas,
+		EnvBundle:               envBundle,
+		PVCSpec:                 pvcSpec,
+		DeployStrategy:          deployStrategy,
+		Healthcheck:             healthcheck,
+		CreatedAt:               item.CreatedAt,
+		UpdatedAt:               item.UpdatedAt,
 	}, nil
+}
+
+func extractServiceContractMetadata(deployStrategy map[string]any, path string) (string, string, string, string, string, bool) {
+	sourceType := stringFromAny(deployStrategy[lazyopsServiceMetaSourceType])
+	if sourceType == "" {
+		if strings.HasPrefix(path, reservedManagedInternalServicePathPrefix) {
+			sourceType = serviceSourceTypeInternal
+		} else {
+			sourceType = serviceSourceTypeRepo
+		}
+	}
+
+	placementMode := stringFromAny(deployStrategy[lazyopsServiceMetaPlacementMode])
+	if placementMode == "" {
+		placementMode = servicePlacementModeSharedCluster
+	}
+	placementNodeID := stringFromAny(deployStrategy[lazyopsServiceMetaPlacementNodeID])
+	connectionTemplateKey := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTemplateKey])
+	connectionTargetService := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTargetService])
+	managedByLazyops := boolFromAny(deployStrategy[lazyopsServiceMetaManagedByLazyops]) || sourceType == serviceSourceTypeInternal
+
+	delete(deployStrategy, lazyopsServiceMetaSourceType)
+	delete(deployStrategy, lazyopsServiceMetaPlacementMode)
+	delete(deployStrategy, lazyopsServiceMetaPlacementNodeID)
+	delete(deployStrategy, lazyopsServiceMetaConnectionTemplateKey)
+	delete(deployStrategy, lazyopsServiceMetaConnectionTargetService)
+	delete(deployStrategy, lazyopsServiceMetaManagedByLazyops)
+
+	return sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTargetService, managedByLazyops
+}
+
+func stringFromAny(value any) string {
+	str, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(str)
+}
+
+func boolFromAny(value any) bool {
+	v, ok := value.(bool)
+	return ok && v
 }
 
 func unmarshalJSONWithFallback[T any](raw string, target *T, fallback T) error {
