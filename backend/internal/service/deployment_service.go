@@ -151,6 +151,8 @@ func (s *DeploymentService) Create(cmd CreateDeploymentCommand) (*CreateDeployme
 		}
 		compiled, err := s.compiler.Compile(*project, ServiceInventoryBlueprintCompileInput{
 			TriggerKind: triggerKind,
+			SourceRef:   strings.TrimSpace(cmd.SourceRef),
+			Artifact:    cmd.Artifact,
 			ServiceIDs:  append([]string{}, cmd.ServiceIDs...),
 		})
 		if err != nil {
@@ -544,25 +546,25 @@ func buildK3sServiceSpecs(namespace string, services []BlueprintServiceContractR
 	specs := make([]K3sServiceSpecRecord, 0, len(services))
 	for _, svc := range services {
 		specs = append(specs, K3sServiceSpecRecord{
-			Name:           svc.Name,
-			Kind:           firstNonEmptyCompiledValue(svc.Kind, "app"),
-			Namespace:      namespace,
-			Path:           svc.Path,
-			Public:         svc.Public,
-			PlacementMode:  firstNonEmptyCompiledValue(svc.PlacementMode, servicePlacementModeSharedCluster),
+			Name:            svc.Name,
+			Kind:            firstNonEmptyCompiledValue(svc.Kind, "app"),
+			Namespace:       namespace,
+			Path:            svc.Path,
+			Public:          svc.Public,
+			PlacementMode:   firstNonEmptyCompiledValue(svc.PlacementMode, servicePlacementModeSharedCluster),
 			PlacementNodeID: svc.PlacementNodeID,
-			RuntimeProfile: svc.RuntimeProfile,
-			StartHint:      svc.StartHint,
-			ImageRef:       svc.ImageRef,
-			ImageDigest:    svc.ImageDigest,
-			TargetPort:     svc.TargetPort,
-			ServicePort:    svc.ServicePort,
-			Replicas:       svc.Replicas,
-			Healthcheck:    cloneAnyMap(svc.Healthcheck),
-			DetectedPorts:  cloneDetectedPorts(svc.DetectedPorts),
-			EnvBundle:      cloneStringMap(svc.EnvBundle),
-			PVCSpec:        cloneAnyMap(svc.PVCSpec),
-			DeployStrategy: cloneAnyMap(svc.DeployStrategy),
+			RuntimeProfile:  svc.RuntimeProfile,
+			StartHint:       svc.StartHint,
+			ImageRef:        svc.ImageRef,
+			ImageDigest:     svc.ImageDigest,
+			TargetPort:      svc.TargetPort,
+			ServicePort:     svc.ServicePort,
+			Replicas:        svc.Replicas,
+			Healthcheck:     cloneAnyMap(svc.Healthcheck),
+			DetectedPorts:   cloneDetectedPorts(svc.DetectedPorts),
+			EnvBundle:       cloneStringMap(svc.EnvBundle),
+			PVCSpec:         cloneAnyMap(svc.PVCSpec),
+			DeployStrategy:  cloneAnyMap(svc.DeployStrategy),
 		})
 	}
 	return specs

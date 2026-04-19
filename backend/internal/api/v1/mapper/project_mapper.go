@@ -7,6 +7,34 @@ import (
 )
 
 func ToCreateProjectCommand(userID string, req requestdto.CreateProjectRequest) service.CreateProjectCommand {
+	services := make([]service.ConfigureProjectServiceItem, 0, len(req.Services))
+	for _, item := range req.Services {
+		services = append(services, service.ConfigureProjectServiceItem{
+			Name:                    item.Name,
+			Path:                    item.Path,
+			Kind:                    item.Kind,
+			SourceType:              item.SourceType,
+			Public:                  item.Public,
+			RuntimeProfile:          item.RuntimeProfile,
+			PlacementMode:           item.PlacementMode,
+			PlacementNodeID:         item.PlacementNodeID,
+			ConnectionTemplateKey:   item.ConnectionTemplateKey,
+			ConnectionTemplate:      item.ConnectionTemplate,
+			ConnectionTargetService: item.ConnectionTargetService,
+			ManagedByLazyops:        item.ManagedByLazyops,
+			StartHint:               item.StartHint,
+			ImageRef:                item.ImageRef,
+			ImageDigest:             item.ImageDigest,
+			TargetPort:              item.TargetPort,
+			ServicePort:             item.ServicePort,
+			Replicas:                item.Replicas,
+			EnvBundle:               item.EnvBundle,
+			PVCSpec:                 item.PVCSpec,
+			DeployStrategy:          item.DeployStrategy,
+			Healthcheck:             item.Healthcheck,
+		})
+	}
+
 	return service.CreateProjectCommand{
 		UserID:           userID,
 		Name:             req.Name,
@@ -15,6 +43,7 @@ func ToCreateProjectCommand(userID string, req requestdto.CreateProjectRequest) 
 		ClusterID:        req.ClusterID,
 		RuntimeMode:      req.RuntimeMode,
 		DefaultBranch:    req.DefaultBranch,
+		Services:         services,
 		InternalServices: req.InternalServices,
 	}
 }
@@ -45,6 +74,7 @@ func ToConfigureProjectServicesCommand(userID, role, projectID string, req reque
 			PlacementMode:           item.PlacementMode,
 			PlacementNodeID:         item.PlacementNodeID,
 			ConnectionTemplateKey:   item.ConnectionTemplateKey,
+			ConnectionTemplate:      item.ConnectionTemplate,
 			ConnectionTargetService: item.ConnectionTargetService,
 			ManagedByLazyops:        item.ManagedByLazyops,
 			StartHint:               item.StartHint,
@@ -161,9 +191,9 @@ func ToProjectInternalServiceListResponse(result service.ProjectInternalServiceL
 }
 
 func ToProjectServiceListResponse(result service.ProjectServiceListResult) responsedto.ProjectServiceListResponse {
-	items := make([]responsedto.ProjectServiceResponse, 0, len(result.Items))
+	items := make([]responsedto.ProjectInventoryServiceResponse, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, responsedto.ProjectServiceResponse{
+		items = append(items, responsedto.ProjectInventoryServiceResponse{
 			ID:                      item.ID,
 			ProjectID:               item.ProjectID,
 			Name:                    item.Name,
@@ -175,6 +205,7 @@ func ToProjectServiceListResponse(result service.ProjectServiceListResult) respo
 			PlacementMode:           item.PlacementMode,
 			PlacementNodeID:         item.PlacementNodeID,
 			ConnectionTemplateKey:   item.ConnectionTemplateKey,
+			ConnectionTemplate:      item.ConnectionTemplate,
 			ConnectionTargetService: item.ConnectionTargetService,
 			ManagedByLazyops:        item.ManagedByLazyops,
 			StartHint:               item.StartHint,

@@ -6,6 +6,7 @@
 **/*.md
 !README.md
 !**/README.md
+!docs/service-first-release-runbook.md
 lazyops-report.zip
 .qwen/* */
 .qwen/

@@ -31,6 +31,14 @@ func TestServiceInventoryBlueprintCompilerInjectsPostgresTemplatePerService(t *t
 			Name:       "db",
 			Kind:       "postgres",
 			SourceType: serviceSourceTypeInternal,
+			ConnectionTemplate: map[string]string{
+				"DB_URL":      "DATABASE_URL",
+				"DB_NAME":     "DATABASE_NAME",
+				"DB_HOST":     "PGHOST",
+				"DB_PORT":     "PGPORT",
+				"DB_USERNAME": "PGUSER",
+				"DB_PASSWORD": "PGPASSWORD",
+			},
 			EnvBundle: map[string]string{
 				"POSTGRES_DB":       "app",
 				"POSTGRES_USER":     "postgres",
@@ -93,16 +101,16 @@ func TestServiceInventoryBlueprintCompilerInjectsPostgresTemplatePerService(t *t
 	if apiSvc == nil {
 		t.Fatalf("expected api service in compiled services, got %#v", result.Blueprint.Compiled.Services)
 	}
-	if apiSvc.EnvBundle["DB_HOST"] != "db" {
-		t.Fatalf("expected DB_HOST=db, got %#v", apiSvc.EnvBundle)
+	if apiSvc.EnvBundle["PGHOST"] != "db" {
+		t.Fatalf("expected PGHOST=db, got %#v", apiSvc.EnvBundle)
 	}
-	if apiSvc.EnvBundle["DB_PORT"] != "5432" {
-		t.Fatalf("expected DB_PORT=5432, got %#v", apiSvc.EnvBundle)
+	if apiSvc.EnvBundle["PGPORT"] != "5432" {
+		t.Fatalf("expected PGPORT=5432, got %#v", apiSvc.EnvBundle)
 	}
-	if apiSvc.EnvBundle["DB_USERNAME"] != "postgres" || apiSvc.EnvBundle["DB_PASSWORD"] != "supersecret" {
+	if apiSvc.EnvBundle["PGUSER"] != "postgres" || apiSvc.EnvBundle["PGPASSWORD"] != "supersecret" {
 		t.Fatalf("expected postgres credentials to be injected, got %#v", apiSvc.EnvBundle)
 	}
-	if apiSvc.EnvBundle["DB_URL"] != "postgres://postgres:supersecret@db:5432/app" {
-		t.Fatalf("expected DB_URL to use internal dns host, got %#v", apiSvc.EnvBundle)
+	if apiSvc.EnvBundle["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app" {
+		t.Fatalf("expected DATABASE_URL to use internal dns host, got %#v", apiSvc.EnvBundle)
 	}
 }

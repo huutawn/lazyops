@@ -80,7 +80,7 @@ export default function BlueprintReviewPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Blueprint Review"
-        subtitle="Compile and review the deployment blueprint before rollout."
+        subtitle="Expert/debug view only. LazyOps da tu compile deploy plan ngầm từ service inventory trong normal flow."
       />
 
       <SectionCard
@@ -88,12 +88,11 @@ export default function BlueprintReviewPage() {
         description={EXPLANATION.description}
       >
         <p className="text-sm text-lazyops-muted">
-          The blueprint resolves your deployment contract into a concrete plan with service definitions,
-          placement assignments, and policy configurations. Review it carefully before proceeding to rollout.
+          Blueprint nay chi con la deploy-plan artifact noi bo de debug. Trong flow service-first thong thuong, ban se thao tac qua Services, Env, Deployments, va Logs / Runtime.
         </p>
       </SectionCard>
 
-      <SectionCard title="Compile blueprint" description="Provide source and artifact information.">
+      <SectionCard title="Compile blueprint" description="Debug-only compile lane for inspecting the internal deployment snapshot.">
         <div className="flex flex-col gap-4">
           <FormField label="Source reference (owner/repo@branch)">
             <FormInput

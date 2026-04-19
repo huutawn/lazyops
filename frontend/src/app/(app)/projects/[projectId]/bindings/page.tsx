@@ -95,7 +95,7 @@ export default function DeploymentBindingsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Deployment Bindings"
-        subtitle="Connect this project to deployment targets. Each binding defines where and how services run."
+        subtitle="Expert/debug route. Bindings van ton tai o backend, nhung flow chinh cua user da chuyen sang service-first workspace."
         actions={
           <button
             type="button"

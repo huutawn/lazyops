@@ -8,6 +8,7 @@ import { SectionCard } from '@/components/primitives/section-card';
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { FormButton } from '@/components/forms/form-fields';
+import { useProjects } from '@/modules/projects/project-hooks';
 import { useDeleteProjectEnv, useProjectEnv, useUpsertProjectEnv } from '@/modules/project-env/project-env-hooks';
 import type { ProjectEnvHelperSnippet } from '@/modules/project-env/project-env-types';
 
@@ -22,6 +23,7 @@ export default function ProjectEnvPage() {
   const params = useParams();
   const projectId = params?.projectId as string;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const projects = useProjects();
   const { data, isLoading, isError } = useProjectEnv(projectId);
   const saveMutation = useUpsertProjectEnv(projectId);
   const clearMutation = useDeleteProjectEnv(projectId);
@@ -39,6 +41,9 @@ export default function ProjectEnvPage() {
   const saveError = (saveMutation.error as Error | null)?.message;
   const clearError = (clearMutation.error as Error | null)?.message;
   const combinedError = saveError || clearError;
+  const project = (projects.data?.items ?? []).find((item) => item.id === projectId) ?? null;
+  const runtimeMode = project?.runtime_mode || 'distributed-k3s';
+  const usesK3sRuntime = runtimeMode === 'distributed-k3s';
   const keys = data?.keys ?? [];
   const helperSnippets = data?.helper_snippets ?? [];
   const canSave = draftContent.trim().length > 0 && !saveMutation.isPending;
@@ -66,7 +71,11 @@ export default function ProjectEnvPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Biến môi trường"
-        subtitle="Paste hoặc upload raw .env để LazyOps inject vào app container trong lần deploy kế tiếp. Đây là runtime env, không phải build-time env."
+        subtitle={
+          usesK3sRuntime
+            ? 'Paste hoặc upload raw .env để LazyOps inject vào service trong lần deploy kế tiếp. Với K3s, helper snippets ben duoi se uu tien internal DNS thay vi localhost.'
+            : 'Paste hoặc upload raw .env để LazyOps inject vào app container trong lần deploy kế tiếp. Đây là runtime env, không phải build-time env.'
+        }
         actions={
           <Link
             href={`/projects/${projectId}`}
@@ -77,7 +86,14 @@ export default function ProjectEnvPage() {
         }
       />
 
-      <SectionCard title="Env bundle" description={envSummary}>
+      <SectionCard
+        title="Env bundle"
+        description={
+          usesK3sRuntime
+            ? `${envSummary} Project nay dang chay service-first tren K3s, nen env helper se noi theo service DNS noi bo.`
+            : envSummary
+        }
+      >
         <div className="flex flex-col gap-4">
           <div className="rounded-xl border border-[#1e293b] bg-[#0B1120]/40 p-4 text-sm text-lazyops-muted">
             <p className="font-semibold text-lazyops-text">Lưu ý</p>
@@ -202,7 +218,14 @@ export default function ProjectEnvPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Helper snippets" description="LazyOps chỉ điền helper values cho các key còn thiếu. Nếu bạn đã tự khai báo DB_HOST hoặc tương tự, LazyOps sẽ giữ nguyên giá trị của bạn.">
+      <SectionCard
+        title="Helper snippets"
+        description={
+          usesK3sRuntime
+            ? 'LazyOps chỉ điền helper values cho các key còn thiếu. Tren distributed-k3s, DB_HOST va cac dependency host se tro vao internal DNS service name thay vi localhost.'
+            : 'LazyOps chỉ điền helper values cho các key còn thiếu. Nếu bạn đã tự khai báo DB_HOST hoặc tương tự, LazyOps sẽ giữ nguyên giá trị của bạn.'
+        }
+      >
         <div className="grid gap-4 lg:grid-cols-2">
           {helperSnippets.length > 0 ? helperSnippets.map((snippet) => {
             const snippetText = helperSnippetToText(snippet);

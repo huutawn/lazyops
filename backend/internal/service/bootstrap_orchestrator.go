@@ -280,8 +280,6 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		s.projects == nil ||
 		s.repoLinkStore == nil ||
 		s.bindingStore == nil ||
-		s.initContracts == nil ||
-		s.blueprints == nil ||
 		s.deploymentSvc == nil {
 		return nil, ErrInvalidInput
 	}
@@ -307,45 +305,16 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		return nil, ErrUnknownTargetRef
 	}
 
-	lazyopsDocument, err := s.buildOneClickLazyopsDocument(*project, *binding)
-	if err != nil {
-		return nil, err
-	}
-	lazyopsRaw, err := json.Marshal(lazyopsDocument)
-	if err != nil {
-		return nil, err
-	}
-
 	now := time.Now().UTC()
 	timeline := []BootstrapPipelineEventRecord{
 		{
-			ID:        "validate",
+			ID:        "compile_inventory",
 			State:     "running",
-			Label:     "Validate contract",
-			Message:   "Validating generated lazyops.yaml contract",
+			Label:     "Compile service inventory",
+			Message:   "Compiling unified service inventory into hidden deployment artifact",
 			Timestamp: now,
 		},
 	}
-
-	if _, err := s.initContracts.ValidateLazyopsYAML(ValidateLazyopsYAMLCommand{
-		RequesterUserID: cmd.RequesterUserID,
-		RequesterRole:   cmd.RequesterRole,
-		ProjectID:       project.ID,
-		RawDocument:     lazyopsRaw,
-	}); err != nil {
-		return nil, err
-	}
-	timeline[0].State = "completed"
-	timeline[0].Timestamp = time.Now().UTC()
-	timeline[0].Message = "Contract validation passed"
-
-	timeline = append(timeline, BootstrapPipelineEventRecord{
-		ID:        "compile",
-		State:     "running",
-		Label:     "Compile blueprint",
-		Message:   "Compiling deployment blueprint",
-		Timestamp: time.Now().UTC(),
-	})
 
 	commitSHA := resolveOneClickCommitSHA(cmd.CommitSHA)
 	artifactRef := strings.TrimSpace(cmd.ArtifactRef)
@@ -356,26 +325,6 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 	if triggerKind == "" {
 		triggerKind = "one_click_deploy"
 	}
-
-	compileResult, err := s.blueprints.Compile(CompileBlueprintCommand{
-		RequesterUserID: cmd.RequesterUserID,
-		RequesterRole:   cmd.RequesterRole,
-		ProjectID:       project.ID,
-		SourceRef:       resolveOneClickSourceRef(cmd.SourceRef, *repoLink),
-		TriggerKind:     triggerKind,
-		Artifact: BlueprintArtifactMetadata{
-			CommitSHA:   commitSHA,
-			ArtifactRef: artifactRef,
-			ImageRef:    strings.TrimSpace(cmd.ImageRef),
-		},
-		LazyopsYAMLRaw: lazyopsRaw,
-	})
-	if err != nil {
-		return nil, err
-	}
-	timeline[len(timeline)-1].State = "completed"
-	timeline[len(timeline)-1].Timestamp = time.Now().UTC()
-	timeline[len(timeline)-1].Message = fmt.Sprintf("Blueprint %s compiled", compileResult.Blueprint.ID)
 
 	timeline = append(timeline, BootstrapPipelineEventRecord{
 		ID:        "create_deployment",
@@ -389,12 +338,20 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		RequesterUserID: cmd.RequesterUserID,
 		RequesterRole:   cmd.RequesterRole,
 		ProjectID:       project.ID,
-		BlueprintID:     compileResult.Blueprint.ID,
 		TriggerKind:     triggerKind,
+		SourceRef:       resolveOneClickSourceRef(cmd.SourceRef, *repoLink),
+		Artifact: BlueprintArtifactMetadata{
+			CommitSHA:   commitSHA,
+			ArtifactRef: artifactRef,
+			ImageRef:    strings.TrimSpace(cmd.ImageRef),
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
+	timeline[0].State = "completed"
+	timeline[0].Timestamp = time.Now().UTC()
+	timeline[0].Message = fmt.Sprintf("Hidden blueprint snapshot %s compiled from service inventory", deployResult.Revision.BlueprintID)
 	timeline[len(timeline)-1].State = "completed"
 	timeline[len(timeline)-1].Timestamp = time.Now().UTC()
 	timeline[len(timeline)-1].Message = fmt.Sprintf("Deployment %s created", deployResult.Deployment.ID)
@@ -444,7 +401,7 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 
 	return &BootstrapOneClickDeployRecord{
 		ProjectID:     project.ID,
-		BlueprintID:   compileResult.Blueprint.ID,
+		BlueprintID:   deployResult.Revision.BlueprintID,
 		RevisionID:    deployResult.Revision.ID,
 		DeploymentID:  deployResult.Deployment.ID,
 		RolloutStatus: rolloutStatus,
@@ -988,7 +945,35 @@ func (s *BootstrapOrchestrator) listStatusDeployments(requesterUserID, requester
 }
 
 func (s *BootstrapOrchestrator) listProjectInternalServices(projectID string) ([]models.ProjectInternalService, error) {
-	if s == nil || s.internalServices == nil {
+	if s == nil {
+		return []models.ProjectInternalService{}, nil
+	}
+	runtimeMode := ""
+	if s.projects != nil {
+		project, err := s.projects.GetByID(projectID)
+		if err != nil {
+			return nil, err
+		}
+		if project != nil {
+			runtimeMode = strings.TrimSpace(project.RuntimeMode)
+		}
+	}
+	if s.projectServices != nil {
+		items, err := s.projectServices.ListByProject(projectID)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) > 0 {
+			records, err := synthesizeBootstrapInternalServices(runtimeMode, items)
+			if err != nil {
+				return nil, err
+			}
+			if len(records) > 0 {
+				return records, nil
+			}
+		}
+	}
+	if s.internalServices == nil {
 		return []models.ProjectInternalService{}, nil
 	}
 	items, err := s.internalServices.ListByProject(projectID)
@@ -996,6 +981,49 @@ func (s *BootstrapOrchestrator) listProjectInternalServices(projectID string) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+func synthesizeBootstrapInternalServices(runtimeMode string, items []models.Service) ([]models.ProjectInternalService, error) {
+	out := make([]models.ProjectInternalService, 0, len(items))
+	for _, item := range items {
+		record, err := ToProjectServiceRecord(item)
+		if err != nil {
+			return nil, err
+		}
+		if record.SourceType != serviceSourceTypeInternal {
+			continue
+		}
+		kind := normalizeManagedInternalBridgeKind(firstNonEmptyCompiledValue(record.Kind, record.Name))
+		port := firstPositive(record.ServicePort, record.TargetPort, defaultManagedInternalBridgePort(kind))
+		protocol := "tcp"
+		if rawProtocol, ok := record.Healthcheck["protocol"].(string); ok && strings.TrimSpace(rawProtocol) != "" {
+			protocol = strings.TrimSpace(rawProtocol)
+		}
+		alias := firstNonEmptyCompiledValue(kind, record.Name, "internal-service")
+		out = append(out, models.ProjectInternalService{
+			ID:            record.ID,
+			ProjectID:     record.ProjectID,
+			Kind:          kind,
+			Alias:         alias,
+			Protocol:      protocol,
+			Port:          port,
+			LocalEndpoint: bootstrapInternalLocalEndpoint(runtimeMode, record.Name, alias, port),
+			CreatedAt:     record.CreatedAt,
+			UpdatedAt:     record.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+func bootstrapInternalLocalEndpoint(runtimeMode, serviceName, fallbackHost string, port int) string {
+	host := "localhost"
+	if strings.TrimSpace(runtimeMode) == bootstrapModeDistributedK3s {
+		host = firstNonEmptyCompiledValue(strings.TrimSpace(serviceName), strings.TrimSpace(fallbackHost), "internal-service")
+	}
+	if port <= 0 {
+		return host
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 func resolveStatusPublicURLsFromOverviews(overviews []DeploymentOverviewRecord) ([]string, string) {

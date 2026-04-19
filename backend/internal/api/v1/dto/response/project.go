@@ -18,8 +18,38 @@ type ProjectListResponse struct {
 	Items []ProjectSummaryResponse `json:"items"`
 }
 
+type ProjectInventoryServiceResponse struct {
+	ID                      string                      `json:"id"`
+	ProjectID               string                      `json:"project_id"`
+	Name                    string                      `json:"name"`
+	Path                    string                      `json:"path"`
+	Kind                    string                      `json:"kind,omitempty"`
+	SourceType              string                      `json:"source_type,omitempty"`
+	Public                  bool                        `json:"public"`
+	RuntimeProfile          string                      `json:"runtime_profile,omitempty"`
+	PlacementMode           string                      `json:"placement_mode,omitempty"`
+	PlacementNodeID         string                      `json:"placement_node_id,omitempty"`
+	ConnectionTemplateKey   string                      `json:"connection_template_key,omitempty"`
+	ConnectionTemplate      map[string]string           `json:"connection_template,omitempty"`
+	ConnectionTargetService string                      `json:"connection_target_service,omitempty"`
+	ManagedByLazyops        bool                        `json:"managed_by_lazyops"`
+	StartHint               string                      `json:"start_hint,omitempty"`
+	ImageRef                string                      `json:"image_ref,omitempty"`
+	ImageDigest             string                      `json:"image_digest,omitempty"`
+	DetectedPorts           []BuildDetectedPortResponse `json:"detected_ports,omitempty"`
+	TargetPort              int                         `json:"target_port,omitempty"`
+	ServicePort             int                         `json:"service_port,omitempty"`
+	Replicas                int                         `json:"replicas,omitempty"`
+	EnvBundle               map[string]string           `json:"env_bundle,omitempty"`
+	PVCSpec                 map[string]any              `json:"pvc_spec,omitempty"`
+	DeployStrategy          map[string]any              `json:"deploy_strategy,omitempty"`
+	Healthcheck             map[string]any              `json:"healthcheck"`
+	CreatedAt               time.Time                   `json:"created_at,omitempty"`
+	UpdatedAt               time.Time                   `json:"updated_at,omitempty"`
+}
+
 type ProjectServiceListResponse struct {
-	Items []ProjectServiceResponse `json:"items"`
+	Items []ProjectInventoryServiceResponse `json:"items"`
 }
 
 type PlacementNodeListResponse struct {

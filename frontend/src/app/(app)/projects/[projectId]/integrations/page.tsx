@@ -44,7 +44,7 @@ export default function ProjectIntegrationsPage() {
       <div className="mb-2">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Cài đặt Tích hợp</h1>
         <p className="text-muted-foreground text-lg">
-          Quản lý nguồn mã tham chiếu từ kho lưu trữ để hệ thống tự động triển khai.
+          Expert route cho repo/reference integrations. Trong flow service-first thường ngày, phần repo link chỉ là nguon dau vao cho tung service.
         </p>
       </div>
 

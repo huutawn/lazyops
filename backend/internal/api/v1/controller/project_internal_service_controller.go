@@ -4,12 +4,12 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"lazyops-server/internal/api/middleware"
 	"lazyops-server/internal/api/response"
-	requestdto "lazyops-server/internal/api/v1/dto/request"
 	"lazyops-server/internal/api/v1/mapper"
 	"lazyops-server/internal/service"
 )
@@ -47,58 +47,35 @@ func (ctl *ProjectInternalServiceController) List(c *gin.Context) {
 }
 
 func (ctl *ProjectInternalServiceController) Configure(c *gin.Context) {
-	var req requestdto.ConfigureProjectInternalServicesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request payload", "invalid_payload", err.Error())
-		return
-	}
-
-	claims := middleware.MustClaims(c)
-	_, err := ctl.services.Configure(mapper.ToConfigureProjectInternalServicesCommand(claims.UserID, claims.Role, c.Param("id"), req))
-	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrInvalidInput):
-			response.Error(c, http.StatusBadRequest, "failed to configure internal services", "invalid_input", err.Error())
-		case errors.Is(err, service.ErrProjectNotFound):
-			response.Error(c, http.StatusNotFound, "failed to configure internal services", "project_not_found", err.Error())
-		case errors.Is(err, service.ErrProjectAccessDenied):
-			response.Error(c, http.StatusForbidden, "failed to configure internal services", "project_access_denied", err.Error())
-		default:
-			response.Error(c, http.StatusInternalServerError, "failed to configure internal services", "internal_error", err.Error())
-		}
-		return
-	}
-
-	result, err := ctl.listFromUnifiedInventory(claims.UserID, claims.Role, c.Param("id"))
-	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrInvalidInput):
-			response.Error(c, http.StatusBadRequest, "failed to load internal services", "invalid_input", err.Error())
-		case errors.Is(err, service.ErrProjectNotFound):
-			response.Error(c, http.StatusNotFound, "failed to load internal services", "project_not_found", err.Error())
-		case errors.Is(err, service.ErrProjectAccessDenied):
-			response.Error(c, http.StatusForbidden, "failed to load internal services", "project_access_denied", err.Error())
-		default:
-			response.Error(c, http.StatusInternalServerError, "failed to load internal services", "internal_error", err.Error())
-		}
-		return
-	}
-
-	response.JSON(c, http.StatusOK, "internal services configured", mapper.ToProjectInternalServiceListResponse(*result))
+	response.Error(
+		c,
+		http.StatusConflict,
+		"internal services are managed through the unified service inventory",
+		"service_first_required",
+		"use PUT /projects/:id/services to create or update internal services",
+	)
 }
 
 func (ctl *ProjectInternalServiceController) listFromUnifiedInventory(userID, role, projectID string) (*service.ProjectInternalServiceListResult, error) {
 	if ctl != nil && ctl.projectServices != nil {
+		runtimeMode := ""
+		summary, err := ctl.projectServices.GetSummary(userID, role, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if summary != nil {
+			runtimeMode = summary.RuntimeMode
+		}
 		result, err := ctl.projectServices.ListServices(userID, role, projectID)
 		if err != nil {
 			return nil, err
 		}
-		return filterUnifiedInternalServices(result), nil
+		return filterUnifiedInternalServices(result, runtimeMode), nil
 	}
 	return ctl.services.List(userID, role, projectID)
 }
 
-func filterUnifiedInternalServices(result *service.ProjectServiceListResult) *service.ProjectInternalServiceListResult {
+func filterUnifiedInternalServices(result *service.ProjectServiceListResult, runtimeMode string) *service.ProjectInternalServiceListResult {
 	if result == nil {
 		return &service.ProjectInternalServiceListResult{Items: []service.ProjectInternalServiceRecord{}}
 	}
@@ -127,7 +104,7 @@ func filterUnifiedInternalServices(result *service.ProjectServiceListResult) *se
 			Alias:         kind,
 			Protocol:      protocol,
 			Port:          port,
-			LocalEndpoint: localEndpointForPort(port),
+			LocalEndpoint: localEndpointForService(item.Name, kind, port, runtimeMode),
 			CreatedAt:     item.CreatedAt,
 			UpdatedAt:     item.UpdatedAt,
 		})
@@ -136,9 +113,31 @@ func filterUnifiedInternalServices(result *service.ProjectServiceListResult) *se
 	return &service.ProjectInternalServiceListResult{Items: items}
 }
 
-func localEndpointForPort(port int) string {
-	if port <= 0 {
-		return "localhost"
+func localEndpointForService(name, kind string, port int, runtimeMode string) string {
+	host := "localhost"
+	if strings.TrimSpace(runtimeMode) == "distributed-k3s" {
+		host = strings.TrimSpace(name)
+		if host == "" {
+			host = strings.TrimSpace(kind)
+		}
+		if host == "" {
+			host = "internal-service"
+		}
 	}
-	return "localhost:" + strconv.Itoa(port)
+	return localEndpointForHost(host, port)
+}
+
+func localEndpointForHost(host string, port int) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "localhost"
+	}
+	if port <= 0 {
+		return host
+	}
+	return host + ":" + strconv.Itoa(port)
+}
+
+func localEndpointForPort(port int) string {
+	return localEndpointForHost("localhost", port)
 }

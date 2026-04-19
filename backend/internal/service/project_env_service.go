@@ -194,6 +194,10 @@ func (s *ProjectEnvService) loadHelperSnippets(projectID string) ([]ProjectEnvHe
 			return nil, err
 		}
 		if len(items) > 0 {
+			runtimeEnv, err := s.LoadRuntimeEnv(projectID)
+			if err != nil {
+				return nil, err
+			}
 			records := make([]ProjectServiceRecord, 0, len(items))
 			for _, item := range items {
 				record, err := ToProjectServiceRecord(item)
@@ -202,7 +206,7 @@ func (s *ProjectEnvService) loadHelperSnippets(projectID string) ([]ProjectEnvHe
 				}
 				records = append(records, record)
 			}
-			return buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode, records), nil
+			return buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode, records, runtimeEnv), nil
 		}
 	}
 	internalServices := []models.ProjectInternalService{}
@@ -385,32 +389,16 @@ func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []P
 	return items
 }
 
-func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord) []ProjectEnvHelperSnippet {
+func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord, projectEnv map[string]string) []ProjectEnvHelperSnippet {
 	items := make([]ProjectEnvHelperSnippet, 0)
 	for _, item := range services {
 		if item.SourceType != serviceSourceTypeInternal || !strings.EqualFold(strings.TrimSpace(item.Kind), "postgres") {
 			continue
 		}
-		host := strings.TrimSpace(item.Name)
-		if runtimeMode != "distributed-k3s" {
-			host = "localhost"
-		}
-		port := firstPositive(item.ServicePort, item.TargetPort, 5432)
-		dbName := firstNonEmptyCompiledValue(item.EnvBundle["POSTGRES_DB"], item.EnvBundle["DB_NAME"], "app")
-		username := firstNonEmptyCompiledValue(item.EnvBundle["POSTGRES_USER"], item.EnvBundle["DB_USER"], "postgres")
-		password := firstNonEmptyCompiledValue(item.EnvBundle["POSTGRES_PASSWORD"], item.EnvBundle["DB_PASSWORD"], "postgres")
-		portString := strconv.Itoa(port)
 		items = append(items, ProjectEnvHelperSnippet{
 			ServiceKind: item.Kind,
 			Alias:       item.Name,
-			Env: map[string]string{
-				"DB_URL":      fmt.Sprintf("postgres://%s:%s@%s:%s/%s", username, password, host, portString, dbName),
-				"DB_NAME":     dbName,
-				"DB_HOST":     host,
-				"DB_PORT":     portString,
-				"DB_USERNAME": username,
-				"DB_PASSWORD": password,
-			},
+			Env:         buildPostgresConnectionTemplateEnv(item, projectEnv, runtimeMode),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {

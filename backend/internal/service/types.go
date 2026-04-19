@@ -605,6 +605,7 @@ type ProjectServiceRecord struct {
 	PlacementMode           string
 	PlacementNodeID         string
 	ConnectionTemplateKey   string
+	ConnectionTemplate      map[string]string
 	ConnectionTargetService string
 	ManagedByLazyops        bool
 	StartHint               string
@@ -724,6 +725,7 @@ type ConfigureProjectServiceItem struct {
 	PlacementMode           string
 	PlacementNodeID         string
 	ConnectionTemplateKey   string
+	ConnectionTemplate      map[string]string
 	ConnectionTargetService string
 	ManagedByLazyops        bool
 	StartHint               string
@@ -757,6 +759,7 @@ type BlueprintServiceContractRecord struct {
 	PlacementMode           string
 	PlacementNodeID         string
 	ConnectionTemplateKey   string
+	ConnectionTemplate      map[string]string
 	ConnectionTargetService string
 	ManagedByLazyops        bool
 	StartHint               string
@@ -841,6 +844,7 @@ type CreateProjectCommand struct {
 	ClusterID        string
 	RuntimeMode      string
 	DefaultBranch    string
+	Services         []ConfigureProjectServiceItem
 	InternalServices []string
 }
 

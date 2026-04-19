@@ -1,13 +1,14 @@
 package request
 
 type CreateProjectRequest struct {
-	Name             string   `json:"name"`
-	Slug             string   `json:"slug"`
-	NamespaceSlug    string   `json:"namespace_slug,omitempty"`
-	ClusterID        string   `json:"cluster_id,omitempty"`
-	RuntimeMode      string   `json:"runtime_mode,omitempty"`
-	DefaultBranch    string   `json:"default_branch"`
-	InternalServices []string `json:"internal_services,omitempty"`
+	Name             string                  `json:"name"`
+	Slug             string                  `json:"slug"`
+	NamespaceSlug    string                  `json:"namespace_slug,omitempty"`
+	ClusterID        string                  `json:"cluster_id,omitempty"`
+	RuntimeMode      string                  `json:"runtime_mode,omitempty"`
+	DefaultBranch    string                  `json:"default_branch"`
+	Services         []ProjectServiceRequest `json:"services,omitempty"`
+	InternalServices []string                `json:"internal_services,omitempty"`
 }
 
 type ProjectServiceRequest struct {
@@ -20,6 +21,7 @@ type ProjectServiceRequest struct {
 	PlacementMode           string            `json:"placement_mode,omitempty"`
 	PlacementNodeID         string            `json:"placement_node_id,omitempty"`
 	ConnectionTemplateKey   string            `json:"connection_template_key,omitempty"`
+	ConnectionTemplate      map[string]string `json:"connection_template,omitempty"`
 	ConnectionTargetService string            `json:"connection_target_service,omitempty"`
 	ManagedByLazyops        bool              `json:"managed_by_lazyops,omitempty"`
 	StartHint               string            `json:"start_hint,omitempty"`

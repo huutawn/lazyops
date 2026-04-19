@@ -449,7 +449,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	if err := unmarshalJSONWithFallback(item.DeployStrategyJSON, &deployStrategy, map[string]any{}); err != nil {
 		return ProjectServiceRecord{}, err
 	}
-	sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTargetService, managedByLazyops := extractServiceContractMetadata(deployStrategy, item.Path)
+	sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops := extractServiceContractMetadata(deployStrategy, item.Path)
 
 	runtimeProfile := ""
 	if item.RuntimeProfile != nil {
@@ -468,6 +468,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 		PlacementMode:           placementMode,
 		PlacementNodeID:         placementNodeID,
 		ConnectionTemplateKey:   connectionTemplateKey,
+		ConnectionTemplate:      connectionTemplate,
 		ConnectionTargetService: connectionTargetService,
 		ManagedByLazyops:        managedByLazyops,
 		StartHint:               item.StartHint,
@@ -486,7 +487,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	}, nil
 }
 
-func extractServiceContractMetadata(deployStrategy map[string]any, path string) (string, string, string, string, string, bool) {
+func extractServiceContractMetadata(deployStrategy map[string]any, path string) (string, string, string, string, map[string]string, string, bool) {
 	sourceType := stringFromAny(deployStrategy[lazyopsServiceMetaSourceType])
 	if sourceType == "" {
 		if strings.HasPrefix(path, reservedManagedInternalServicePathPrefix) {
@@ -502,6 +503,10 @@ func extractServiceContractMetadata(deployStrategy map[string]any, path string) 
 	}
 	placementNodeID := stringFromAny(deployStrategy[lazyopsServiceMetaPlacementNodeID])
 	connectionTemplateKey := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTemplateKey])
+	connectionTemplate := map[string]string{}
+	if sourceType == serviceSourceTypeInternal && strings.HasPrefix(strings.TrimSpace(path), reservedManagedInternalServicePathPrefix+"postgres") {
+		connectionTemplate = coercePostgresConnectionTemplate(deployStrategy[lazyopsServiceMetaConnectionTemplate])
+	}
 	connectionTargetService := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTargetService])
 	managedByLazyops := boolFromAny(deployStrategy[lazyopsServiceMetaManagedByLazyops]) || sourceType == serviceSourceTypeInternal
 
@@ -509,10 +514,11 @@ func extractServiceContractMetadata(deployStrategy map[string]any, path string) 
 	delete(deployStrategy, lazyopsServiceMetaPlacementMode)
 	delete(deployStrategy, lazyopsServiceMetaPlacementNodeID)
 	delete(deployStrategy, lazyopsServiceMetaConnectionTemplateKey)
+	delete(deployStrategy, lazyopsServiceMetaConnectionTemplate)
 	delete(deployStrategy, lazyopsServiceMetaConnectionTargetService)
 	delete(deployStrategy, lazyopsServiceMetaManagedByLazyops)
 
-	return sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTargetService, managedByLazyops
+	return sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops
 }
 
 func stringFromAny(value any) string {

@@ -27,6 +27,7 @@ const (
 	lazyopsServiceMetaPlacementMode           = "_lazyops_placement_mode"
 	lazyopsServiceMetaPlacementNodeID         = "_lazyops_placement_node_id"
 	lazyopsServiceMetaConnectionTemplateKey   = "_lazyops_connection_template_key"
+	lazyopsServiceMetaConnectionTemplate      = "_lazyops_connection_template"
 	lazyopsServiceMetaConnectionTargetService = "_lazyops_connection_target_service"
 	lazyopsServiceMetaManagedByLazyops        = "_lazyops_managed_by_lazyops"
 )
@@ -91,11 +92,15 @@ func (s *ProjectService) Create(cmd CreateProjectCommand) (*ProjectSummary, erro
 		}
 	}
 	internalServiceKinds := []string{}
-	if s.internalServices != nil {
+	if len(cmd.InternalServices) > 0 {
 		internalServiceKinds, err = normalizeInternalServiceKinds(cmd.InternalServices)
 		if err != nil {
 			return nil, err
 		}
+	}
+	initialServices := buildInitialProjectServiceItems(cmd.Services, internalServiceKinds)
+	if len(initialServices) > 0 && s.services == nil {
+		return nil, ErrInvalidInput
 	}
 
 	existing, err := s.projects.GetBySlugForUser(userID, slug)
@@ -121,7 +126,15 @@ func (s *ProjectService) Create(cmd CreateProjectCommand) (*ProjectSummary, erro
 	if err := s.projects.Create(project); err != nil {
 		return nil, err
 	}
-	if s.internalServices != nil {
+	if len(initialServices) > 0 {
+		items, err := buildConfiguredProjectServiceModels(project.ID, runtimeMode, initialServices)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.services.ReplaceForProject(project.ID, items); err != nil {
+			return nil, err
+		}
+	} else if s.internalServices != nil {
 		items, err := buildProjectInternalServiceModels(project.ID, internalServiceKinds)
 		if err != nil {
 			return nil, err
@@ -152,6 +165,15 @@ func (s *ProjectService) List(userID string) ([]ProjectSummary, error) {
 	}
 
 	return items, nil
+}
+
+func (s *ProjectService) GetSummary(requesterUserID, requesterRole, projectID string) (*ProjectSummary, error) {
+	project, err := resolveProjectForAccess(s.projects, requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+	summary := ToProjectSummary(*project)
+	return &summary, nil
 }
 
 func (s *ProjectService) ListServices(requesterUserID, requesterRole, projectID string) (*ProjectServiceListResult, error) {
@@ -284,6 +306,7 @@ func legacyInternalServiceToProjectServiceRecord(item models.ProjectInternalServ
 		PlacementMode:           servicePlacementModeSharedCluster,
 		PlacementNodeID:         "",
 		ConnectionTemplateKey:   "",
+		ConnectionTemplate:      postgresConnectionTemplateForKind(kind),
 		ConnectionTargetService: "",
 		ManagedByLazyops:        true,
 		StartHint:               "managed-internal-service",
@@ -494,6 +517,10 @@ func normalizeConfiguredProjectService(projectID, runtimeMode string, item Confi
 	if err != nil {
 		return models.Service{}, err
 	}
+	connectionTemplate, err := normalizeConfiguredConnectionTemplate(item.ConnectionTemplate, sourceType, kind)
+	if err != nil {
+		return models.Service{}, err
+	}
 	connectionTargetService, err := normalizeConfiguredConnectionTargetService(item.ConnectionTargetService)
 	if err != nil {
 		return models.Service{}, err
@@ -553,7 +580,7 @@ func normalizeConfiguredProjectService(projectID, runtimeMode string, item Confi
 		return models.Service{}, err
 	}
 	deployStrategy := cloneConfiguredAnyMap(item.DeployStrategy)
-	applyServiceContractMetadata(deployStrategy, sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTargetService, managedByLazyops)
+	applyServiceContractMetadata(deployStrategy, sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops)
 	deployStrategyJSON, err := marshalBindingPolicyJSON(deployStrategy)
 	if err != nil {
 		return models.Service{}, err
@@ -665,6 +692,16 @@ func normalizeConfiguredConnectionTemplateKey(raw string) (string, error) {
 	return key, nil
 }
 
+func normalizeConfiguredConnectionTemplate(raw map[string]string, sourceType, kind string) (map[string]string, error) {
+	if sourceType == serviceSourceTypeInternal && strings.EqualFold(strings.TrimSpace(kind), "postgres") {
+		return normalizePostgresConnectionTemplate(raw)
+	}
+	if len(raw) > 0 {
+		return nil, fmt.Errorf("service.connection_template is only supported for internal postgres services")
+	}
+	return map[string]string{}, nil
+}
+
 func normalizeConfiguredConnectionTargetService(raw string) (string, error) {
 	target := strings.TrimSpace(raw)
 	if target == "" {
@@ -676,7 +713,7 @@ func normalizeConfiguredConnectionTargetService(raw string) (string, error) {
 	return target, nil
 }
 
-func applyServiceContractMetadata(target map[string]any, sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTargetService string, managedByLazyops bool) {
+func applyServiceContractMetadata(target map[string]any, sourceType, placementMode, placementNodeID, connectionTemplateKey string, connectionTemplate map[string]string, connectionTargetService string, managedByLazyops bool) {
 	if target == nil {
 		return
 	}
@@ -687,6 +724,9 @@ func applyServiceContractMetadata(target map[string]any, sourceType, placementMo
 	}
 	if connectionTemplateKey != "" {
 		target[lazyopsServiceMetaConnectionTemplateKey] = connectionTemplateKey
+	}
+	if len(connectionTemplate) > 0 {
+		target[lazyopsServiceMetaConnectionTemplate] = cloneStringMap(connectionTemplate)
 	}
 	if connectionTargetService != "" {
 		target[lazyopsServiceMetaConnectionTargetService] = connectionTargetService
@@ -919,4 +959,50 @@ func validateManagedInternalServicePath(path string) error {
 		}
 	}
 	return nil
+}
+
+func buildInitialProjectServiceItems(explicit []ConfigureProjectServiceItem, internalKinds []string) []ConfigureProjectServiceItem {
+	out := make([]ConfigureProjectServiceItem, 0, len(explicit)+len(internalKinds))
+	existingInternalKinds := make(map[string]struct{}, len(explicit))
+
+	for _, item := range explicit {
+		cloned := item
+		cloned.EnvBundle = cloneStringMap(item.EnvBundle)
+		cloned.ConnectionTemplate = cloneStringMap(item.ConnectionTemplate)
+		cloned.PVCSpec = cloneConfiguredAnyMap(item.PVCSpec)
+		cloned.DeployStrategy = cloneConfiguredAnyMap(item.DeployStrategy)
+		cloned.Healthcheck = cloneConfiguredAnyMap(item.Healthcheck)
+		out = append(out, cloned)
+
+		sourceType := strings.ToLower(strings.TrimSpace(item.SourceType))
+		if sourceType == "" && strings.HasPrefix(strings.TrimSpace(item.Path), reservedManagedInternalServicePathPrefix) {
+			sourceType = serviceSourceTypeInternal
+		}
+		if sourceType != serviceSourceTypeInternal {
+			continue
+		}
+		existingInternalKinds[normalizeManagedInternalBridgeKind(item.Kind)] = struct{}{}
+	}
+
+	for _, kind := range internalKinds {
+		if _, exists := existingInternalKinds[kind]; exists {
+			continue
+		}
+		out = append(out, ConfigureProjectServiceItem{
+			Name:               kind,
+			Kind:               kind,
+			SourceType:         serviceSourceTypeInternal,
+			ManagedByLazyops:   true,
+			ConnectionTemplate: postgresConnectionTemplateForKind(kind),
+		})
+	}
+
+	return out
+}
+
+func postgresConnectionTemplateForKind(kind string) map[string]string {
+	if normalizeManagedInternalBridgeKind(kind) != "postgres" {
+		return map[string]string{}
+	}
+	return defaultPostgresConnectionTemplate()
 }

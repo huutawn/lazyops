@@ -40,7 +40,7 @@ func (ctl *DeploymentController) Create(c *gin.Context) {
 		case errors.Is(err, service.ErrProjectAccessDenied):
 			response.Error(c, http.StatusForbidden, "deployment create failed", "project_access_denied", err.Error())
 		case errors.Is(err, service.ErrBlueprintNotFound):
-			response.Error(c, http.StatusNotFound, "deployment create failed", "blueprint_not_found", err.Error())
+			response.Error(c, http.StatusBadRequest, "deployment create failed", "invalid_input", "legacy blueprint references are optional now; retry without blueprint_id")
 		default:
 			response.Error(c, http.StatusInternalServerError, "deployment create failed", "internal_error", err.Error())
 		}

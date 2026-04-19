@@ -722,9 +722,9 @@ func TestBootstrapOrchestratorOneClickDeployCreatesDeploymentWithDefaultService(
 	revisionStore := newFakeDesiredStateRevisionStore()
 	deploymentStore := newFakeDeploymentStore()
 
-	initContracts := NewInitContractService(projectStore, bindingStore, instanceStore, meshStore, clusterStore)
-	blueprintSvc := NewBlueprintService(projectStore, repoLinkStore, bindingStore, projectServiceStore, blueprintStore)
-	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore)
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
 
 	orchestrator := NewBootstrapOrchestrator(
 		projectStore,
@@ -738,7 +738,7 @@ func TestBootstrapOrchestratorOneClickDeployCreatesDeploymentWithDefaultService(
 		meshStore,
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(projectServiceStore, initContracts, blueprintSvc, deploymentSvc, nil)
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
 
 	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",
@@ -757,17 +757,14 @@ func TestBootstrapOrchestratorOneClickDeployCreatesDeploymentWithDefaultService(
 	if result.RolloutStatus != "not_started" {
 		t.Fatalf("expected rollout status not_started, got %q", result.RolloutStatus)
 	}
-	if len(result.Timeline) < 4 {
-		t.Fatalf("expected at least 4 timeline events, got %d", len(result.Timeline))
+	if len(result.Timeline) < 3 {
+		t.Fatalf("expected at least 3 timeline events, got %d", len(result.Timeline))
 	}
-	if result.Timeline[0].ID != "validate" || result.Timeline[0].State != "completed" {
-		t.Fatalf("expected completed validate step, got %#v", result.Timeline[0])
+	if result.Timeline[0].ID != "compile_inventory" || result.Timeline[0].State != "completed" {
+		t.Fatalf("expected completed compile_inventory step, got %#v", result.Timeline[0])
 	}
-	if result.Timeline[1].ID != "compile" || result.Timeline[1].State != "completed" {
-		t.Fatalf("expected completed compile step, got %#v", result.Timeline[1])
-	}
-	if result.Timeline[2].ID != "create_deployment" || result.Timeline[2].State != "completed" {
-		t.Fatalf("expected completed create_deployment step, got %#v", result.Timeline[2])
+	if result.Timeline[1].ID != "create_deployment" || result.Timeline[1].State != "completed" {
+		t.Fatalf("expected completed create_deployment step, got %#v", result.Timeline[1])
 	}
 
 	storedBlueprint, err := blueprintStore.GetByIDForProject("prj_123", result.BlueprintID)
@@ -825,9 +822,9 @@ func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 	revisionStore := newFakeDesiredStateRevisionStore()
 	deploymentStore := newFakeDeploymentStore()
 
-	initContracts := NewInitContractService(projectStore, bindingStore, instanceStore, meshStore, clusterStore)
-	blueprintSvc := NewBlueprintService(projectStore, newFakeProjectRepoLinkStore(), bindingStore, projectServiceStore, blueprintStore)
-	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore)
+	compiler := NewServiceInventoryBlueprintCompiler(newFakeProjectRepoLinkStore(), bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
 
 	orchestrator := NewBootstrapOrchestrator(
 		projectStore,
@@ -841,7 +838,7 @@ func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 		meshStore,
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(projectServiceStore, initContracts, blueprintSvc, deploymentSvc, nil)
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
 
 	_, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",

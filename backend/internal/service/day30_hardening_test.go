@@ -298,6 +298,76 @@ func TestDay30AcceptanceMatrixDeployContractValidation(t *testing.T) {
 	}
 }
 
+func TestDay30AcceptanceMatrixDeployProjectWithoutBlueprintID(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		NamespaceSlug: "acme-api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:        "api",
+			Path:        "apps/api",
+			Kind:        "app",
+			Public:      true,
+			TargetPort:  8080,
+			ServicePort: 8080,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		PlacementPolicyJSON:     `{}`,
+		DomainPolicyJSON:        `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, serviceStore, blueprintStore)
+	svc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	result, err := svc.Create(CreateDeploymentCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		TriggerKind:     "manual",
+	})
+	if err != nil {
+		t.Fatalf("deploy project without blueprint id: %v", err)
+	}
+	if result.Revision.BlueprintID == "" || result.Deployment.ID == "" {
+		t.Fatalf("expected hidden internal snapshot and deployment to be created, got %#v", result)
+	}
+}
+
 func TestDay30AcceptanceMatrixStandaloneRollout(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Register(runtime.NewStandaloneDriver())

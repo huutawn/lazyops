@@ -5,7 +5,12 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useProjectNavigationMode } from '@/modules/projects/project-flow-hooks';
 
-const GUIDED_PROJECT_TABS = [
+export type ProjectTabDefinition = {
+  label: string;
+  href: (id: string) => string;
+};
+
+export const GUIDED_PROJECT_TABS: ProjectTabDefinition[] = [
   { label: 'Tổng quan', href: (id: string) => `/projects/${id}` },
   { label: 'Services', href: (id: string) => `/projects/${id}/services` },
   { label: 'Biến môi trường', href: (id: string) => `/projects/${id}/env` },
@@ -13,7 +18,7 @@ const GUIDED_PROJECT_TABS = [
   { label: 'Logs / Runtime', href: (id: string) => `/projects/${id}/observability` },
 ];
 
-const ADMIN_PROJECT_TABS = [
+export const ADMIN_PROJECT_TABS: ProjectTabDefinition[] = [
   { label: 'Tổng quan', href: (id: string) => `/projects/${id}` },
   { label: 'Services', href: (id: string) => `/projects/${id}/services` },
   { label: 'Biến môi trường', href: (id: string) => `/projects/${id}/env` },

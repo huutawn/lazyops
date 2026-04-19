@@ -92,6 +92,13 @@ describe('createProjectSchema', () => {
       name: 'My Project',
       slug: 'my-project',
       default_branch: 'main',
+      services: [
+        {
+          name: 'api',
+          path: 'apps/api',
+          public: false,
+        },
+      ],
     });
     expect(result.success).toBe(true);
   });

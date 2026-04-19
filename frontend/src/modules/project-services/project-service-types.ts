@@ -10,6 +10,7 @@ export type ProjectService = {
   placement_mode: string;
   placement_node_id?: string;
   connection_template_key?: string;
+  connection_template?: Record<string, string>;
   connection_target_service?: string;
   managed_by_lazyops: boolean;
   start_hint: string;
@@ -56,6 +57,7 @@ export type ProjectServiceDraft = {
   placement_mode?: string;
   placement_node_id?: string;
   connection_template_key?: string;
+  connection_template?: Record<string, string>;
   connection_target_service?: string;
   managed_by_lazyops?: boolean;
   start_hint?: string;

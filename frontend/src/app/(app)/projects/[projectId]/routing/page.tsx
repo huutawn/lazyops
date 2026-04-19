@@ -103,7 +103,7 @@ export default function RoutingPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Định tuyến"
-        subtitle="Cấu hình cách định tuyến lưu lượng bên ngoài đến các dịch vụ của bạn. Thiết lập định tuyến theo đường dẫn, WebSocket endpoint và shared domain."
+        subtitle="Expert/debug route cho service routing. Flow chính vẫn là Services, Env, Triển khai, và Logs / Runtime."
       />
 
       <SectionCard

@@ -14,6 +14,11 @@ import {
   useProjectServiceAction,
   useProjectServices,
 } from '@/modules/project-services/project-service-hooks';
+import {
+  POSTGRES_CONNECTION_TEMPLATE_SLOTS,
+  formatPostgresConnectionTemplatePreview,
+  normalizePostgresConnectionTemplate,
+} from '@/modules/project-services/postgres-connection-template';
 import { useProjectRuntime } from '@/modules/project-runtime/project-runtime-hooks';
 import type {
   ConfigureProjectServicesRequest,
@@ -53,9 +58,8 @@ type RepoFormState = {
 
 type PostgresFormState = {
   service_name: string;
+  connection_template: Record<string, string>;
 };
-
-const POSTGRES_TEMPLATE_PREVIEW = ['DB_URL=', 'DB_NAME=', 'DB_HOST=', 'DB_PORT=', 'DB_USERNAME=', 'DB_PASSWORD='].join('\n');
 
 export function ProjectServiceInventory({
   projectId,
@@ -217,6 +221,7 @@ export function ProjectServiceInventory({
       replicas: selectedService?.replicas || 1,
       env_bundle: existingEnv,
       pvc_spec: existingPVC,
+      connection_template: normalizePostgresConnectionTemplate(postgresForm.connection_template),
       deploy_strategy: selectedService?.deploy_strategy || {},
       healthcheck: existingHealthcheck,
     };
@@ -581,7 +586,12 @@ export function ProjectServiceInventory({
             <FieldLabel label="Service name">
               <input
                 value={postgresForm.service_name}
-                onChange={(event) => setPostgresForm({ service_name: event.target.value })}
+                onChange={(event) =>
+                  setPostgresForm((current) => ({
+                    ...current,
+                    service_name: event.target.value,
+                  }))
+                }
                 className={fieldClassName}
                 placeholder="db"
                 required
@@ -598,8 +608,32 @@ export function ProjectServiceInventory({
               <p className="mb-3 text-sm text-[#94a3b8]">
                 LazyOps se tu fill cac field nay vao repo service co gan <code>postgres.basic</code>. Day la K3s internal DNS flow, khong phai localhost helper.
               </p>
+              <div className="grid gap-4">
+                {POSTGRES_CONNECTION_TEMPLATE_SLOTS.map((slot) => (
+                  <FieldLabel key={slot} label={`${slot} env name`}>
+                    <input
+                      value={postgresForm.connection_template[slot] || ''}
+                      onChange={(event) =>
+                        setPostgresForm((current) => ({
+                          ...current,
+                          connection_template: {
+                            ...current.connection_template,
+                            [slot]: event.target.value,
+                          },
+                        }))
+                      }
+                      className={fieldClassName}
+                      placeholder={slot}
+                      required
+                    />
+                  </FieldLabel>
+                ))}
+              </div>
+              <div className="mb-3 mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">
+                Preview env keys
+              </div>
               <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
-                {POSTGRES_TEMPLATE_PREVIEW}
+                {formatPostgresConnectionTemplatePreview(postgresForm.connection_template)}
               </pre>
             </div>
 
@@ -630,7 +664,7 @@ export function ProjectServiceInventory({
             <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
               <div className="mb-3 text-sm font-semibold text-white">Template inject theo service</div>
               <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
-                {POSTGRES_TEMPLATE_PREVIEW}
+                {formatPostgresConnectionTemplatePreview(selectedService?.connection_template)}
               </pre>
             </div>
             <DrawerActions pending={false} primaryLabel="" onCancel={closeDrawer} hidePrimary />
@@ -664,6 +698,7 @@ function toProjectServiceDraft(item: ProjectService): ProjectServiceDraft {
     placement_mode: item.placement_mode,
     placement_node_id: item.placement_node_id,
     connection_template_key: item.connection_template_key,
+    connection_template: item.connection_template,
     connection_target_service: item.connection_target_service,
     managed_by_lazyops: item.managed_by_lazyops,
     start_hint: item.start_hint,
@@ -694,6 +729,7 @@ function defaultRepoForm(service?: ProjectService): RepoFormState {
 function defaultPostgresForm(service?: ProjectService): PostgresFormState {
   return {
     service_name: service?.name || 'db',
+    connection_template: normalizePostgresConnectionTemplate(service?.connection_template),
   };
 }
 
@@ -835,7 +871,7 @@ function ActionButton({
   );
 }
 
-function resolvePlacementHint({
+export function resolvePlacementHint({
   placementNodesError,
   isLoading,
   clusterID,
@@ -878,7 +914,7 @@ function formatPlacementNodeStatus(status: string) {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatActionResult(result: ProjectServiceActionResponse) {
+export function formatActionResult(result: ProjectServiceActionResponse) {
   if (result.message) {
     return result.message;
   }

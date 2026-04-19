@@ -8,6 +8,8 @@ type CreateDeploymentCommand struct {
 	ProjectID       string
 	BlueprintID     string
 	TriggerKind     string
+	SourceRef       string
+	Artifact        BlueprintArtifactMetadata
 	ServiceIDs      []string
 }
 

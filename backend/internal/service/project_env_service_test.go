@@ -141,6 +141,14 @@ func TestProjectEnvServiceBuildsPostgresHelpersFromUnifiedServiceInventory(t *te
 			Name:       "db",
 			Kind:       "postgres",
 			SourceType: serviceSourceTypeInternal,
+			ConnectionTemplate: map[string]string{
+				"DB_URL":      "DATABASE_URL",
+				"DB_NAME":     "DATABASE_NAME",
+				"DB_HOST":     "PGHOST",
+				"DB_PORT":     "PGPORT",
+				"DB_USERNAME": "PGUSER",
+				"DB_PASSWORD": "PGPASSWORD",
+			},
 			EnvBundle: map[string]string{
 				"POSTGRES_DB":       "app",
 				"POSTGRES_USER":     "postgres",
@@ -166,10 +174,10 @@ func TestProjectEnvServiceBuildsPostgresHelpersFromUnifiedServiceInventory(t *te
 		t.Fatalf("expected one postgres helper snippet, got %#v", record.HelperSnippets)
 	}
 	snippet := record.HelperSnippets[0]
-	if snippet.Env["DB_HOST"] != "db" {
+	if snippet.Env["PGHOST"] != "db" {
 		t.Fatalf("expected K3s internal dns host db, got %#v", snippet.Env)
 	}
-	if snippet.Env["DB_URL"] != "postgres://postgres:supersecret@db:5432/app" {
+	if snippet.Env["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app" {
 		t.Fatalf("expected postgres helper URL to use internal dns, got %#v", snippet.Env)
 	}
 }

@@ -786,8 +786,15 @@ func (s *Service) handleRestartK3sService(ctx context.Context, envelope contract
 		return dispatcher.NonRetryable("unsupported_runtime_driver", "restart_k3s_service requires the k3s runtime driver", nil)
 	}
 
-	namespace := strings.TrimSpace(stringFromMap(envelope.Payload, "namespace"))
-	serviceName := strings.TrimSpace(stringFromMap(envelope.Payload, "service_name"))
+	payload, err := decodeCommandPayloadMap(envelope.Payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_restart_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	namespace := strings.TrimSpace(stringFromMap(payload, "namespace"))
+	serviceName := strings.TrimSpace(stringFromMap(payload, "service_name"))
 	if namespace == "" || serviceName == "" {
 		return dispatcher.NonRetryable("invalid_restart_payload", "namespace and service_name are required", nil)
 	}
@@ -814,9 +821,16 @@ func (s *Service) handleLabelK3sNode(ctx context.Context, envelope contracts.Com
 		return dispatcher.NonRetryable("unsupported_runtime_driver", "label_k3s_node requires the k3s runtime driver", nil)
 	}
 
-	nodeName := strings.TrimSpace(stringFromMap(envelope.Payload, "node_name"))
-	labelKey := strings.TrimSpace(stringFromMap(envelope.Payload, "label_key"))
-	labelValue := strings.TrimSpace(stringFromMap(envelope.Payload, "label_value"))
+	payload, err := decodeCommandPayloadMap(envelope.Payload)
+	if err != nil {
+		return dispatcher.NonRetryable("invalid_label_payload", "command payload could not be decoded", map[string]any{
+			"error": err.Error(),
+		})
+	}
+
+	nodeName := strings.TrimSpace(stringFromMap(payload, "node_name"))
+	labelKey := strings.TrimSpace(stringFromMap(payload, "label_key"))
+	labelValue := strings.TrimSpace(stringFromMap(payload, "label_value"))
 	if nodeName == "" || labelKey == "" || labelValue == "" {
 		return dispatcher.NonRetryable("invalid_label_payload", "node_name, label_key, and label_value are required", nil)
 	}
@@ -837,6 +851,17 @@ func (s *Service) handleLabelK3sNode(ctx context.Context, envelope contracts.Com
 			"label_value": labelValue,
 		},
 	)
+}
+
+func decodeCommandPayloadMap(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 {
+		return map[string]any{}, nil
+	}
+	payload := make(map[string]any)
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 func stringFromMap(input map[string]any, key string) string {

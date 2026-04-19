@@ -90,7 +90,10 @@ export default function ValidateContractPage() {
   if (bindings.length === 0) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Deploy Contract" subtitle="Review and validate your deployment contract." />
+      <PageHeader
+        title="Deploy Contract"
+        subtitle="Expert/debug route. Normal service-first deployments da tu validate deploy plan ngầm trước khi rollout."
+      />
         <SectionCard title="No bindings available" description="Create a deployment binding first to validate a contract.">
           <p className="text-sm text-lazyops-muted">
             You need at least one deployment binding before you can review the deploy contract.
@@ -190,7 +193,7 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
       >
         <div className="flex items-center gap-2">
           <StatusBadge label="Valid" variant="success" size="md" />
-          <span className="text-sm text-lazyops-muted">Ready for blueprint compilation.</span>
+          <span className="text-sm text-lazyops-muted">Ready for the internal deploy-plan compiler used by the service-first flow.</span>
         </div>
       </SectionCard>
 

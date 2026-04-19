@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -312,7 +311,7 @@ func defaultHiddenProjectService(projectID, runtimeMode string) ProjectServiceRe
 func (c *ServiceInventoryBlueprintCompiler) buildDependencyBindings(services []ProjectServiceRecord, runtimeMode string) []LazyopsYAMLDependencyBinding {
 	out := make([]LazyopsYAMLDependencyBinding, 0)
 	for _, service := range services {
-		if strings.TrimSpace(service.ConnectionTemplateKey) != "postgres.basic" {
+		if strings.TrimSpace(service.ConnectionTemplateKey) != postgresBasicConnectionTemplateKey {
 			continue
 		}
 		targetService := strings.TrimSpace(service.ConnectionTargetService)
@@ -351,10 +350,12 @@ func (c *ServiceInventoryBlueprintCompiler) buildServiceContracts(services []Pro
 	out := make([]BlueprintServiceContractRecord, 0, len(services))
 	for _, service := range services {
 		envBundle := cloneStringMap(service.EnvBundle)
-		if strings.TrimSpace(service.ConnectionTemplateKey) == "postgres.basic" && strings.TrimSpace(service.ConnectionTargetService) != "" {
+		if strings.TrimSpace(service.ConnectionTemplateKey) == postgresBasicConnectionTemplateKey && strings.TrimSpace(service.ConnectionTargetService) != "" {
 			target, ok := serviceIndex[strings.TrimSpace(service.ConnectionTargetService)]
 			if ok && target.SourceType == serviceSourceTypeInternal && strings.EqualFold(strings.TrimSpace(target.Kind), "postgres") {
-				envBundle = injectPostgresTemplate(envBundle, target, projectEnv, runtimeMode)
+				for envName, value := range buildPostgresConnectionTemplateEnv(target, projectEnv, runtimeMode) {
+					fillIfBlank(envBundle, envName, value)
+				}
 			}
 		}
 
@@ -368,6 +369,7 @@ func (c *ServiceInventoryBlueprintCompiler) buildServiceContracts(services []Pro
 			PlacementMode:           firstNonEmptyCompiledValue(service.PlacementMode, servicePlacementModeSharedCluster),
 			PlacementNodeID:         service.PlacementNodeID,
 			ConnectionTemplateKey:   service.ConnectionTemplateKey,
+			ConnectionTemplate:      cloneStringMap(service.ConnectionTemplate),
 			ConnectionTargetService: service.ConnectionTargetService,
 			ManagedByLazyops:        service.ManagedByLazyops,
 			StartHint:               service.StartHint,
@@ -430,29 +432,6 @@ func toBlueprintModel(record BlueprintRecord) (*models.Blueprint, error) {
 		CreatedAt:    record.CreatedAt,
 	}
 	return model, nil
-}
-
-func injectPostgresTemplate(envBundle map[string]string, target ProjectServiceRecord, projectEnv map[string]string, runtimeMode string) map[string]string {
-	host := strings.TrimSpace(target.Name)
-	if runtimeMode != "distributed-k3s" {
-		host = "localhost"
-	}
-	port := firstPositive(target.ServicePort, target.TargetPort, 5432)
-	targetEnv := cloneStringMap(target.EnvBundle)
-
-	dbName := firstNonEmptyCompiledValue(targetEnv["POSTGRES_DB"], targetEnv["DB_NAME"], projectEnv["POSTGRES_DB"], projectEnv["DB_NAME"], "app")
-	userName := firstNonEmptyCompiledValue(targetEnv["POSTGRES_USER"], targetEnv["DB_USER"], projectEnv["POSTGRES_USER"], projectEnv["DB_USER"], "postgres")
-	password := firstNonEmptyCompiledValue(targetEnv["POSTGRES_PASSWORD"], targetEnv["DB_PASSWORD"], projectEnv["POSTGRES_PASSWORD"], projectEnv["DB_PASSWORD"], "postgres")
-	portString := fmt.Sprintf("%d", port)
-	url := fmt.Sprintf("postgres://%s:%s@%s:%s/%s", userName, password, host, portString, dbName)
-
-	fillIfBlank(envBundle, "DB_HOST", host)
-	fillIfBlank(envBundle, "DB_PORT", portString)
-	fillIfBlank(envBundle, "DB_NAME", dbName)
-	fillIfBlank(envBundle, "DB_USERNAME", userName)
-	fillIfBlank(envBundle, "DB_PASSWORD", password)
-	fillIfBlank(envBundle, "DB_URL", url)
-	return envBundle
 }
 
 func fillIfBlank(target map[string]string, key, value string) {

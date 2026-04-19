@@ -237,6 +237,55 @@ func TestProjectServiceRejectsDuplicateSlugPerUser(t *testing.T) {
 	}
 }
 
+func TestProjectServiceCreateSeedsUnifiedServicesForInternalPostgres(t *testing.T) {
+	store := newFakeProjectStore()
+	serviceStore := newFakeProjectServiceStoreForProjectSvc(map[string][]models.Service{})
+	service := NewProjectService(store).WithServiceStore(serviceStore)
+
+	result, err := service.Create(CreateProjectCommand{
+		UserID:        "usr_123",
+		Name:          "Service First",
+		DefaultBranch: "main",
+		Services: []ConfigureProjectServiceItem{
+			{
+				Name:       "db",
+				Kind:       "postgres",
+				SourceType: serviceSourceTypeInternal,
+				ConnectionTemplate: map[string]string{
+					"DB_URL":      "DATABASE_URL",
+					"DB_NAME":     "DATABASE_NAME",
+					"DB_HOST":     "PGHOST",
+					"DB_PORT":     "PGPORT",
+					"DB_USERNAME": "PGUSER",
+					"DB_PASSWORD": "PGPASSWORD",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	services, err := serviceStore.ListByProject(result.ID)
+	if err != nil {
+		t.Fatalf("list services: %v", err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("expected one unified service, got %d", len(services))
+	}
+
+	record, err := ToProjectServiceRecord(services[0])
+	if err != nil {
+		t.Fatalf("decode stored service: %v", err)
+	}
+	if record.SourceType != serviceSourceTypeInternal || record.Kind != "postgres" {
+		t.Fatalf("expected stored internal postgres service, got %#v", record)
+	}
+	if record.ConnectionTemplate["DB_URL"] != "DATABASE_URL" || record.ConnectionTemplate["DB_HOST"] != "PGHOST" {
+		t.Fatalf("expected postgres connection template to be preserved, got %#v", record.ConnectionTemplate)
+	}
+}
+
 func TestProjectServiceListScopesProjectsToOwner(t *testing.T) {
 	store := newFakeProjectStore(
 		&models.Project{

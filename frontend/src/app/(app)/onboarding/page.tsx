@@ -35,10 +35,10 @@ export default function OnboardingPage() {
 
       <div className="relative z-10 text-center md:text-left mb-4">
         <h1 className="text-5xl font-extrabold tracking-tight text-white mb-5">
-          Triển khai dự án <span className="bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] bg-clip-text text-transparent underline decoration-[#0EA5E9]/30 underline-offset-8">trong tích tắc</span>
+          Project la namespace, <span className="bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] bg-clip-text text-transparent underline decoration-[#0EA5E9]/30 underline-offset-8">service moi la don vi deploy</span>
         </h1>
         <p className="text-[#94a3b8] text-[19px] max-w-3xl leading-relaxed font-medium">
-          Giải pháp PaaS mạnh mẽ giúp bạn tập trung vào mã nguồn, còn hạ tầng và DevOps cứ để LazyOps lo!
+          Bat dau bang service-first workspace: scaffold repo services, internal services, va deployment flow ngay tren cung mot inventory thong nhat.
         </p>
       </div>
 
@@ -54,7 +54,7 @@ export default function OnboardingPage() {
               </div>
               <h2 className="text-3xl font-bold text-white mb-4">Chào mừng bạn đến với LazyOps</h2>
               <p className="text-[#94a3b8] mb-10 text-lg max-w-lg mx-auto leading-relaxed">
-                Hệ thống chưa ghi nhận dự án nào. Hãy tạo dự án đầu tiên để bắt đầu hành trình triển khai không giới hạn.
+                He thong chua co project shell nao. Tao project dau tien va scaffold thang service inventory de bat dau.
               </p>
               <button
                 type="button"
@@ -67,7 +67,7 @@ export default function OnboardingPage() {
           ) : (
             <div className="animate-in zoom-in-95 duration-500 shadow-2xl rounded-3xl border border-[#1e293b] bg-[#0F172A]/90 backdrop-blur-2xl p-10">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">Cấu hình dự án mới</h2>
+                <h2 className="text-3xl font-extrabold text-white tracking-tight">Tạo project service-first</h2>
                 <button 
                   onClick={() => setShowCreateForm(false)}
                   className="rounded-xl px-4 py-2 text-sm font-bold text-[#64748b] hover:text-white hover:bg-white/5 transition-all"
@@ -84,7 +84,7 @@ export default function OnboardingPage() {
           {showCreateForm ? (
             <div className="animate-in zoom-in-95 duration-500 shadow-2xl rounded-3xl border border-[#1e293b] bg-[#0F172A]/90 backdrop-blur-2xl p-10">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">Cấu hình dự án mới</h2>
+                <h2 className="text-3xl font-extrabold text-white tracking-tight">Tạo project service-first</h2>
                 <button 
                   onClick={() => setShowCreateForm(false)}
                   className="rounded-xl px-4 py-2 text-sm font-bold text-[#64748b] hover:text-white hover:bg-white/5 transition-all"

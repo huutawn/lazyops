@@ -335,6 +335,108 @@ func TestDeploymentServiceCreateAutoCompilesHiddenBlueprintWhenBlueprintIDOmitte
 	}
 }
 
+func TestDeploymentServiceCreateWithServiceIDsIncludesSelectedServiceAndInternalDependency(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		NamespaceSlug: "acme-api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:                    "api",
+			Path:                    "apps/api",
+			Kind:                    "app",
+			Public:                  true,
+			ConnectionTemplateKey:   "postgres.basic",
+			ConnectionTargetService: "db",
+		},
+		{
+			Name: "worker",
+			Path: "apps/worker",
+			Kind: "worker",
+		},
+		{
+			Name:       "db",
+			Kind:       "postgres",
+			SourceType: serviceSourceTypeInternal,
+			EnvBundle: map[string]string{
+				"POSTGRES_DB":       "app",
+				"POSTGRES_USER":     "postgres",
+				"POSTGRES_PASSWORD": "supersecret",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed services: %v", err)
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		PlacementPolicyJSON:     `{}`,
+		DomainPolicyJSON:        `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, serviceStore, blueprintStore)
+	service := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	result, err := service.Create(CreateDeploymentCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		TriggerKind:     "manual",
+		ServiceIDs:      []string{serviceModels[0].ID},
+	})
+	if err != nil {
+		t.Fatalf("create deployment with service_ids: %v", err)
+	}
+	if len(result.Revision.Services) != 2 {
+		t.Fatalf("expected selected service plus internal dependency, got %#v", result.Revision.Services)
+	}
+	names := map[string]BlueprintServiceContractRecord{}
+	for _, item := range result.Revision.Services {
+		names[item.Name] = item
+	}
+	if _, ok := names["api"]; !ok {
+		t.Fatalf("expected api service in compiled revision, got %#v", result.Revision.Services)
+	}
+	if _, ok := names["db"]; !ok {
+		t.Fatalf("expected internal postgres dependency in compiled revision, got %#v", result.Revision.Services)
+	}
+	if _, ok := names["worker"]; ok {
+		t.Fatalf("did not expect unrelated worker service in compiled revision, got %#v", result.Revision.Services)
+	}
+	if names["api"].EnvBundle["DB_HOST"] != "db" {
+		t.Fatalf("expected service-scoped env injection to use internal dns, got %#v", names["api"].EnvBundle)
+	}
+}
+
 func TestDeploymentServiceRejectsOwnershipMismatch(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",
