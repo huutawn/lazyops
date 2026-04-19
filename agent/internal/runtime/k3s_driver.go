@@ -149,12 +149,32 @@ func (d *K3sDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeCon
 	} else {
 		appliedSteps = append(appliedSteps, "manifest_preflight:passed")
 	}
-	if _, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "--dry-run=server", "-f", manifestPath); err != nil {
+
+	applyPlan, err := d.materializeApplyManifests(layout.Config, runtimeCtx)
+	if err != nil {
+		return ReconcileRevisionResult{}, err
+	}
+	if applyPlan.NamespacePath != "" {
+		if _, err := d.kubectlOutput(ctx, "", "apply", "-f", applyPlan.NamespacePath); err != nil {
+			return ReconcileRevisionResult{}, wrapK3sError("k8s_namespace_apply_failed", err, true)
+		}
+		appliedSteps = append(appliedSteps, "kubectl_apply_namespace")
+		if err := d.waitForNamespace(ctx, runtimeCtx.Project.Namespace, 20*time.Second); err != nil {
+			return ReconcileRevisionResult{}, wrapK3sError("k8s_namespace_ready_failed", err, true)
+		}
+		appliedSteps = append(appliedSteps, "namespace_ready")
+	}
+
+	applyManifestPath := manifestPath
+	if applyPlan.ResourcesPath != "" {
+		applyManifestPath = applyPlan.ResourcesPath
+	}
+	if _, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "--dry-run=server", "-f", applyManifestPath); err != nil {
 		return ReconcileRevisionResult{}, wrapK3sError("k8s_dry_run_failed", err, true)
 	}
 	appliedSteps = append(appliedSteps, "kubectl_apply_dry_run")
 
-	applyOutput, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "-f", manifestPath)
+	applyOutput, err := d.kubectlOutput(ctx, runtimeCtx.Project.Namespace, "apply", "-f", applyManifestPath)
 	if err != nil {
 		return ReconcileRevisionResult{}, wrapK3sError("k8s_apply_failed", err, true)
 	}
@@ -225,6 +245,88 @@ func (d *K3sDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeCon
 		Ingresses:         ingressObservations,
 		CompletedAt:       d.now(),
 	}, nil
+}
+
+type k3sApplyManifestPlan struct {
+	NamespacePath string
+	ResourcesPath string
+}
+
+func (d *K3sDriver) materializeApplyManifests(configDir string, runtimeCtx RuntimeContext) (k3sApplyManifestPlan, error) {
+	plan := k3sApplyManifestPlan{}
+	if len(runtimeCtx.Revision.ManifestBundle.Documents) == 0 {
+		plan.ResourcesPath = filepath.Join(configDir, "k8s-manifest.yaml")
+		return plan, nil
+	}
+
+	namespaceDocs := make([]string, 0, 1)
+	resourceDocs := make([]string, 0, len(runtimeCtx.Revision.ManifestBundle.Documents))
+	for _, item := range runtimeCtx.Revision.ManifestBundle.Documents {
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(item.Kind), "Namespace") {
+			namespaceDocs = append(namespaceDocs, content)
+			continue
+		}
+		resourceDocs = append(resourceDocs, content)
+	}
+
+	if len(namespaceDocs) > 0 {
+		plan.NamespacePath = filepath.Join(configDir, "k8s-manifest-namespaces.yaml")
+		if err := os.WriteFile(plan.NamespacePath, []byte(joinManifestDocuments(namespaceDocs)), 0o644); err != nil {
+			return k3sApplyManifestPlan{}, err
+		}
+	}
+	if len(resourceDocs) > 0 {
+		plan.ResourcesPath = filepath.Join(configDir, "k8s-manifest-resources.yaml")
+		if err := os.WriteFile(plan.ResourcesPath, []byte(joinManifestDocuments(resourceDocs)), 0o644); err != nil {
+			return k3sApplyManifestPlan{}, err
+		}
+	}
+	return plan, nil
+}
+
+func joinManifestDocuments(documents []string) string {
+	trimmed := make([]string, 0, len(documents))
+	for _, item := range documents {
+		if value := strings.TrimSpace(item); value != "" {
+			trimmed = append(trimmed, value)
+		}
+	}
+	if len(trimmed) == 0 {
+		return ""
+	}
+	return strings.Join(trimmed, "\n---\n") + "\n"
+}
+
+func (d *K3sDriver) waitForNamespace(ctx context.Context, namespace string, timeout time.Duration) error {
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return nil
+	}
+	deadline := d.now().Add(timeout)
+	for {
+		output, err := d.kubectlOutput(ctx, "", "get", "namespace", namespace, "-o", "name")
+		if err == nil && strings.TrimSpace(string(output)) != "" {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.now().After(deadline) {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("namespace %q was not ready before timeout", namespace)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func (d *K3sDriver) RenderGatewayConfig(_ context.Context, runtimeCtx RuntimeContext) (GatewayRenderResult, error) {
