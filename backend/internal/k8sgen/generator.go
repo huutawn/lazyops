@@ -17,22 +17,22 @@ type DetectedPort struct {
 }
 
 type ServiceSpec struct {
-	Name           string
-	Kind           string
-	Namespace      string
-	Public         bool
-	PlacementMode  string
+	Name            string
+	Kind            string
+	Namespace       string
+	Public          bool
+	PlacementMode   string
 	PlacementNodeID string
-	ImageRef       string
-	ImageDigest    string
-	TargetPort     int
-	ServicePort    int
-	Replicas       int
-	Healthcheck    map[string]any
-	DetectedPorts  []DetectedPort
-	EnvBundle      map[string]string
-	PVCSpec        map[string]any
-	DeployStrategy map[string]any
+	ImageRef        string
+	ImageDigest     string
+	TargetPort      int
+	ServicePort     int
+	Replicas        int
+	Healthcheck     map[string]any
+	DetectedPorts   []DetectedPort
+	EnvBundle       map[string]string
+	PVCSpec         map[string]any
+	DeployStrategy  map[string]any
 }
 
 type PublicDomain struct {
@@ -158,25 +158,25 @@ func (g *Generator) Generate(input Input) (ManifestBundle, error) {
 }
 
 type normalizedServiceSpec struct {
-	Name           string
-	Namespace      string
-	Public         bool
-	PlacementMode  string
+	Name            string
+	Namespace       string
+	Public          bool
+	PlacementMode   string
 	PlacementNodeID string
-	ImageRef       string
-	TargetPort     int
-	ServicePort    int
-	Replicas       int
-	EnvBundle      map[string]string
-	EnvKeys        []string
-	HealthPath     string
-	HealthPort     int
-	HasHealthCheck bool
-	PVCName        string
-	PVCSize        string
-	PVCMountPath   string
-	RequiresPVC    bool
-	Kind           string
+	ImageRef        string
+	TargetPort      int
+	ServicePort     int
+	Replicas        int
+	EnvBundle       map[string]string
+	EnvKeys         []string
+	HealthPath      string
+	HealthPort      int
+	HasHealthCheck  bool
+	PVCName         string
+	PVCSize         string
+	PVCMountPath    string
+	RequiresPVC     bool
+	Kind            string
 }
 
 func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceSpec {
@@ -187,6 +187,7 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceS
 		replicas = 1
 	}
 	env := cloneStringMap(spec.EnvBundle)
+	env = normalizeManagedServiceEnv(spec.Kind, env)
 	keys := make([]string, 0, len(env))
 	for key := range env {
 		keys = append(keys, key)
@@ -200,25 +201,25 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceS
 	}
 
 	return normalizedServiceSpec{
-		Name:           strings.TrimSpace(spec.Name),
-		Namespace:      namespace,
-		Public:         spec.Public,
-		PlacementMode:  strings.TrimSpace(spec.PlacementMode),
+		Name:            strings.TrimSpace(spec.Name),
+		Namespace:       namespace,
+		Public:          spec.Public,
+		PlacementMode:   strings.TrimSpace(spec.PlacementMode),
 		PlacementNodeID: strings.TrimSpace(spec.PlacementNodeID),
-		ImageRef:       firstNonEmpty(spec.ImageRef, "nginx:stable-alpine"),
-		TargetPort:     targetPort,
-		ServicePort:    servicePort,
-		Replicas:       replicas,
-		EnvBundle:      env,
-		EnvKeys:        keys,
-		HealthPath:     healthPath,
-		HealthPort:     healthPortValue,
-		HasHealthCheck: healthPath != "" || healthPortValue > 0,
-		PVCName:        strings.TrimSpace(spec.Name) + "-data",
-		PVCSize:        pvcSize,
-		PVCMountPath:   pvcMountPathForKind(spec.Kind),
-		RequiresPVC:    pvcSize != "" || requiresPersistentVolume(spec.Kind),
-		Kind:           firstNonEmpty(spec.Kind, "app"),
+		ImageRef:        firstNonEmpty(spec.ImageRef, "nginx:stable-alpine"),
+		TargetPort:      targetPort,
+		ServicePort:     servicePort,
+		Replicas:        replicas,
+		EnvBundle:       env,
+		EnvKeys:         keys,
+		HealthPath:      healthPath,
+		HealthPort:      healthPortValue,
+		HasHealthCheck:  healthPath != "" || healthPortValue > 0,
+		PVCName:         strings.TrimSpace(spec.Name) + "-data",
+		PVCSize:         pvcSize,
+		PVCMountPath:    pvcMountPathForKind(spec.Kind),
+		RequiresPVC:     pvcSize != "" || requiresPersistentVolume(spec.Kind),
+		Kind:            firstNonEmpty(spec.Kind, "app"),
 	}
 }
 
@@ -335,6 +336,25 @@ func cloneStringMap(input map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func normalizeManagedServiceEnv(kind string, env map[string]string) map[string]string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "postgres":
+		if env == nil {
+			env = map[string]string{}
+		}
+		if strings.TrimSpace(env["POSTGRES_DB"]) == "" {
+			env["POSTGRES_DB"] = "app"
+		}
+		if strings.TrimSpace(env["POSTGRES_USER"]) == "" {
+			env["POSTGRES_USER"] = "postgres"
+		}
+		if strings.TrimSpace(env["POSTGRES_PASSWORD"]) == "" {
+			env["POSTGRES_PASSWORD"] = firstNonEmpty(env["DB_PASSWORD"], "postgres")
+		}
+	}
+	return env
 }
 
 func firstNonEmpty(values ...string) string {

@@ -61,8 +61,8 @@ func TestGeneratorRendersNamespaceServiceIngressSecretAndPVC(t *testing.T) {
 	if bundle.Namespace != "lazyops-prj-123" {
 		t.Fatalf("expected namespace lazyops-prj-123, got %q", bundle.Namespace)
 	}
-	if len(bundle.Documents) != 8 {
-		t.Fatalf("expected 8 manifest documents, got %d", len(bundle.Documents))
+	if len(bundle.Documents) != 9 {
+		t.Fatalf("expected 9 manifest documents, got %d", len(bundle.Documents))
 	}
 
 	combined := bundle.CombinedYAML
@@ -71,6 +71,9 @@ func TestGeneratorRendersNamespaceServiceIngressSecretAndPVC(t *testing.T) {
 		"name: lazyops-prj-123",
 		"kind: Secret",
 		"DATABASE_URL: \"postgres://lazyops:secret@db-service:5432/lazyops\"",
+		"POSTGRES_DB: \"app\"",
+		"POSTGRES_USER: \"postgres\"",
+		"POSTGRES_PASSWORD: \"postgres\"",
 		"kind: Service",
 		"targetPort: 8080",
 		"kind: Deployment",
