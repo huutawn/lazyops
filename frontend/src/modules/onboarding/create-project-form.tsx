@@ -93,9 +93,9 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-8" noValidate>
-      <div className="grid gap-8 xl:grid-cols-[1.05fr_0.95fr]">
-        <div className="grid gap-6">
-          <div className="rounded-3xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
+      <div className="grid gap-8 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <div className="min-w-0 grid gap-6">
+          <div className="min-w-0 rounded-3xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
             <div className="mb-5 flex items-center gap-3">
               <span className="rounded-2xl bg-[#0EA5E9]/10 p-3 text-[#38BDF8]">
                 <FolderGit2 className="size-5" />
@@ -120,13 +120,13 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
               </FormField>
 
               <FormField label="Slug project" error={errors.slug?.message}>
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <FormInput
                     type="text"
                     placeholder="lazyops-commerce"
                     icon={<Hash className="size-5" />}
                     error={!!errors.slug}
-                    className="flex-1"
+                    className="min-w-0 flex-1"
                     {...register('slug')}
                   />
                   <button
@@ -156,7 +156,7 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
+          <div className="min-w-0 rounded-3xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
             <div className="mb-4 flex items-center gap-3">
               <span className="rounded-2xl bg-[#14B8A6]/10 p-3 text-[#2dd4bf]">
                 <Layers className="size-5" />
@@ -197,7 +197,7 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
           </div>
         </div>
 
-        <div className="grid gap-6">
+        <div className="min-w-0 grid gap-6">
           <ServiceCard
             title="Backend service"
             description="Repo service cho API / worker chinh. Co the noi thang vao internal Postgres neu duoc bat."
@@ -350,13 +350,13 @@ function ServiceCard({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-3xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
+    <div className="min-w-0 rounded-3xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex items-start gap-3">
           <span className={cn('rounded-2xl p-3', enabled ? 'bg-[#0EA5E9]/10 text-[#38BDF8]' : 'bg-[#111827] text-[#64748b]')}>
             {icon}
           </span>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-lg font-bold text-white">{title}</h3>
             <p className="mt-1 text-sm leading-relaxed text-[#94a3b8]">{description}</p>
           </div>
@@ -374,7 +374,7 @@ function ServiceCard({
           {enabled ? 'Enabled' : 'Disabled'}
         </button>
       </div>
-      {enabled ? <div className="mt-5">{children}</div> : null}
+      {enabled ? <div className="mt-5 min-w-0">{children}</div> : null}
     </div>
   );
 }
@@ -391,13 +391,13 @@ function InlineInput({
   placeholder: string;
 }) {
   return (
-    <label className="grid gap-2">
+    <label className="min-w-0 grid gap-2">
       <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#64748b]">{label}</span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="h-12 rounded-2xl border border-[#1e293b] bg-[#0F172A] px-4 text-sm text-white outline-none transition-colors placeholder:text-[#475569] focus:border-[#0EA5E9]"
+        className="h-12 min-w-0 w-full rounded-2xl border border-[#1e293b] bg-[#0F172A] px-4 text-sm text-white outline-none transition-colors placeholder:text-[#475569] focus:border-[#0EA5E9]"
       />
     </label>
   );

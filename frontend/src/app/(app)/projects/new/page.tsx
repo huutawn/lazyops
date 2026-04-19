@@ -7,8 +7,8 @@ import { CreateProjectForm } from '@/modules/onboarding/create-project-form';
 export default function NewProjectPage() {
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-10 lg:px-8">
-      <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
-        <section className="rounded-[2rem] border border-[#1e293b] bg-[#07111f] p-8">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <section className="min-w-0 rounded-[2rem] border border-[#1e293b] bg-[#07111f] p-8">
           <div className="max-w-xl">
             <div className="mb-5 inline-flex rounded-full border border-[#0EA5E9]/30 bg-[#0EA5E9]/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-[#38BDF8]">
               Service-first project creation
@@ -43,7 +43,7 @@ export default function NewProjectPage() {
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-[#1e293b] bg-[#020817]/90 p-6 sm:p-8">
+        <section className="min-w-0 rounded-[2rem] border border-[#1e293b] bg-[#020817]/90 p-6 sm:p-8">
           <CreateProjectForm />
         </section>
       </div>
