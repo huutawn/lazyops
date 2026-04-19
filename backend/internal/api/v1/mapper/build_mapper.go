@@ -23,6 +23,37 @@ func ToBuildCallbackCommand(req requestdto.BuildCallbackRequest) service.BuildCa
 			Exposed:  item.Exposed,
 		})
 	}
+	serviceArtifacts := make([]service.BuildServiceArtifactRecord, 0, len(req.Metadata.ServiceArtifacts))
+	for _, item := range req.Metadata.ServiceArtifacts {
+		artifactPorts := make([]service.ServiceDetectedPortRecord, 0, len(item.DetectedPorts))
+		for _, port := range item.DetectedPorts {
+			artifactPorts = append(artifactPorts, service.ServiceDetectedPortRecord{
+				Port:     port.Port,
+				Protocol: port.Protocol,
+				Name:     port.Name,
+				Exposed:  port.Exposed,
+			})
+		}
+		var artifactHealthcheck *service.BuildSuggestedHealthcheckRecord
+		if item.SuggestedHealthcheck != nil {
+			artifactHealthcheck = &service.BuildSuggestedHealthcheckRecord{
+				Path: item.SuggestedHealthcheck.Path,
+				Port: item.SuggestedHealthcheck.Port,
+			}
+		}
+		serviceArtifacts = append(serviceArtifacts, service.BuildServiceArtifactRecord{
+			ServiceName:             item.ServiceName,
+			ServicePath:             item.ServicePath,
+			ImageRef:                item.ImageRef,
+			ImageDigest:             item.ImageDigest,
+			DetectedPorts:           artifactPorts,
+			PortDetectionSource:     item.PortDetectionSource,
+			PortDetectionConfidence: item.PortDetectionConfidence,
+			SuggestedTargetPort:     item.SuggestedTargetPort,
+			DetectedFramework:       item.DetectedFramework,
+			SuggestedHealthcheck:    artifactHealthcheck,
+		})
+	}
 
 	return service.BuildCallbackCommand{
 		BuildJobID:              req.BuildJobID,
@@ -31,6 +62,7 @@ func ToBuildCallbackCommand(req requestdto.BuildCallbackRequest) service.BuildCa
 		Status:                  req.Status,
 		ImageRef:                req.ImageRef,
 		ImageDigest:             req.ImageDigest,
+		ServiceArtifacts:        serviceArtifacts,
 		DetectedServices:        req.Metadata.DetectedServices,
 		DetectedPorts:           detectedPorts,
 		PortDetectionSource:     req.Metadata.PortDetectionSource,
@@ -117,6 +149,7 @@ func toBuildJobResponse(record service.BuildJobRecord) responsedto.BuildJobRespo
 			ArtifactRef:             record.ArtifactMetadata.ArtifactRef,
 			ImageRef:                record.ArtifactMetadata.ImageRef,
 			ImageDigest:             record.ArtifactMetadata.ImageDigest,
+			ServiceArtifacts:        toBuildServiceArtifactResponses(record.ArtifactMetadata.ServiceArtifacts),
 			AppliedServices:         record.ArtifactMetadata.AppliedServices,
 			DetectedServices:        record.ArtifactMetadata.DetectedServices,
 			DetectedPorts:           toBuildDetectedPortResponses(record.ArtifactMetadata.DetectedPorts),
@@ -146,6 +179,29 @@ func toBuildDetectedPortResponses(items []service.ServiceDetectedPortRecord) []r
 			Protocol: item.Protocol,
 			Name:     item.Name,
 			Exposed:  item.Exposed,
+		})
+	}
+	return out
+}
+
+func toBuildServiceArtifactResponses(items []service.BuildServiceArtifactRecord) []responsedto.BuildServiceArtifactResponse {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]responsedto.BuildServiceArtifactResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, responsedto.BuildServiceArtifactResponse{
+			ServiceName:             item.ServiceName,
+			ServicePath:             item.ServicePath,
+			ArtifactRef:             item.ArtifactRef,
+			ImageRef:                item.ImageRef,
+			ImageDigest:             item.ImageDigest,
+			DetectedPorts:           toBuildDetectedPortResponses(item.DetectedPorts),
+			PortDetectionSource:     item.PortDetectionSource,
+			PortDetectionConfidence: item.PortDetectionConfidence,
+			SuggestedTargetPort:     item.SuggestedTargetPort,
+			DetectedFramework:       item.DetectedFramework,
+			SuggestedHealthcheck:    toBuildSuggestedHealthcheckResponse(item.SuggestedHealthcheck),
 		})
 	}
 	return out

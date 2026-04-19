@@ -14,6 +14,7 @@ var ErrBuildBranchRejected = errors.New("build branch rejected")
 type BuildJobService struct {
 	repoLinks ProjectRepoLinkStore
 	buildJobs BuildJobStore
+	services  ProjectServiceStore
 }
 
 func NewBuildJobService(repoLinks ProjectRepoLinkStore, buildJobs BuildJobStore) *BuildJobService {
@@ -21,6 +22,14 @@ func NewBuildJobService(repoLinks ProjectRepoLinkStore, buildJobs BuildJobStore)
 		repoLinks: repoLinks,
 		buildJobs: buildJobs,
 	}
+}
+
+func (s *BuildJobService) WithServiceStore(store ProjectServiceStore) *BuildJobService {
+	if s == nil {
+		return s
+	}
+	s.services = store
+	return s
 }
 
 func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebhookNormalizedEvent) (*BuildJobRecord, error) {
@@ -68,6 +77,10 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 	artifactStage := BuildArtifactMetadataStageRecord{
 		CommitSHA: strings.TrimSpace(event.CommitSHA),
 	}
+	serviceTargets, err := s.resolveBuildTargets(event.ProjectID)
+	if err != nil {
+		return nil, err
+	}
 	workerInput := BuildWorkerInputRecord{
 		BuildJobID:            jobID,
 		ProjectID:             event.ProjectID,
@@ -83,6 +96,7 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 		TriggerKind:           event.TriggerKind,
 		PullRequestNumber:     event.PullRequestNumber,
 		PreviewEnabled:        event.PreviewEnabled,
+		ServiceTargets:        serviceTargets,
 		ArtifactMetadataStage: artifactStage,
 		RetryPolicy: BuildRetryPolicyRecord{
 			MaxAttempts: DefaultBuildJobMaxAttempts,
@@ -138,6 +152,31 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 		return nil, err
 	}
 	return &record, nil
+}
+
+func (s *BuildJobService) resolveBuildTargets(projectID string) ([]BuildTargetServiceRecord, error) {
+	if s == nil || s.services == nil {
+		return nil, nil
+	}
+	items, err := s.services.ListByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]BuildTargetServiceRecord, 0, len(items))
+	for _, item := range items {
+		record, err := ToProjectServiceRecord(item)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(record.SourceType) != serviceSourceTypeRepo {
+			continue
+		}
+		targets = append(targets, BuildTargetServiceRecord{
+			ServiceName: record.Name,
+			ServicePath: record.Path,
+		})
+	}
+	return targets, nil
 }
 
 func ToBuildJobRecord(item models.BuildJob) (BuildJobRecord, error) {

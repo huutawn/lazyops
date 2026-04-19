@@ -252,6 +252,60 @@ func TestBuildJobServicePersistsWorkerInputAndArtifactStage(t *testing.T) {
 	}
 }
 
+func TestBuildJobServiceStagesRepoServiceTargetsForWorker(t *testing.T) {
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "monorepo",
+		TrackedBranch:        "main",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{Name: "api", Path: "backend", Kind: "api", Public: false},
+		{Name: "web", Path: "fe", Kind: "web", Public: true},
+		{Name: "db", Path: ".lazyops/internal/postgres/db", Kind: "postgres", SourceType: "internal", Public: false},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	buildStore := newFakeBuildJobStore()
+	service := NewBuildJobService(repoLinkStore, buildStore).WithServiceStore(serviceStore)
+
+	record, err := service.EnqueueFromWebhook("delivery_126", GitHubWebhookNormalizedEvent{
+		TriggerKind:          "push",
+		Action:               "push",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "monorepo",
+		RepoFullName:         "lazyops/monorepo",
+		TrackedBranch:        "main",
+		CommitSHA:            "abc123def456",
+		ShouldEnqueueBuild:   true,
+	})
+	if err != nil {
+		t.Fatalf("enqueue build job: %v", err)
+	}
+
+	if len(record.WorkerInput.ServiceTargets) != 2 {
+		t.Fatalf("expected two repo service targets, got %#v", record.WorkerInput.ServiceTargets)
+	}
+	if record.WorkerInput.ServiceTargets[0].ServiceName != "api" || record.WorkerInput.ServiceTargets[0].ServicePath != "backend" {
+		t.Fatalf("expected backend target first, got %#v", record.WorkerInput.ServiceTargets)
+	}
+	if record.WorkerInput.ServiceTargets[1].ServiceName != "web" || record.WorkerInput.ServiceTargets[1].ServicePath != "fe" {
+		t.Fatalf("expected fe target second, got %#v", record.WorkerInput.ServiceTargets)
+	}
+}
+
 func TestBuildJobServiceReturnsExistingBuildForDuplicateDelivery(t *testing.T) {
 	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
 		ID:                   "prl_123",

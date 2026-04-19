@@ -523,9 +523,10 @@ type ValidateLazyopsYAMLResult struct {
 }
 
 type BlueprintArtifactMetadata struct {
-	CommitSHA   string
-	ArtifactRef string
-	ImageRef    string
+	CommitSHA        string
+	ArtifactRef      string
+	ImageRef         string
+	ServiceArtifacts []BuildServiceArtifactRecord
 }
 
 type CompileBlueprintCommand struct {

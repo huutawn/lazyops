@@ -7,6 +7,7 @@ type BuildArtifactMetadataResponse struct {
 	ArtifactRef             string                             `json:"artifact_ref,omitempty"`
 	ImageRef                string                             `json:"image_ref,omitempty"`
 	ImageDigest             string                             `json:"image_digest,omitempty"`
+	ServiceArtifacts        []BuildServiceArtifactResponse     `json:"service_artifacts,omitempty"`
 	AppliedServices         []string                           `json:"applied_services,omitempty"`
 	DetectedServices        []string                           `json:"detected_services,omitempty"`
 	DetectedPorts           []BuildDetectedPortResponse        `json:"detected_ports,omitempty"`
@@ -27,6 +28,20 @@ type BuildDetectedPortResponse struct {
 type BuildSuggestedHealthcheckResponse struct {
 	Path string `json:"path"`
 	Port int    `json:"port"`
+}
+
+type BuildServiceArtifactResponse struct {
+	ServiceName             string                             `json:"service_name"`
+	ServicePath             string                             `json:"service_path"`
+	ArtifactRef             string                             `json:"artifact_ref,omitempty"`
+	ImageRef                string                             `json:"image_ref,omitempty"`
+	ImageDigest             string                             `json:"image_digest,omitempty"`
+	DetectedPorts           []BuildDetectedPortResponse        `json:"detected_ports,omitempty"`
+	PortDetectionSource     string                             `json:"port_detection_source,omitempty"`
+	PortDetectionConfidence string                             `json:"port_detection_confidence,omitempty"`
+	SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
+	DetectedFramework       string                             `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckResponse `json:"suggested_healthcheck,omitempty"`
 }
 
 type BuildJobResponse struct {

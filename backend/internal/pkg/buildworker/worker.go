@@ -151,7 +151,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Build
-	imageRef, imageDigest, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
+	imageRef, imageDigest, serviceArtifacts, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
 
 	status := "succeeded"
 	if err != nil {
@@ -160,7 +160,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Callback
-	if err := w.callback(ctx, input, status, imageRef, imageDigest, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck); err != nil {
+	if err := w.callback(ctx, input, status, imageRef, imageDigest, serviceArtifacts, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck); err != nil {
 		slog.Error("build callback failed", "job_id", job.ID, "error", err)
 		w.failJob(job.ID, fmt.Sprintf("callback failed: %v", err))
 		return
@@ -170,20 +170,39 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 }
 
 type BuildWorkerInput struct {
-	BuildJobID           string `json:"build_job_id"`
-	ProjectID            string `json:"project_id"`
-	ProjectRepoLinkID    string `json:"project_repo_link_id"`
-	GitHubDeliveryID     string `json:"github_delivery_id"`
-	GitHubInstallationID int64  `json:"github_installation_id"`
-	GitHubRepoID         int64  `json:"github_repo_id"`
-	RepoOwner            string `json:"repo_owner"`
-	RepoName             string `json:"repo_name"`
-	RepoFullName         string `json:"repo_full_name"`
-	TrackedBranch        string `json:"tracked_branch"`
-	CommitSHA            string `json:"commit_sha"`
-	TriggerKind          string `json:"trigger_kind"`
-	PullRequestNumber    int    `json:"pull_request_number"`
-	PreviewEnabled       bool   `json:"preview_enabled"`
+	BuildJobID           string                       `json:"build_job_id"`
+	ProjectID            string                       `json:"project_id"`
+	ProjectRepoLinkID    string                       `json:"project_repo_link_id"`
+	GitHubDeliveryID     string                       `json:"github_delivery_id"`
+	GitHubInstallationID int64                        `json:"github_installation_id"`
+	GitHubRepoID         int64                        `json:"github_repo_id"`
+	RepoOwner            string                       `json:"repo_owner"`
+	RepoName             string                       `json:"repo_name"`
+	RepoFullName         string                       `json:"repo_full_name"`
+	TrackedBranch        string                       `json:"tracked_branch"`
+	CommitSHA            string                       `json:"commit_sha"`
+	TriggerKind          string                       `json:"trigger_kind"`
+	PullRequestNumber    int                          `json:"pull_request_number"`
+	PreviewEnabled       bool                         `json:"preview_enabled"`
+	ServiceTargets       []BuildTargetServiceMetadata `json:"service_targets,omitempty"`
+}
+
+type BuildTargetServiceMetadata struct {
+	ServiceName string `json:"service_name"`
+	ServicePath string `json:"service_path"`
+}
+
+type BuildServiceArtifactMetadata struct {
+	ServiceName             string                             `json:"service_name"`
+	ServicePath             string                             `json:"service_path"`
+	ImageRef                string                             `json:"image_ref"`
+	ImageDigest             string                             `json:"image_digest"`
+	DetectedPorts           []BuildDetectedPortMetadata        `json:"detected_ports,omitempty"`
+	PortDetectionSource     string                             `json:"port_detection_source,omitempty"`
+	PortDetectionConfidence string                             `json:"port_detection_confidence,omitempty"`
+	SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
+	DetectedFramework       string                             `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckMetadata `json:"suggested_healthcheck,omitempty"`
 }
 
 func (w *Worker) buildAndPush(
@@ -192,6 +211,7 @@ func (w *Worker) buildAndPush(
 ) (
 	imageRef string,
 	imageDigest string,
+	serviceArtifacts []BuildServiceArtifactMetadata,
 	services []string,
 	detectedPorts []BuildDetectedPortMetadata,
 	portDetectionSource string,
@@ -204,39 +224,70 @@ func (w *Worker) buildAndPush(
 	// Clone repo
 	repoDir, err := w.cloneRepo(ctx, input)
 	if err != nil {
-		return "", "", nil, nil, "", "", 0, "", nil, fmt.Errorf("clone repo: %w", err)
+		return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("clone repo: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
 
-	// Build image tag
-	tag := input.CommitSHA
-	if len(tag) > 12 {
-		tag = tag[:12]
-	}
-	imageName := w.imageName(input, tag)
-
 	// Login to registry
 	if err := w.dockerLogin(ctx); err != nil {
-		return "", "", nil, nil, "", "", 0, "", nil, fmt.Errorf("docker login: %w", err)
+		return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("docker login: %w", err)
 	}
 
-	// Build with nixpacks when available; fallback to docker build if Dockerfile exists.
+	repoServiceTargets := normalizeBuildTargets(input.ServiceTargets)
+	if len(repoServiceTargets) > 0 {
+		services = make([]string, 0, len(repoServiceTargets))
+		serviceArtifacts = make([]BuildServiceArtifactMetadata, 0, len(repoServiceTargets))
+		for _, target := range repoServiceTargets {
+			serviceDir, err := resolveServiceBuildDir(repoDir, target.ServicePath)
+			if err != nil {
+				return "", "", nil, nil, nil, "", "", 0, "", nil, err
+			}
+			imageName := w.imageNameForService(input, target.ServiceName)
+			if err := w.buildImage(ctx, serviceDir, imageName); err != nil {
+				return "", "", nil, nil, nil, "", "", 0, "", nil, err
+			}
+			slog.Info("pushing docker image", "image", imageName, "service", target.ServiceName)
+			pushCmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "push", imageName)
+			pushOutput, err := pushCmd.CombinedOutput()
+			if err != nil {
+				return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("docker push %s: %s: %w", target.ServiceName, string(pushOutput), err)
+			}
+
+			digest, _ := w.getImageDigest(ctx, imageName)
+			detectedServices := w.detectServices(serviceDir)
+			detectedFramework, suggestedHealthcheck := w.detectFrontendMetadata(serviceDir)
+			detectedPorts, portDetectionSource, _ := w.inspectImagePorts(ctx, imageName)
+			suggestedTargetPort, portDetectionConfidence := selectSuggestedTargetPort(detectedServices, detectedPorts, detectedFramework, suggestedHealthcheck)
+			services = append(services, target.ServiceName)
+			serviceArtifacts = append(serviceArtifacts, BuildServiceArtifactMetadata{
+				ServiceName:             target.ServiceName,
+				ServicePath:             target.ServicePath,
+				ImageRef:                imageName,
+				ImageDigest:             digest,
+				DetectedPorts:           detectedPorts,
+				PortDetectionSource:     portDetectionSource,
+				PortDetectionConfidence: portDetectionConfidence,
+				SuggestedTargetPort:     suggestedTargetPort,
+				DetectedFramework:       detectedFramework,
+				SuggestedHealthcheck:    suggestedHealthcheck,
+			})
+		}
+		return "", "", serviceArtifacts, services, nil, "", "", 0, "", nil, nil
+	}
+
+	imageName := w.imageName(input, shortCommitTag(input.CommitSHA))
 	if err := w.buildImage(ctx, repoDir, imageName); err != nil {
-		return "", "", nil, nil, "", "", 0, "", nil, err
+		return "", "", nil, nil, nil, "", "", 0, "", nil, err
 	}
 
-	// Push image
 	slog.Info("pushing docker image", "image", imageName)
 	pushCmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "push", imageName)
 	pushOutput, err := pushCmd.CombinedOutput()
 	if err != nil {
-		return "", "", nil, nil, "", "", 0, "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
+		return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
 	}
 
-	// Get image digest
 	digest, _ := w.getImageDigest(ctx, imageName)
-
-	// Detect services from nixpacks detection
 	services = w.detectServices(repoDir)
 	if len(services) == 0 {
 		services = []string{"app"}
@@ -245,7 +296,7 @@ func (w *Worker) buildAndPush(
 	detectedPorts, portDetectionSource, _ = w.inspectImagePorts(ctx, imageName)
 	suggestedTargetPort, portDetectionConfidence = selectSuggestedTargetPort(services, detectedPorts, detectedFramework, suggestedHealthcheck)
 
-	return imageName, digest, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, nil
+	return imageName, digest, nil, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, nil
 }
 
 func (w *Worker) imageName(input BuildWorkerInput, tag string) string {
@@ -272,6 +323,28 @@ func (w *Worker) imageName(input BuildWorkerInput, tag string) string {
 		strings.ToLower(repoName),
 		strings.ToLower(strings.TrimSpace(tag)),
 	)
+}
+
+func (w *Worker) imageNameForService(input BuildWorkerInput, serviceName string) string {
+	repoName := strings.TrimSpace(input.ProjectID)
+	if repoName == "" {
+		repoName = strings.TrimSpace(input.RepoName)
+	}
+	if repoName == "" {
+		repoName = "app"
+	}
+	serviceName = strings.ToLower(strings.TrimSpace(serviceName))
+	serviceName = strings.ReplaceAll(serviceName, "_", "-")
+	serviceName = strings.ReplaceAll(serviceName, ".", "-")
+	serviceName = strings.ReplaceAll(serviceName, "/", "-")
+	if serviceName == "" {
+		serviceName = "app"
+	}
+	return w.imageName(BuildWorkerInput{
+		ProjectID: input.ProjectID,
+		RepoOwner: input.RepoOwner,
+		RepoName:  repoName + "-" + serviceName,
+	}, shortCommitTag(input.CommitSHA))
 }
 
 func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) error {
@@ -318,6 +391,16 @@ func (w *Worker) cloneRepo(ctx context.Context, input BuildWorkerInput) (string,
 	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", repoURL, dir)
 	if output, err := cloneCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("git clone: %s: %w", string(output), err)
+	}
+	if commitSHA := strings.TrimSpace(input.CommitSHA); commitSHA != "" {
+		fetchCmd := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--depth", "1", "origin", commitSHA)
+		if output, err := fetchCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git fetch %s: %s: %w", commitSHA, string(output), err)
+		}
+		checkoutCmd := exec.CommandContext(ctx, "git", "-C", dir, "checkout", "--detach", "FETCH_HEAD")
+		if output, err := checkoutCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git checkout %s: %s: %w", commitSHA, string(output), err)
+		}
 	}
 
 	return dir, nil
@@ -470,6 +553,7 @@ func (w *Worker) callback(
 	status,
 	imageRef,
 	imageDigest string,
+	serviceArtifacts []BuildServiceArtifactMetadata,
 	services []string,
 	detectedPorts []BuildDetectedPortMetadata,
 	portDetectionSource string,
@@ -490,11 +574,20 @@ func (w *Worker) callback(
 	}
 
 	if status == "succeeded" {
-		body["image_ref"] = imageRef
-		body["image_digest"] = imageDigest
 		metadata := map[string]any{
 			"detected_services": services,
-			"detected_ports":    detectedPorts,
+		}
+		if len(serviceArtifacts) > 0 {
+			metadata["service_artifacts"] = serviceArtifacts
+		}
+		if imageRef != "" {
+			body["image_ref"] = imageRef
+		}
+		if imageDigest != "" {
+			body["image_digest"] = imageDigest
+		}
+		if len(detectedPorts) > 0 {
+			metadata["detected_ports"] = detectedPorts
 		}
 		if strings.TrimSpace(portDetectionSource) != "" {
 			metadata["port_detection_source"] = strings.TrimSpace(portDetectionSource)
@@ -670,6 +763,75 @@ func (w *Worker) callbackURL() string {
 		port = "8080"
 	}
 	return fmt.Sprintf("http://%s:%s/api/v1/builds/callback", host, port)
+}
+
+func shortCommitTag(commitSHA string) string {
+	tag := strings.TrimSpace(commitSHA)
+	if len(tag) > 12 {
+		tag = tag[:12]
+	}
+	if tag == "" {
+		return "latest"
+	}
+	return tag
+}
+
+func normalizeBuildTargets(items []BuildTargetServiceMetadata) []BuildTargetServiceMetadata {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]BuildTargetServiceMetadata, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.ServiceName)
+		path := strings.TrimSpace(item.ServicePath)
+		if name == "" || path == "" {
+			continue
+		}
+		key := name + "|" + path
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, BuildTargetServiceMetadata{
+			ServiceName: name,
+			ServicePath: path,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ServicePath != out[j].ServicePath {
+			return out[i].ServicePath < out[j].ServicePath
+		}
+		return out[i].ServiceName < out[j].ServiceName
+	})
+	return out
+}
+
+func resolveServiceBuildDir(repoDir, servicePath string) (string, error) {
+	trimmed := strings.TrimSpace(servicePath)
+	if trimmed == "" {
+		return "", fmt.Errorf("service path is required for monorepo build")
+	}
+	cleaned := filepath.Clean(trimmed)
+	candidate := repoDir
+	if cleaned != "." {
+		candidate = filepath.Join(repoDir, cleaned)
+	}
+	relative, err := filepath.Rel(repoDir, candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve service path %q: %w", servicePath, err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("service path %q escapes repository root", servicePath)
+	}
+	info, err := os.Stat(candidate)
+	if err != nil {
+		return "", fmt.Errorf("service path %q not found in repository", servicePath)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("service path %q must point to a directory", servicePath)
+	}
+	return candidate, nil
 }
 
 func (w *Worker) failJob(jobID string, reason string) {

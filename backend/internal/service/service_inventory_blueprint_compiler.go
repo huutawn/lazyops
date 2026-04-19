@@ -118,11 +118,12 @@ func (c *ServiceInventoryBlueprintCompiler) Compile(project models.Project, inpu
 		SourceRef:  sourceRef,
 		Compiled:   compiled,
 	}
-	if artifact.ImageRef != "" || artifact.ArtifactRef != "" || artifact.CommitSHA != "" {
+	if artifact.ImageRef != "" || artifact.ArtifactRef != "" || artifact.CommitSHA != "" || len(artifact.ServiceArtifacts) > 0 {
 		appliedServices = applyArtifactToBlueprintServices(&record, BuildArtifactMetadataStageRecord{
-			CommitSHA:   artifact.CommitSHA,
-			ArtifactRef: artifact.ArtifactRef,
-			ImageRef:    artifact.ImageRef,
+			CommitSHA:        artifact.CommitSHA,
+			ArtifactRef:      artifact.ArtifactRef,
+			ImageRef:         artifact.ImageRef,
+			ServiceArtifacts: cloneBuildServiceArtifacts(artifact.ServiceArtifacts),
 		})
 	}
 
@@ -390,6 +391,7 @@ func normalizeHiddenBlueprintArtifact(input BlueprintArtifactMetadata, triggerKi
 	}
 	artifact.ArtifactRef = strings.TrimSpace(artifact.ArtifactRef)
 	artifact.ImageRef = strings.TrimSpace(artifact.ImageRef)
+	artifact.ServiceArtifacts = normalizeBuildServiceArtifacts(artifact.ServiceArtifacts)
 	return artifact
 }
 

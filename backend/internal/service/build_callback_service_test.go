@@ -555,6 +555,117 @@ func TestBuildCallbackServiceAppliesArtifactToMatchedServiceInMultiServiceBluepr
 	}
 }
 
+func TestBuildCallbackServiceAppliesMultiServiceArtifactsFromServiceInventoryCompiler(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme Monorepo",
+		Slug:          "acme-monorepo",
+		NamespaceSlug: "acme-monorepo",
+		RuntimeMode:   "distributed-k3s",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{Name: "api", Path: "backend", Kind: "api", Public: false},
+		{Name: "web", Path: "fe", Kind: "web", Public: true},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "monorepo",
+		TrackedBranch:        "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		DomainPolicyJSON:        `{}`,
+		PlacementPolicyJSON:     `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "delivery_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/monorepo",
+		TriggerKind:          "push",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "abc123def456",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","artifact_metadata_stage":{"commit_sha":"abc123def456"}}`,
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, serviceStore, blueprintStore)
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil).
+		WithServiceInventoryCompiler(compiler)
+
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName:          "api",
+				ServicePath:          "backend",
+				ImageRef:             "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest:          "sha256:api",
+				SuggestedTargetPort:  8080,
+				SuggestedHealthcheck: &BuildSuggestedHealthcheckRecord{Path: "/health", Port: 8080},
+			},
+			{
+				ServiceName:          "web",
+				ServicePath:          "fe",
+				ImageRef:             "ghcr.io/lazyops/prj_123-web:abc123",
+				ImageDigest:          "sha256:web",
+				SuggestedTargetPort:  3000,
+				SuggestedHealthcheck: &BuildSuggestedHealthcheckRecord{Path: "/", Port: 3000},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build callback multi-service success: %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 2 {
+		t.Fatalf("expected revision with two services, got %#v", result.Revision)
+	}
+
+	serviceByName := make(map[string]BlueprintServiceContractRecord, len(result.Revision.Services))
+	for _, item := range result.Revision.Services {
+		serviceByName[item.Name] = item
+	}
+	if serviceByName["api"].ImageRef != "ghcr.io/lazyops/prj_123-api:abc123" {
+		t.Fatalf("expected api image ref to be applied, got %#v", serviceByName["api"])
+	}
+	if serviceByName["web"].ImageRef != "ghcr.io/lazyops/prj_123-web:abc123" {
+		t.Fatalf("expected web image ref to be applied, got %#v", serviceByName["web"])
+	}
+	if len(result.BuildJob.ArtifactMetadata.AppliedServices) != 2 {
+		t.Fatalf("expected two applied services, got %#v", result.BuildJob.ArtifactMetadata)
+	}
+}
+
 func mustBlueprintModelWithSingleService(
 	t *testing.T,
 	blueprintID string,

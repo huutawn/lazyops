@@ -226,7 +226,7 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 	if err != nil {
 		return nil, fmt.Errorf("parse compiled revision: %w", err)
 	}
-	if strings.TrimSpace(compiled.ArtifactRef) == "" && strings.TrimSpace(compiled.ImageRef) == "" {
+	if strings.TrimSpace(compiled.ArtifactRef) == "" && strings.TrimSpace(compiled.ImageRef) == "" && !compiledServicesHaveArtifacts(compiled.ServiceSpecs, compiled.Services) {
 		logger.Warn("rollout_artifact_pending",
 			"project_id", projectID,
 			"deployment_id", deploymentID,
@@ -463,6 +463,20 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 	)
 
 	return result, nil
+}
+
+func compiledServicesHaveArtifacts(specs []K3sServiceSpecRecord, services []BlueprintServiceContractRecord) bool {
+	for _, item := range specs {
+		if strings.TrimSpace(item.ImageRef) != "" {
+			return true
+		}
+	}
+	for _, item := range services {
+		if strings.TrimSpace(item.ImageRef) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.Context, projectID, agentID string, targetInstanceIDs map[string]struct{}) error {

@@ -27,6 +27,7 @@ type BuildArtifactMetadataStageRecord struct {
 	ArtifactRef             string                           `json:"artifact_ref,omitempty"`
 	ImageRef                string                           `json:"image_ref,omitempty"`
 	ImageDigest             string                           `json:"image_digest,omitempty"`
+	ServiceArtifacts        []BuildServiceArtifactRecord     `json:"service_artifacts,omitempty"`
 	AppliedServices         []string                         `json:"applied_services,omitempty"`
 	DetectedServices        []string                         `json:"detected_services,omitempty"`
 	DetectedPorts           []ServiceDetectedPortRecord      `json:"detected_ports,omitempty"`
@@ -40,6 +41,25 @@ type BuildArtifactMetadataStageRecord struct {
 type BuildSuggestedHealthcheckRecord struct {
 	Path string `json:"path"`
 	Port int    `json:"port"`
+}
+
+type BuildServiceArtifactRecord struct {
+	ServiceName             string                           `json:"service_name"`
+	ServicePath             string                           `json:"service_path"`
+	ArtifactRef             string                           `json:"artifact_ref,omitempty"`
+	ImageRef                string                           `json:"image_ref,omitempty"`
+	ImageDigest             string                           `json:"image_digest,omitempty"`
+	DetectedPorts           []ServiceDetectedPortRecord      `json:"detected_ports,omitempty"`
+	PortDetectionSource     string                           `json:"port_detection_source,omitempty"`
+	PortDetectionConfidence string                           `json:"port_detection_confidence,omitempty"`
+	SuggestedTargetPort     int                              `json:"suggested_target_port,omitempty"`
+	DetectedFramework       string                           `json:"detected_framework,omitempty"`
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckRecord `json:"suggested_healthcheck,omitempty"`
+}
+
+type BuildTargetServiceRecord struct {
+	ServiceName string `json:"service_name"`
+	ServicePath string `json:"service_path"`
 }
 
 type BuildWorkerInputRecord struct {
@@ -57,6 +77,7 @@ type BuildWorkerInputRecord struct {
 	TriggerKind           string                           `json:"trigger_kind"`
 	PullRequestNumber     int                              `json:"pull_request_number,omitempty"`
 	PreviewEnabled        bool                             `json:"preview_enabled"`
+	ServiceTargets        []BuildTargetServiceRecord       `json:"service_targets,omitempty"`
 	ArtifactMetadataStage BuildArtifactMetadataStageRecord `json:"artifact_metadata_stage"`
 	RetryPolicy           BuildRetryPolicyRecord           `json:"retry_policy"`
 	CallbackExpectation   BuildCallbackExpectationRecord   `json:"callback_expectation"`
@@ -92,6 +113,7 @@ type BuildCallbackCommand struct {
 	Status                  string
 	ImageRef                string
 	ImageDigest             string
+	ServiceArtifacts        []BuildServiceArtifactRecord
 	DetectedServices        []string
 	DetectedPorts           []ServiceDetectedPortRecord
 	PortDetectionSource     string

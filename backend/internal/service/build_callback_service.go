@@ -102,6 +102,7 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 		commitSHA,
 		cmd.ImageRef,
 		cmd.ImageDigest,
+		cmd.ServiceArtifacts,
 		cmd.DetectedServices,
 		cmd.DetectedPorts,
 		cmd.PortDetectionSource,
@@ -198,9 +199,10 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 		compiled, err := s.compiler.Compile(*project, ServiceInventoryBlueprintCompileInput{
 			TriggerKind: job.TriggerKind,
 			Artifact: BlueprintArtifactMetadata{
-				CommitSHA:   artifact.CommitSHA,
-				ArtifactRef: artifact.ArtifactRef,
-				ImageRef:    artifact.ImageRef,
+				CommitSHA:        artifact.CommitSHA,
+				ArtifactRef:      artifact.ArtifactRef,
+				ImageRef:         artifact.ImageRef,
+				ServiceArtifacts: cloneBuildServiceArtifacts(artifact.ServiceArtifacts),
 			},
 		})
 		if err != nil {
@@ -228,9 +230,10 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 	}
 
 	blueprintRecord.Compiled.ArtifactMetadata = BlueprintArtifactMetadata{
-		CommitSHA:   artifact.CommitSHA,
-		ArtifactRef: artifact.ArtifactRef,
-		ImageRef:    artifact.ImageRef,
+		CommitSHA:        artifact.CommitSHA,
+		ArtifactRef:      artifact.ArtifactRef,
+		ImageRef:         artifact.ImageRef,
+		ServiceArtifacts: cloneBuildServiceArtifacts(artifact.ServiceArtifacts),
 	}
 
 	revisionID := utils.NewPrefixedID("rev")
@@ -359,6 +362,7 @@ func normalizeBuildArtifactMetadata(
 	commitSHA,
 	imageRef,
 	imageDigest string,
+	serviceArtifacts []BuildServiceArtifactRecord,
 	detectedServices []string,
 	detectedPorts []ServiceDetectedPortRecord,
 	portDetectionSource string,
@@ -371,6 +375,7 @@ func normalizeBuildArtifactMetadata(
 		CommitSHA:               strings.TrimSpace(commitSHA),
 		ImageRef:                strings.TrimSpace(imageRef),
 		ImageDigest:             strings.TrimSpace(imageDigest),
+		ServiceArtifacts:        normalizeBuildServiceArtifacts(serviceArtifacts),
 		DetectedServices:        normalizeDetectedServices(detectedServices),
 		DetectedPorts:           normalizeDetectedPorts(detectedPorts),
 		PortDetectionSource:     normalizePortDetectionSource(portDetectionSource),
@@ -382,11 +387,79 @@ func normalizeBuildArtifactMetadata(
 	if artifact.CommitSHA == "" {
 		return BuildArtifactMetadataStageRecord{}, ErrInvalidInput
 	}
-	if status == BuildJobStatusSucceeded && (artifact.ImageRef == "" || artifact.ImageDigest == "") {
+	if len(artifact.DetectedServices) == 0 && len(artifact.ServiceArtifacts) > 0 {
+		detected := make([]string, 0, len(artifact.ServiceArtifacts))
+		for _, item := range artifact.ServiceArtifacts {
+			detected = append(detected, item.ServiceName)
+		}
+		artifact.DetectedServices = normalizeDetectedServices(detected)
+	}
+	if status == BuildJobStatusSucceeded &&
+		(artifact.ImageRef == "" || artifact.ImageDigest == "") &&
+		len(artifact.ServiceArtifacts) == 0 {
 		return BuildArtifactMetadataStageRecord{}, ErrInvalidInput
 	}
 	artifact.ArtifactRef = deriveBuildArtifactRef(artifact.ImageRef, artifact.ImageDigest)
 	return artifact, nil
+}
+
+func normalizeBuildServiceArtifacts(items []BuildServiceArtifactRecord) []BuildServiceArtifactRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]BuildServiceArtifactRecord, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.ServiceName)
+		path := strings.TrimSpace(item.ServicePath)
+		imageRef := strings.TrimSpace(item.ImageRef)
+		imageDigest := strings.TrimSpace(item.ImageDigest)
+		if name == "" || path == "" || imageRef == "" || imageDigest == "" {
+			continue
+		}
+		key := normalizeArtifactServiceMatcher(name) + "|" + normalizeArtifactServiceMatcher(path)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		artifact := BuildServiceArtifactRecord{
+			ServiceName:             name,
+			ServicePath:             path,
+			ImageRef:                imageRef,
+			ImageDigest:             imageDigest,
+			DetectedPorts:           normalizeDetectedPorts(item.DetectedPorts),
+			PortDetectionSource:     normalizePortDetectionSource(item.PortDetectionSource),
+			PortDetectionConfidence: normalizePortDetectionConfidence(item.PortDetectionConfidence),
+			SuggestedTargetPort:     normalizeSuggestedTargetPort(item.SuggestedTargetPort, item.DetectedPorts, item.SuggestedHealthcheck),
+			DetectedFramework:       normalizeDetectedFramework(item.DetectedFramework),
+			SuggestedHealthcheck:    normalizeSuggestedHealthcheck(item.SuggestedHealthcheck),
+		}
+		artifact.ArtifactRef = deriveBuildArtifactRef(artifact.ImageRef, artifact.ImageDigest)
+		out = append(out, artifact)
+	}
+	return out
+}
+
+func cloneBuildServiceArtifacts(items []BuildServiceArtifactRecord) []BuildServiceArtifactRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]BuildServiceArtifactRecord, 0, len(items))
+	for _, item := range items {
+		cloned := item
+		cloned.DetectedPorts = cloneDetectedPorts(item.DetectedPorts)
+		cloned.SuggestedHealthcheck = cloneSuggestedHealthcheck(item.SuggestedHealthcheck)
+		out = append(out, cloned)
+	}
+	return out
+}
+
+func cloneSuggestedHealthcheck(item *BuildSuggestedHealthcheckRecord) *BuildSuggestedHealthcheckRecord {
+	if item == nil {
+		return nil
+	}
+	cloned := *item
+	return &cloned
 }
 
 func normalizeDetectedServices(items []string) []string {
@@ -541,6 +614,9 @@ func applyArtifactToBlueprintServices(blueprint *BlueprintRecord, artifact Build
 	if blueprint == nil || len(blueprint.Compiled.Services) == 0 {
 		return nil
 	}
+	if len(artifact.ServiceArtifacts) > 0 {
+		return applyServiceArtifactsToBlueprintServices(blueprint, artifact.ServiceArtifacts)
+	}
 	targetIndexes := resolveArtifactTargetServiceIndexes(*blueprint, artifact)
 	if len(targetIndexes) == 0 {
 		return nil
@@ -562,6 +638,70 @@ func applyArtifactToBlueprintServices(blueprint *BlueprintRecord, artifact Build
 		applied = append(applied, service.Name)
 	}
 	return applied
+}
+
+func applyServiceArtifactsToBlueprintServices(blueprint *BlueprintRecord, artifacts []BuildServiceArtifactRecord) []string {
+	if blueprint == nil || len(blueprint.Compiled.Services) == 0 || len(artifacts) == 0 {
+		return nil
+	}
+	applied := make([]string, 0, len(artifacts))
+	seen := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		index := resolveServiceArtifactTargetIndex(blueprint.Compiled.Services, artifact)
+		if index < 0 || index >= len(blueprint.Compiled.Services) {
+			continue
+		}
+		service := blueprint.Compiled.Services[index]
+		applyArtifactToBlueprintService(&service, BuildArtifactMetadataStageRecord{
+			CommitSHA:            "",
+			ArtifactRef:          artifact.ArtifactRef,
+			ImageRef:             artifact.ImageRef,
+			ImageDigest:          artifact.ImageDigest,
+			DetectedPorts:        artifact.DetectedPorts,
+			SuggestedTargetPort:  artifact.SuggestedTargetPort,
+			DetectedFramework:    artifact.DetectedFramework,
+			SuggestedHealthcheck: artifact.SuggestedHealthcheck,
+		}, false)
+		blueprint.Compiled.Services[index] = service
+		if _, exists := seen[service.Name]; exists {
+			continue
+		}
+		seen[service.Name] = struct{}{}
+		applied = append(applied, service.Name)
+	}
+	return applied
+}
+
+func resolveServiceArtifactTargetIndex(services []BlueprintServiceContractRecord, artifact BuildServiceArtifactRecord) int {
+	if len(services) == 0 {
+		return -1
+	}
+	artifactName := normalizeArtifactServiceMatcher(artifact.ServiceName)
+	artifactPath := normalizeArtifactServiceMatcher(artifact.ServicePath)
+	for index, service := range services {
+		if artifactName != "" && normalizeArtifactServiceMatcher(service.Name) == artifactName {
+			if artifactPath == "" || matchesArtifactServicePath(service.Path, artifactPath) {
+				return index
+			}
+		}
+	}
+	if artifactPath != "" {
+		for index, service := range services {
+			if matchesArtifactServicePath(service.Path, artifactPath) {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func matchesArtifactServicePath(servicePath, artifactPath string) bool {
+	for _, candidate := range buildArtifactPathMatchers(servicePath) {
+		if candidate == artifactPath {
+			return true
+		}
+	}
+	return false
 }
 
 func applySuggestedHealthcheckToOneClickDefaultService(blueprint *BlueprintRecord, artifact BuildArtifactMetadataStageRecord) {
