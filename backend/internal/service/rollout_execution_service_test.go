@@ -12,13 +12,13 @@ import (
 )
 
 type fakeRolloutDispatcher struct {
-	commands               []runtime.AgentCommand
-	agentIDs               []string
-	err                    error
-	requestSeq             int
-	requestToCommand       map[string]runtime.AgentCommand
-	waitResultsByType      map[string][]*TrackedCommand
-	waitErrorsByType       map[string][]error
+	commands          []runtime.AgentCommand
+	agentIDs          []string
+	err               error
+	requestSeq        int
+	requestToCommand  map[string]runtime.AgentCommand
+	waitResultsByType map[string][]*TrackedCommand
+	waitErrorsByType  map[string][]error
 }
 
 func (f *fakeRolloutDispatcher) DispatchCommand(_ context.Context, agentID string, cmd runtime.AgentCommand) (*runtime.CommandResult, error) {
@@ -387,6 +387,89 @@ func TestRolloutExecutionServiceRecoversRunningDeploymentAfterReconnect(t *testi
 	revision, _ := revisionStore.GetByIDForProject("prj_123", "rev_123")
 	if revision.Status != RevisionStatusPromoted {
 		t.Fatalf("expected revision promoted after recovery, got %q", revision.Status)
+	}
+}
+
+func TestRolloutExecutionServiceRecoversQueuedDeploymentAfterReconnect(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewStandaloneDriver())
+
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123",
+		TriggerKind:          "push",
+		Status:               RevisionStatusArtifactReady,
+		CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusQueued,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Production",
+		TargetRef:   "prod-main",
+		RuntimeMode: runtime.RuntimeModeStandalone,
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:      "inst_123",
+		UserID:  "usr_123",
+		Name:    "edge-1",
+		Status:  "online",
+		AgentID: ptrString("agt_123"),
+	})
+	dispatcher := &fakeRolloutDispatcher{}
+	deployments := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore)
+	planner := newTestRolloutPlanner(registry, revisionStore, deploymentStore, newFakeRuntimeIncidentStore(), bindingStore, &fakeOperatorEventBroadcaster{})
+	service := NewRolloutExecutionService(deployments, planner, instanceStore, dispatcher, &fakeOperatorEventBroadcaster{})
+
+	if err := service.RecoverRunningDeploymentsForAgent(context.Background(), "usr_123", "agt_123"); err != nil {
+		t.Fatalf("recover queued deployment: %v", err)
+	}
+
+	expected := []string{
+		runtime.CommandTypePrepareReleaseWorkspace,
+		runtime.CommandTypeRenderSidecars,
+		runtime.CommandTypeRenderGatewayConfig,
+		runtime.CommandTypeReconcileRevision,
+		runtime.CommandTypeProvisionInternalSvc,
+		runtime.CommandTypeStartReleaseCandidate,
+		runtime.CommandTypeRunHealthGate,
+		runtime.CommandTypePromoteRelease,
+		runtime.CommandTypeGarbageCollectRuntime,
+	}
+	got := dispatchedTypes(dispatcher.commands)
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d queued recovery commands, got %d (%v)", len(expected), len(got), got)
+	}
+	for index, want := range expected {
+		if got[index] != want {
+			t.Fatalf("expected queued recovery command %d to be %q, got %q", index, want, got[index])
+		}
+	}
+
+	deployment, _ := deploymentStore.GetByIDForProject("prj_123", "dep_123")
+	if deployment.Status != DeploymentStatusPromoted {
+		t.Fatalf("expected deployment promoted after queued recovery, got %q", deployment.Status)
+	}
+	revision, _ := revisionStore.GetByIDForProject("prj_123", "rev_123")
+	if revision.Status != RevisionStatusPromoted {
+		t.Fatalf("expected revision promoted after queued recovery, got %q", revision.Status)
 	}
 }
 

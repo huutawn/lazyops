@@ -489,7 +489,7 @@ func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.
 		default:
 			continue
 		}
-			targetBindings[binding.ID] = struct{}{}
+		targetBindings[binding.ID] = struct{}{}
 	}
 	if len(targetBindings) == 0 {
 		return nil
@@ -503,7 +503,7 @@ func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.
 	var recoveryErrs []error
 	for _, deployment := range deployments {
 		status := strings.TrimSpace(deployment.Status)
-		if status != DeploymentStatusRunning && status != DeploymentStatusCandidateReady {
+		if status != DeploymentStatusQueued && status != DeploymentStatusRunning && status != DeploymentStatusCandidateReady {
 			continue
 		}
 
@@ -536,7 +536,11 @@ func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.
 			"deployment_status", deployment.Status,
 		)
 
-		err = s.recoverDeploymentAfterReconnect(ctx, projectID, deployment.ID, revision.ID, agentID)
+		if status == DeploymentStatusQueued {
+			err = s.recoverQueuedDeploymentAfterReconnect(ctx, projectID, deployment.ID)
+		} else {
+			err = s.recoverDeploymentAfterReconnect(ctx, projectID, deployment.ID, revision.ID, agentID)
+		}
 		s.endRecovery(deployment.ID)
 		if err != nil {
 			recoveryErrs = append(recoveryErrs, err)
@@ -544,6 +548,29 @@ func (s *RolloutExecutionService) recoverProjectDeploymentsForAgent(ctx context.
 	}
 
 	return errors.Join(recoveryErrs...)
+}
+
+func (s *RolloutExecutionService) recoverQueuedDeploymentAfterReconnect(ctx context.Context, projectID, deploymentID string) error {
+	result, err := s.StartDeployment(ctx, projectID, deploymentID)
+	switch {
+	case err == nil:
+		logger.Info("rollout_queued_recovery_completed",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"revision_id", result.RevisionID,
+			"agent_id", result.AgentID,
+			"commands_dispatched", len(result.DispatchedCommands),
+		)
+		return nil
+	case errors.Is(err, ErrRolloutAlreadyStarted):
+		logger.Info("rollout_queued_recovery_already_started",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+		)
+		return nil
+	default:
+		return fmt.Errorf("recover queued deployment %s: %w", deploymentID, err)
+	}
 }
 
 func (s *RolloutExecutionService) recoverDeploymentAfterReconnect(ctx context.Context, projectID, deploymentID, revisionID, agentID string) error {

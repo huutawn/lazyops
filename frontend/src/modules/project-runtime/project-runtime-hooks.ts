@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getProjectRuntime } from '@/modules/project-runtime/project-runtime-api';
+import { normalizeProjectRuntimeSummary } from '@/modules/project-runtime/project-runtime-normalize';
 import type { ProjectRuntimeSummary } from '@/modules/project-runtime/project-runtime-types';
 
 export function projectRuntimeQueryKey(projectId: string) {
@@ -17,13 +18,7 @@ export function useProjectRuntime(projectId?: string) {
       if (result.error) {
         throw new Error(result.error.message);
       }
-      return result.data ?? {
-        project_id: projectId,
-        sync_state: 'missing',
-        public_urls: [],
-        nodes: [],
-        services: [],
-      };
+      return normalizeProjectRuntimeSummary(projectId, result.data);
     },
     enabled: !!projectId,
     staleTime: 15 * 1000,
