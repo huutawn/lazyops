@@ -1,6 +1,8 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -800,6 +802,11 @@ func normalizeManagedInternalServiceDefaults(kind, name string, public bool, run
 			out.PVCSpec = spec
 		}
 	}
+	if normalizedEnv, err := normalizeManagedInternalRuntimeEnv(kind, out.EnvBundle); err != nil {
+		return managedInternalServiceDefaults{}, err
+	} else {
+		out.EnvBundle = normalizedEnv
+	}
 	if len(out.Healthcheck) == 0 && out.TargetPort > 0 {
 		out.Healthcheck = map[string]any{
 			"protocol": "tcp",
@@ -807,6 +814,64 @@ func normalizeManagedInternalServiceDefaults(kind, name string, public bool, run
 		}
 	}
 	return out, nil
+}
+
+func normalizeManagedInternalRuntimeEnv(kind string, env map[string]string) (map[string]string, error) {
+	out := cloneStringMap(env)
+	if out == nil {
+		out = map[string]string{}
+	}
+	switch normalizeManagedInternalBridgeKind(kind) {
+	case "postgres":
+		fillIfBlankString(out, "POSTGRES_DB", "app")
+		fillIfBlankString(out, "POSTGRES_USER", "postgres")
+		if strings.TrimSpace(out["POSTGRES_PASSWORD"]) == "" {
+			password, err := randomCredentialHex(32)
+			if err != nil {
+				return nil, err
+			}
+			out["POSTGRES_PASSWORD"] = password
+		}
+	case "mysql":
+		fillIfBlankString(out, "MYSQL_DATABASE", "app")
+		fillIfBlankString(out, "MYSQL_USER", "mysql")
+		if strings.TrimSpace(out["MYSQL_PASSWORD"]) == "" {
+			password, err := randomCredentialHex(32)
+			if err != nil {
+				return nil, err
+			}
+			out["MYSQL_PASSWORD"] = password
+		}
+		if strings.TrimSpace(out["MYSQL_ROOT_PASSWORD"]) == "" {
+			rootPassword, err := randomCredentialHex(32)
+			if err != nil {
+				return nil, err
+			}
+			out["MYSQL_ROOT_PASSWORD"] = rootPassword
+		}
+	}
+	return out, nil
+}
+
+func randomCredentialHex(numBytes int) (string, error) {
+	if numBytes <= 0 {
+		return "", ErrInvalidInput
+	}
+	buf := make([]byte, numBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate managed internal credential: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func fillIfBlankString(target map[string]string, key, value string) {
+	if target == nil {
+		return
+	}
+	if strings.TrimSpace(target[key]) != "" {
+		return
+	}
+	target[key] = value
 }
 
 func normalizeConfiguredPort(port int) (int, error) {

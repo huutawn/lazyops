@@ -284,6 +284,12 @@ func TestProjectServiceCreateSeedsUnifiedServicesForInternalPostgres(t *testing.
 	if record.ConnectionTemplate["DB_URL"] != "DATABASE_URL" || record.ConnectionTemplate["DB_HOST"] != "PGHOST" {
 		t.Fatalf("expected postgres connection template to be preserved, got %#v", record.ConnectionTemplate)
 	}
+	if record.EnvBundle["POSTGRES_DB"] != "app" || record.EnvBundle["POSTGRES_USER"] != "postgres" {
+		t.Fatalf("expected default postgres env bundle, got %#v", record.EnvBundle)
+	}
+	if record.EnvBundle["POSTGRES_PASSWORD"] == "" || record.EnvBundle["POSTGRES_PASSWORD"] == "postgres" {
+		t.Fatalf("expected generated postgres password, got %#v", record.EnvBundle)
+	}
 }
 
 func TestProjectServiceListScopesProjectsToOwner(t *testing.T) {
@@ -650,6 +656,12 @@ func TestProjectServiceConfigureServicesSupportsInternalPostgresCatalogItem(t *t
 	}
 	if extractHealthcheckPort(item.Healthcheck) != 5432 {
 		t.Fatalf("expected tcp healthcheck on 5432, got %#v", item.Healthcheck)
+	}
+	if item.EnvBundle["POSTGRES_DB"] != "app" || item.EnvBundle["POSTGRES_USER"] != "postgres" {
+		t.Fatalf("expected default postgres env bundle, got %#v", item.EnvBundle)
+	}
+	if item.EnvBundle["POSTGRES_PASSWORD"] == "" || item.EnvBundle["POSTGRES_PASSWORD"] == "postgres" {
+		t.Fatalf("expected generated postgres password, got %#v", item.EnvBundle)
 	}
 }
 

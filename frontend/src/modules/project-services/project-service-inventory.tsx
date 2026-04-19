@@ -480,7 +480,7 @@ export function ProjectServiceInventory({
                 Nếu là monorepo, hãy điền đường dẫn tương đối như <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">apps/api</code> hoặc <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">apps/web</code>.
               </p>
             </div>
-            <FieldLabel label="Tên dịch vụ" help="Tên định danh nội bộ của service, ví dụ: api, web, worker, auth.">
+            <FieldLabel label="Tên dịch vụ" help="Tên runtime của service. Nó được dùng cho DNS nội bộ, log, và public subdomain nếu service được mở Internet, ví dụ: api, web, auth, worker.">
               <input
                 value={repoForm.name}
                 onChange={(event) => setRepoForm((current) => ({ ...current, name: event.target.value }))}
@@ -489,13 +489,13 @@ export function ProjectServiceInventory({
                 required
               />
             </FieldLabel>
-            <FieldLabel
-              label="Thư mục trong repo"
-              help="Đường dẫn tương đối tính từ root repo GitHub. Dùng . nếu app nằm ngay ở root repo."
-            >
-              <input
-                value={repoForm.path}
-                onChange={(event) => setRepoForm((current) => ({ ...current, path: event.target.value }))}
+              <FieldLabel
+                label="Thư mục trong repo"
+                help="Đường dẫn thư mục dùng để build service này, tính từ root repo GitHub. Dùng . nếu app nằm ngay ở root repo."
+              >
+                <input
+                  value={repoForm.path}
+                  onChange={(event) => setRepoForm((current) => ({ ...current, path: event.target.value }))}
                 className={fieldClassName}
                 placeholder="., apps/api, services/worker"
                 required
@@ -541,6 +541,12 @@ export function ProjectServiceInventory({
               />
               Cho phép truy cập từ Internet
             </label>
+            {repoForm.public ? (
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+                Subdomain công khai hiện được tạo theo <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">service name</code>, ví dụ <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">{repoForm.name.trim() || 'api'}.project-ip.sslip.io</code>.
+                <div className="mt-2 text-[#94a3b8]">`service.path` chỉ là thư mục build trong repo, không dùng làm host public.</div>
+              </div>
+            ) : null}
 
             <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/50 p-4">
               <button
@@ -658,7 +664,7 @@ export function ProjectServiceInventory({
                 ))}
               </select>
             </FieldLabel>
-            <FieldLabel label="Tên dịch vụ">
+            <FieldLabel label="Tên dịch vụ" help="Tên DNS nội bộ của service trong cluster. App khác sẽ kết nối tới DB này qua tên này, ví dụ: db, redis, rabbitmq.">
               <input
                 value={internalForm.service_name}
                 onChange={(event) =>
