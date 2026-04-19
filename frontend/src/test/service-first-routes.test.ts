@@ -57,6 +57,25 @@ describe('service inventory helpers', () => {
     }).kind).toBe('repo');
   });
 
+  it('maps the next step to service inventory when no service has been configured yet', () => {
+    expect(resolveProjectNextAction({
+      status: bootstrapStatusFixture({
+        steps: [
+          step('connect_code', 'healthy', 'Project đang trống'),
+          step('connect_infra', 'ready', 'Máy chủ sẵn sàng'),
+          {
+            id: 'deploy',
+            state: 'blocked',
+            summary: 'Chưa có service nào được cấu hình. Hãy thêm ít nhất một service trong mục Dịch vụ',
+            actions: [{ id: 'configure_services', label: 'Cấu hình dịch vụ', kind: 'screen', href: '/projects/prj_123/services' }],
+          },
+        ],
+      }),
+      repoLink: null,
+      logsHref: '/projects/prj_123/observability',
+    }).kind).toBe('services');
+  });
+
   it('maps the next step to infra after repo is linked', () => {
     expect(resolveProjectNextAction({
       status: bootstrapStatusFixture({

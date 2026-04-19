@@ -29,7 +29,7 @@ export function useCreateProject() {
       void queryClient.invalidateQueries({ queryKey: PROJECTS_KEY });
       if (result.data) {
         const project = result.data as ProjectSummary;
-        router.push(`/projects/${project.id}`);
+        router.push(`/projects/${project.id}/services`);
       }
     },
   });

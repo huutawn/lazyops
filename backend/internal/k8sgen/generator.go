@@ -70,6 +70,8 @@ type Generator struct {
 	now func() time.Time
 }
 
+const defaultPlaceholderImageRef = "nginxinc/nginx-unprivileged:stable-alpine"
+
 func NewGenerator() *Generator {
 	return &Generator{
 		now: func() time.Time {
@@ -206,7 +208,7 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceS
 		Public:          spec.Public,
 		PlacementMode:   strings.TrimSpace(spec.PlacementMode),
 		PlacementNodeID: strings.TrimSpace(spec.PlacementNodeID),
-		ImageRef:        firstNonEmpty(spec.ImageRef, "nginx:stable-alpine"),
+		ImageRef:        firstNonEmpty(spec.ImageRef, defaultPlaceholderImageRef),
 		TargetPort:      targetPort,
 		ServicePort:     servicePort,
 		Replicas:        replicas,

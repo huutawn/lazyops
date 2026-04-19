@@ -1,25 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildCreateProjectServices,
-  createDefaultServiceFirstScaffold,
-} from '@/modules/projects/create-project-services';
 import { createProjectSchema } from '@/modules/projects/project-types';
 import { formatPostgresConnectionTemplatePreview } from '@/modules/project-services/postgres-connection-template';
 
 describe('service-first create flow helpers', () => {
-  it('builds backend, frontend, and internal postgres services from the scaffold', () => {
-    const services = buildCreateProjectServices(createDefaultServiceFirstScaffold());
-
-    expect(services.map((service) => `${service.source_type}:${service.name}`)).toEqual([
-      'repo:api',
-      'repo:web',
-      'internal:db',
-    ]);
-    expect(services[0].connection_template_key).toBe('postgres.basic');
-    expect(services[0].connection_target_service).toBe('db');
-    expect(services[2].connection_template?.DB_URL).toBe('DB_URL');
-  });
-
   it('formats the postgres preview from custom env names', () => {
     const preview = formatPostgresConnectionTemplatePreview({
       DB_URL: 'DATABASE_URL',
@@ -39,7 +22,7 @@ describe('service-first create flow helpers', () => {
       name: 'Commerce',
       slug: 'commerce',
       default_branch: 'main',
-      services: buildCreateProjectServices(createDefaultServiceFirstScaffold()),
+      services: [],
     });
 
     expect(result.success).toBe(true);

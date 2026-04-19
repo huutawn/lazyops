@@ -275,6 +275,17 @@ function PrimaryActionButton({
     );
   }
 
+  if (action.kind === 'services') {
+    return (
+      <Link
+        href={action.href}
+        className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90"
+      >
+        {action.label}
+      </Link>
+    );
+  }
+
   if (action.kind === 'repo' && !repoOptionsAvailable) {
     return (
       <Link

@@ -19,6 +19,7 @@ import {
   formatPostgresConnectionTemplatePreview,
   normalizePostgresConnectionTemplate,
 } from '@/modules/project-services/postgres-connection-template';
+import { INTERNAL_SERVICE_OPTIONS, type InternalServiceKind } from '@/modules/internal-services/internal-service-types';
 import { useProjectRuntime } from '@/modules/project-runtime/project-runtime-hooks';
 import type { ProjectRuntimeService } from '@/modules/project-runtime/project-runtime-types';
 import type {
@@ -42,9 +43,9 @@ type DrawerMode =
   | 'closed'
   | 'choose'
   | 'create-repo'
-  | 'create-postgres'
+  | 'create-internal'
   | 'edit-repo'
-  | 'edit-postgres'
+  | 'edit-internal'
   | 'legacy-internal';
 
 type RepoFormState = {
@@ -57,7 +58,8 @@ type RepoFormState = {
   connection_target_service: string;
 };
 
-type PostgresFormState = {
+type InternalFormState = {
+  kind: InternalServiceKind;
   service_name: string;
   connection_template: Record<string, string>;
 };
@@ -77,7 +79,7 @@ export function ProjectServiceInventory({
   const [drawerMode, setDrawerMode] = useState<DrawerMode>('closed');
   const [selectedService, setSelectedService] = useState<ProjectService | null>(null);
   const [repoForm, setRepoForm] = useState<RepoFormState>(defaultRepoForm());
-  const [postgresForm, setPostgresForm] = useState<PostgresFormState>(defaultPostgresForm());
+  const [internalForm, setInternalForm] = useState<InternalFormState>(defaultInternalForm());
   const [showRepoAdvanced, setShowRepoAdvanced] = useState(false);
   const [repoFormError, setRepoFormError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<{ serviceId: string; action: ProjectServiceAction } | null>(null);
@@ -136,7 +138,7 @@ export function ProjectServiceInventory({
     setRepoFormError(null);
     setSelectedService(null);
     setRepoForm(defaultRepoForm());
-    setPostgresForm(defaultPostgresForm());
+    setInternalForm(defaultInternalForm());
     setShowRepoAdvanced(false);
     setDrawerMode('choose');
   };
@@ -145,10 +147,10 @@ export function ProjectServiceInventory({
     configureServices.reset();
     setRepoFormError(null);
     setSelectedService(service);
-    if (service.source_type === 'internal' && service.kind === 'postgres') {
-      setPostgresForm(defaultPostgresForm(service));
+    if (service.source_type === 'internal') {
+      setInternalForm(defaultInternalForm(service));
       setShowRepoAdvanced(false);
-      setDrawerMode(isLegacyInternalService(service) ? 'legacy-internal' : 'edit-postgres');
+      setDrawerMode(isLegacyInternalService(service) ? 'legacy-internal' : 'edit-internal');
       return;
     }
     setRepoForm(defaultRepoForm(service));
@@ -203,15 +205,17 @@ export function ProjectServiceInventory({
     closeDrawer();
   };
 
-  const submitInternalPostgres = async () => {
-    const serviceName = postgresForm.service_name.trim();
+  const submitInternalService = async () => {
+    const kind = internalForm.kind;
+    const serviceName = internalForm.service_name.trim() || defaultInternalServiceName(kind);
     const existingEnv = selectedService?.env_bundle || {};
     const existingPVC = selectedService?.pvc_spec || { size: '5Gi' };
-    const existingHealthcheck = selectedService?.healthcheck || { protocol: 'tcp', port: 5432 };
+    const defaultPort = defaultInternalServicePort(kind);
+    const existingHealthcheck = selectedService?.healthcheck || { protocol: 'tcp', port: defaultPort };
     const draft: ProjectServiceDraft = {
       name: serviceName,
-      path: `.lazyops/internal/postgres/${serviceName}`,
-      kind: 'postgres',
+      path: `.lazyops/internal/${kind}/${serviceName}`,
+      kind,
       source_type: 'internal',
       public: false,
       runtime_profile: 'internal-db',
@@ -220,20 +224,20 @@ export function ProjectServiceInventory({
       connection_target_service: '',
       managed_by_lazyops: true,
       start_hint: 'managed-internal-service',
-      image_ref: selectedService?.image_ref || 'postgres:16-alpine',
+      image_ref: selectedService?.image_ref || defaultInternalServiceImage(kind),
       image_digest: selectedService?.image_digest || '',
-      target_port: selectedService?.target_port || 5432,
-      service_port: selectedService?.service_port || 5432,
+      target_port: selectedService?.target_port || defaultPort,
+      service_port: selectedService?.service_port || defaultPort,
       replicas: selectedService?.replicas || 1,
       env_bundle: existingEnv,
       pvc_spec: existingPVC,
-      connection_template: normalizePostgresConnectionTemplate(postgresForm.connection_template),
+      connection_template: kind === 'postgres' ? normalizePostgresConnectionTemplate(internalForm.connection_template) : {},
       deploy_strategy: selectedService?.deploy_strategy || {},
       healthcheck: existingHealthcheck,
     };
 
     await configureServices.mutateAsync(
-      buildCatalogMutation(items, draft, drawerMode === 'edit-postgres' ? selectedService?.id : undefined),
+      buildCatalogMutation(items, draft, drawerMode === 'edit-internal' ? selectedService?.id : undefined),
     );
     closeDrawer();
   };
@@ -442,12 +446,12 @@ export function ProjectServiceInventory({
               }}
             />
             <ServiceChoiceCard
-              title="Postgres nội bộ"
-              description="Tạo database dùng chung cho các service khác trong project mà không cần tự cấu hình tay."
+              title="Managed internal service"
+              description="Chọn PostgreSQL, MySQL, Redis hoặc RabbitMQ từ catalog nội bộ do LazyOps quản lý."
               onClick={() => {
-                setPostgresForm(defaultPostgresForm());
+                setInternalForm(defaultInternalForm());
                 setShowRepoAdvanced(false);
-                setDrawerMode('create-postgres');
+                setDrawerMode('create-internal');
               }}
             />
           </div>
@@ -591,77 +595,109 @@ export function ProjectServiceInventory({
           </form>
         ) : null}
 
-        {drawerMode === 'create-postgres' || drawerMode === 'edit-postgres' ? (
+        {drawerMode === 'create-internal' || drawerMode === 'edit-internal' ? (
           <form
             className="grid gap-5"
             onSubmit={(event) => {
               event.preventDefault();
-              void submitInternalPostgres();
+              void submitInternalService();
             }}
           >
+            <FieldLabel label="Loại internal service">
+              <select
+                value={internalForm.kind}
+                onChange={(event) =>
+                  setInternalForm((current) => ({
+                    ...current,
+                    kind: event.target.value as InternalServiceKind,
+                    service_name:
+                      current.service_name.trim() === '' || current.service_name === defaultInternalServiceName(current.kind)
+                        ? defaultInternalServiceName(event.target.value as InternalServiceKind)
+                        : current.service_name,
+                  }))
+                }
+                className={fieldClassName}
+                disabled={drawerMode === 'edit-internal'}
+              >
+                {INTERNAL_SERVICE_OPTIONS.map((option) => (
+                  <option key={option.kind} value={option.kind}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </FieldLabel>
             <FieldLabel label="Tên dịch vụ">
               <input
-                value={postgresForm.service_name}
+                value={internalForm.service_name}
                 onChange={(event) =>
-                  setPostgresForm((current) => ({
+                  setInternalForm((current) => ({
                     ...current,
                     service_name: event.target.value,
                   }))
                 }
                 className={fieldClassName}
-                placeholder="db"
+                placeholder={defaultInternalServiceName(internalForm.kind)}
                 required
               />
             </FieldLabel>
             <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">Đường dẫn nội bộ</div>
               <div className="mt-2 font-semibold text-white">
-                .lazyops/internal/postgres/{postgresForm.service_name.trim() || 'db'}
+                .lazyops/internal/{internalForm.kind}/{internalForm.service_name.trim() || defaultInternalServiceName(internalForm.kind)}
               </div>
             </div>
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
-              <div className="mb-3 text-sm font-semibold text-white">Biến môi trường sẽ được inject</div>
-              <p className="mb-3 text-sm text-[#94a3b8]">
-                LazyOps sẽ tự điền các biến này vào service dùng database này. Bạn không cần tự nối thủ công bằng localhost.
-              </p>
-              <div className="grid gap-4">
-                {POSTGRES_CONNECTION_TEMPLATE_SLOTS.map((slot) => (
-                  <FieldLabel key={slot} label={`${slot} env name`}>
-                    <input
-                      value={postgresForm.connection_template[slot] || ''}
-                      onChange={(event) =>
-                        setPostgresForm((current) => ({
-                          ...current,
-                          connection_template: {
-                            ...current.connection_template,
-                            [slot]: event.target.value,
-                          },
-                        }))
-                      }
-                      className={fieldClassName}
-                      placeholder={slot}
-                      required
-                    />
-                  </FieldLabel>
-                ))}
+            {internalForm.kind === 'postgres' ? (
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
+                <div className="mb-3 text-sm font-semibold text-white">Biến môi trường sẽ được inject</div>
+                <p className="mb-3 text-sm text-[#94a3b8]">
+                  LazyOps sẽ tự điền các biến này vào service dùng database này. Bạn không cần tự nối thủ công bằng localhost.
+                </p>
+                <div className="grid gap-4">
+                  {POSTGRES_CONNECTION_TEMPLATE_SLOTS.map((slot) => (
+                    <FieldLabel key={slot} label={`${slot} env name`}>
+                      <input
+                        value={internalForm.connection_template[slot] || ''}
+                        onChange={(event) =>
+                          setInternalForm((current) => ({
+                            ...current,
+                            connection_template: {
+                              ...current.connection_template,
+                              [slot]: event.target.value,
+                            },
+                          }))
+                        }
+                        className={fieldClassName}
+                        placeholder={slot}
+                        required
+                      />
+                    </FieldLabel>
+                  ))}
+                </div>
+                <div className="mb-3 mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">
+                  Xem trước biến môi trường
+                </div>
+                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
+                  {formatPostgresConnectionTemplatePreview(internalForm.connection_template)}
+                </pre>
               </div>
-              <div className="mb-3 mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">
-                Xem trước biến môi trường
+            ) : (
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+                <div className="text-sm font-semibold text-white">{internalServiceLabel(internalForm.kind)}</div>
+                <p className="mt-2 text-sm text-[#94a3b8]">
+                  LazyOps sẽ provision service này theo catalog managed sẵn. Endpoint mặc định: {internalServiceEndpointHint(internalForm.kind)}.
+                </p>
               </div>
-              <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
-                {formatPostgresConnectionTemplatePreview(postgresForm.connection_template)}
-              </pre>
-            </div>
+            )}
 
             {configureServices.isError ? (
               <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                {configureServices.error instanceof Error ? configureServices.error.message : 'Khong luu duoc internal Postgres.'}
+                {configureServices.error instanceof Error ? configureServices.error.message : 'Khong luu duoc internal service.'}
               </div>
             ) : null}
 
             <DrawerActions
               pending={configureServices.isPending}
-              primaryLabel={drawerMode === 'edit-postgres' ? 'Lưu Postgres' : 'Tạo Postgres nội bộ'}
+              primaryLabel={drawerMode === 'edit-internal' ? `Lưu ${internalServiceLabel(internalForm.kind)}` : `Tạo ${internalServiceLabel(internalForm.kind)}`}
               onCancel={closeDrawer}
             />
           </form>
@@ -670,19 +706,21 @@ export function ProjectServiceInventory({
         {drawerMode === 'legacy-internal' ? (
           <div className="grid gap-5">
             <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-              Internal service nay den tu compatibility lane cu. Day 4 chi mo editor moi cho internal Postgres duoc tao trong unified service catalog, nen service nay hien tai chi o che do read-only.
+              Internal service này đến từ compatibility lane cũ. Service này hiện ở chế độ read-only cho đến khi được đưa về unified service catalog.
             </div>
             <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
               <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">Service</div>
               <div className="text-lg font-semibold text-white">{selectedService?.name || 'internal-postgres'}</div>
               <div className="mt-3 text-sm text-[#94a3b8]">{selectedService?.path || '.lazyops/internal/postgres'}</div>
             </div>
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
-              <div className="mb-3 text-sm font-semibold text-white">Template inject theo service</div>
-              <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
-                {formatPostgresConnectionTemplatePreview(selectedService?.connection_template)}
-              </pre>
-            </div>
+            {selectedService?.kind === 'postgres' ? (
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
+                <div className="mb-3 text-sm font-semibold text-white">Template inject theo service</div>
+                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
+                  {formatPostgresConnectionTemplatePreview(selectedService?.connection_template)}
+                </pre>
+              </div>
+            ) : null}
             <DrawerActions pending={false} primaryLabel="" onCancel={closeDrawer} hidePrimary />
           </div>
         ) : null}
@@ -742,11 +780,68 @@ function defaultRepoForm(service?: ProjectService): RepoFormState {
   };
 }
 
-function defaultPostgresForm(service?: ProjectService): PostgresFormState {
+function defaultInternalForm(service?: ProjectService): InternalFormState {
+  const kind = normalizeInternalKind(service?.kind);
   return {
-    service_name: service?.name || 'db',
+    kind,
+    service_name: service?.name || defaultInternalServiceName(kind),
     connection_template: normalizePostgresConnectionTemplate(service?.connection_template),
   };
+}
+
+function normalizeInternalKind(kind?: string): InternalServiceKind {
+  const value = (kind || '').trim().toLowerCase();
+  if (INTERNAL_SERVICE_OPTIONS.some((option) => option.kind === value)) {
+    return value as InternalServiceKind;
+  }
+  return 'postgres';
+}
+
+function defaultInternalServiceName(kind: InternalServiceKind) {
+  switch (kind) {
+    case 'postgres':
+      return 'db';
+    case 'mysql':
+      return 'mysql';
+    case 'redis':
+      return 'redis';
+    case 'rabbitmq':
+      return 'rabbitmq';
+  }
+}
+
+function defaultInternalServicePort(kind: InternalServiceKind) {
+  switch (kind) {
+    case 'postgres':
+      return 5432;
+    case 'mysql':
+      return 3306;
+    case 'redis':
+      return 6379;
+    case 'rabbitmq':
+      return 5672;
+  }
+}
+
+function defaultInternalServiceImage(kind: InternalServiceKind) {
+  switch (kind) {
+    case 'postgres':
+      return 'postgres:16-alpine';
+    case 'mysql':
+      return 'mysql:8';
+    case 'redis':
+      return 'redis:7-alpine';
+    case 'rabbitmq':
+      return 'rabbitmq:3-management-alpine';
+  }
+}
+
+function internalServiceLabel(kind: InternalServiceKind) {
+  return INTERNAL_SERVICE_OPTIONS.find((option) => option.kind === kind)?.label || kind;
+}
+
+function internalServiceEndpointHint(kind: InternalServiceKind) {
+  return INTERNAL_SERVICE_OPTIONS.find((option) => option.kind === kind)?.endpoint_hint || '';
 }
 
 function isLegacyInternalService(service: ProjectService) {
@@ -762,12 +857,12 @@ function resolveDrawerTitle(mode: DrawerMode, service: ProjectService | null) {
       return 'Thêm dịch vụ';
     case 'create-repo':
       return 'Thêm dịch vụ từ repository';
-    case 'create-postgres':
-      return 'Thêm Postgres nội bộ';
+    case 'create-internal':
+      return 'Thêm internal service';
     case 'edit-repo':
       return `Sửa dịch vụ ${service?.name || ''}`.trim();
-    case 'edit-postgres':
-      return `Chi tiết Postgres ${service?.name || ''}`.trim();
+    case 'edit-internal':
+      return `Chi tiết internal service ${service?.name || ''}`.trim();
     case 'legacy-internal':
       return `Dịch vụ cũ ${service?.name || ''}`.trim();
     default:
@@ -776,8 +871,8 @@ function resolveDrawerTitle(mode: DrawerMode, service: ProjectService | null) {
 }
 
 function formatServiceKindLabel(service: ProjectService) {
-  if (service.kind === 'postgres') {
-    return service.source_type === 'internal' ? 'Database Postgres nội bộ' : 'Database Postgres';
+  if (service.source_type === 'internal') {
+    return `${internalServiceLabel(normalizeInternalKind(service.kind))} nội bộ`;
   }
   if (service.kind === 'web') {
     return 'Frontend web';
@@ -792,6 +887,12 @@ function formatShortKind(service: ProjectService) {
   switch ((service.kind || '').toLowerCase()) {
     case 'postgres':
       return 'Database';
+    case 'mysql':
+      return 'MySQL';
+    case 'redis':
+      return 'Redis';
+    case 'rabbitmq':
+      return 'RabbitMQ';
     case 'web':
       return 'Web';
     case 'api':
@@ -804,8 +905,8 @@ function formatShortKind(service: ProjectService) {
 }
 
 function formatDatabaseTarget(service: ProjectService) {
-  if (service.kind === 'postgres') {
-    return 'Tự là database';
+  if (service.source_type === 'internal') {
+    return `Tự là ${internalServiceLabel(normalizeInternalKind(service.kind))}`;
   }
   return service.connection_target_service || 'Chưa kết nối';
 }

@@ -19,8 +19,7 @@ export default function NewProjectPage() {
               Services moi la don vi deploy.
             </h1>
             <p className="mt-5 text-base leading-relaxed text-[#94a3b8]">
-              Khoi tao project moi se scaffold thang unified service inventory, san sang cho case `backend + postgres + frontend`
-              ngay tu lan tao dau tien.
+              Tạo project mới sẽ bắt đầu bằng một shell rỗng. Bạn sẽ thêm repo service hoặc managed internal service ngay sau đó trong unified service inventory.
             </p>
           </div>
 
@@ -28,17 +27,17 @@ export default function NewProjectPage() {
             <FeatureCard
               icon={<Server className="size-5" />}
               title="Repo services"
-              description="Tao API/backend va frontend rieng, giu path/name ro rang de deploy theo service."
+              description="Thêm API, frontend, worker hoặc bất kỳ service nào từ repository với name/path rõ ràng."
             />
             <FeatureCard
               icon={<Database className="size-5" />}
-              title="Internal Postgres"
-              description="Nhap ten env can map, LazyOps tu inject DB runtime values vao dung field tren VPS/K3s."
+              title="Managed internals"
+              description="Chọn PostgreSQL, MySQL, Redis hoặc RabbitMQ từ catalog managed sẵn của LazyOps."
             />
             <FeatureCard
               icon={<Layers className="size-5" />}
               title="Unified source of truth"
-              description="Khong con bootstrap duong vong qua internal-services lane cu khi khoi tao project moi."
+              description="Manifest deploy sẽ luôn được regenerate từ service inventory hiện tại, không còn scaffold ẩn BE/FE/DB."
             />
           </div>
         </section>

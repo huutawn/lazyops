@@ -25,6 +25,12 @@ export type ProjectNextAction =
       description: string;
     }
   | {
+      kind: 'services';
+      label: string;
+      description: string;
+      href: string;
+    }
+  | {
       kind: 'open';
       label: string;
       description: string;
@@ -118,6 +124,7 @@ export function resolveProjectNextAction({
   const code = findBootstrapStep(status, 'connect_code');
   const infra = findBootstrapStep(status, 'connect_infra');
   const deploy = findBootstrapStep(status, 'deploy');
+  const configureServicesAction = deploy?.actions.find((action) => action.id === 'configure_services' && action.href);
 
   if (primaryPublicURL && isServingState(deploy?.state)) {
     return {
@@ -125,6 +132,15 @@ export function resolveProjectNextAction({
       label: 'Mở website',
       description: 'Project đã có địa chỉ public. Bạn có thể mở ngay để kiểm tra bản đang chạy.',
       href: primaryPublicURL,
+    };
+  }
+
+  if (configureServicesAction?.href) {
+    return {
+      kind: 'services',
+      label: 'Cấu hình dịch vụ',
+      description: deploy?.summary || 'Project đang trống. Hãy thêm ít nhất một service trước khi deploy.',
+      href: configureServicesAction.href,
     };
   }
 

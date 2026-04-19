@@ -134,6 +134,8 @@ func (ctl *BootstrapController) OneClickDeploy(c *gin.Context) {
 			response.Error(c, http.StatusUnprocessableEntity, "one-click deploy failed", "secret_bearing_config", err.Error())
 		case errors.Is(err, service.ErrHardCodedDeployAuthority):
 			response.Error(c, http.StatusUnprocessableEntity, "one-click deploy failed", "hard_coded_deploy_authority", err.Error())
+		case errors.Is(err, service.ErrNoProjectServicesConfigured):
+			response.Error(c, http.StatusConflict, "one-click deploy failed", "service_inventory_empty", err.Error())
 		case errors.Is(err, service.ErrBlueprintNotFound):
 			response.Error(c, http.StatusConflict, "one-click deploy failed", "deploy_plan_unavailable", "LazyOps could not resolve an internal deployment snapshot for this project yet.")
 		default:

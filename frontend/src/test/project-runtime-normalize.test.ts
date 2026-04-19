@@ -12,6 +12,11 @@ describe('project runtime normalization', () => {
           name: 'api',
           public: true,
           runtime_status: 'queued',
+          effective_node_ids: [],
+          public_urls: [],
+          internal_endpoints: [],
+          dependencies: [],
+          recent_logs: [],
         },
       ],
     });

@@ -258,7 +258,7 @@ func TestReconcileRevisionAppliesNamespaceBeforeDryRun(t *testing.T) {
 		CombinedYAML: joinManifestDocuments([]string{
 			"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: lazyops-test",
 			"apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  selector:\n    app.kubernetes.io/name: api\n  ports:\n    - port: 8080\n      targetPort: 8080",
-			"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: api\n    spec:\n      containers:\n        - name: api\n          image: nginx:stable-alpine\n          ports:\n            - containerPort: 8080\n              name: http",
+			"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: api\n    spec:\n      containers:\n        - name: api\n          image: nginxinc/nginx-unprivileged:stable-alpine\n          ports:\n            - containerPort: 8080\n              name: http",
 		}),
 		Documents: []contracts.ManifestDocumentPayload{
 			{
@@ -277,7 +277,7 @@ func TestReconcileRevisionAppliesNamespaceBeforeDryRun(t *testing.T) {
 				Kind:    "Deployment",
 				Name:    "api",
 				Path:    "api-deployment.yaml",
-				Content: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: api\n    spec:\n      containers:\n        - name: api\n          image: nginx:stable-alpine\n          ports:\n            - containerPort: 8080\n              name: http",
+				Content: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: api\n    spec:\n      containers:\n        - name: api\n          image: nginxinc/nginx-unprivileged:stable-alpine\n          ports:\n            - containerPort: 8080\n              name: http",
 			},
 		},
 	}

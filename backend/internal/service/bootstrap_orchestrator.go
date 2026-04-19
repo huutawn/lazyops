@@ -186,6 +186,13 @@ type bootstrapInventorySnapshot struct {
 	clusters  []models.Cluster
 }
 
+type bootstrapServiceInventorySummary struct {
+	Known         bool
+	TotalCount    int
+	RepoCount     int
+	InternalCount int
+}
+
 type bootstrapModeDecision struct {
 	mode             string
 	source           string
@@ -289,11 +296,22 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		return nil, err
 	}
 
-	repoLink, err := s.repoLinkStore.GetByProjectID(project.ID)
+	serviceInventory, err := s.summarizeConfiguredServices(project.ID)
 	if err != nil {
 		return nil, err
 	}
-	if repoLink == nil {
+	if serviceInventory.Known && serviceInventory.TotalCount == 0 {
+		return nil, ErrNoProjectServicesConfigured
+	}
+
+	var repoLink *models.ProjectRepoLink
+	if s.repoLinkStore != nil {
+		repoLink, err = s.repoLinkStore.GetByProjectID(project.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if serviceInventory.RepoCount > 0 && repoLink == nil {
 		return nil, ErrRepoLinkNotFound
 	}
 
@@ -339,7 +357,12 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		RequesterRole:   cmd.RequesterRole,
 		ProjectID:       project.ID,
 		TriggerKind:     triggerKind,
-		SourceRef:       resolveOneClickSourceRef(cmd.SourceRef, *repoLink),
+		SourceRef: func() string {
+			if repoLink != nil {
+				return resolveOneClickSourceRef(cmd.SourceRef, *repoLink)
+			}
+			return strings.TrimSpace(cmd.SourceRef)
+		}(),
 		Artifact: BlueprintArtifactMetadata{
 			CommitSHA:   commitSHA,
 			ArtifactRef: artifactRef,
@@ -449,8 +472,20 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 		return nil, err
 	}
 
+	serviceInventory, err := s.summarizeConfiguredServices(project.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	codeState, codeSummary := "missing", "Chưa kết nối kho mã nguồn GitHub"
-	if s.repoLinkStore != nil {
+	switch {
+	case serviceInventory.Known && serviceInventory.RepoCount == 0 && serviceInventory.TotalCount == 0:
+		codeState = "healthy"
+		codeSummary = "Project đang trống. Hãy thêm service trong inventory; GitHub chỉ cần khi bạn tạo repo service."
+	case serviceInventory.Known && serviceInventory.RepoCount == 0:
+		codeState = "healthy"
+		codeSummary = "Project hiện chỉ dùng managed/internal services; chưa cần kết nối GitHub."
+	case s.repoLinkStore != nil:
 		link, getErr := s.repoLinkStore.GetByProjectID(project.ID)
 		if getErr != nil {
 			return nil, getErr
@@ -467,7 +502,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 	}
 
 	infraState, infraSummary := deriveInfraStateSummary(inventory)
-	deployState, deploySummary, err := s.deriveDeployState(project.ID, codeState, infraState)
+	deployState, deploySummary, err := s.deriveDeployState(project.ID, codeState, infraState, serviceInventory)
 	if err != nil {
 		return nil, err
 	}
@@ -497,12 +532,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			ID:      "connect_code",
 			State:   codeState,
 			Summary: codeSummary,
-			Actions: []BootstrapStepActionRecord{{
-				ID:    "reconnect_github",
-				Label: "Kết nối GitHub",
-				Kind:  "link",
-				Href:  fmt.Sprintf("/api/auth/oauth/github/start?next=/projects/%s", project.ID),
-			}},
+			Actions: buildCodeActions(project.ID, serviceInventory),
 		},
 		{
 			ID:      "connect_infra",
@@ -519,7 +549,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			ID:      "deploy",
 			State:   deployState,
 			Summary: deploySummary,
-			Actions: buildDeployActions(project.ID, deployState),
+			Actions: buildDeployActions(project.ID, deployState, serviceInventory),
 		},
 	}
 
@@ -880,12 +910,19 @@ func (s *BootstrapOrchestrator) collectInventory(userID string) (bootstrapInvent
 	}, nil
 }
 
-func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraState string) (string, string, error) {
+func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraState string, serviceInventory bootstrapServiceInventorySummary) (string, string, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return "blocked", "Dự án chưa sẵn sàng", nil
 	}
 
-	if codeState != "healthy" || (infraState != "ready" && infraState != "degraded") {
+	if serviceInventory.Known && serviceInventory.TotalCount == 0 {
+		return "blocked", "Chưa có service nào được cấu hình. Hãy thêm ít nhất một service trong mục Dịch vụ", nil
+	}
+
+	if serviceInventory.RepoCount > 0 && codeState != "healthy" {
+		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước", nil
+	}
+	if infraState != "ready" && infraState != "degraded" {
 		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước", nil
 	}
 
@@ -942,6 +979,45 @@ func (s *BootstrapOrchestrator) listStatusDeployments(requesterUserID, requester
 		return nil, err
 	}
 	return items, nil
+}
+
+func (s *BootstrapOrchestrator) summarizeConfiguredServices(projectID string) (bootstrapServiceInventorySummary, error) {
+	summary := bootstrapServiceInventorySummary{}
+	if s == nil {
+		return summary, nil
+	}
+	if s.projectServices != nil {
+		summary.Known = true
+		items, err := s.projectServices.ListByProject(projectID)
+		if err != nil {
+			return summary, err
+		}
+		for _, item := range items {
+			record, err := ToProjectServiceRecord(item)
+			if err != nil {
+				return summary, err
+			}
+			summary.TotalCount++
+			if record.SourceType == serviceSourceTypeInternal {
+				summary.InternalCount++
+			} else {
+				summary.RepoCount++
+			}
+		}
+		if summary.TotalCount > 0 {
+			return summary, nil
+		}
+	}
+	if s.internalServices != nil {
+		summary.Known = true
+		items, err := s.internalServices.ListByProject(projectID)
+		if err != nil {
+			return summary, err
+		}
+		summary.TotalCount += len(items)
+		summary.InternalCount += len(items)
+	}
+	return summary, nil
 }
 
 func (s *BootstrapOrchestrator) listProjectInternalServices(projectID string) ([]models.ProjectInternalService, error) {
@@ -1390,17 +1466,7 @@ func (s *BootstrapOrchestrator) buildOneClickLazyopsDocument(project models.Proj
 	}
 
 	if len(services) == 0 {
-		services = append(services, LazyopsYAMLService{
-			Name:   "app",
-			Path:   ".",
-			Public: true,
-			Healthcheck: LazyopsYAMLServiceHealthcheck{
-				// Use "/" as a generic default because many starter apps do not
-				// expose "/health" out of the box.
-				Path: "/",
-				Port: 8080,
-			},
-		})
+		services = []LazyopsYAMLService{}
 	}
 
 	internalServices := make([]models.ProjectInternalService, 0)
@@ -1695,8 +1761,29 @@ func defaultPlacementPolicy(runtimeMode string) map[string]any {
 	return map[string]any{"strategy": "spread"}
 }
 
-func buildDeployActions(projectID, deployState string) []BootstrapStepActionRecord {
+func buildCodeActions(projectID string, serviceInventory bootstrapServiceInventorySummary) []BootstrapStepActionRecord {
+	if serviceInventory.Known && serviceInventory.RepoCount == 0 {
+		return []BootstrapStepActionRecord{}
+	}
+	return []BootstrapStepActionRecord{{
+		ID:    "reconnect_github",
+		Label: "Kết nối GitHub",
+		Kind:  "link",
+		Href:  fmt.Sprintf("/api/auth/oauth/github/start?next=/projects/%s", projectID),
+	}}
+}
+
+func buildDeployActions(projectID, deployState string, serviceInventory bootstrapServiceInventorySummary) []BootstrapStepActionRecord {
 	actions := []BootstrapStepActionRecord{}
+	if serviceInventory.Known && serviceInventory.TotalCount == 0 {
+		actions = append(actions, BootstrapStepActionRecord{
+			ID:    "configure_services",
+			Label: "Cấu hình dịch vụ",
+			Kind:  "screen",
+			Href:  fmt.Sprintf("/projects/%s/services", projectID),
+		})
+		return actions
+	}
 	if deployState == "ready" {
 		actions = append(actions, BootstrapStepActionRecord{
 			ID:       "deploy_now",

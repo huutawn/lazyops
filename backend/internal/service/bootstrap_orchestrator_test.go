@@ -43,6 +43,19 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 		KubeconfigSecretRef: "secret://clusters/prod-k3s/kubeconfig",
 		Status:              "ready",
 	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "api",
+		Path:   "apps/api",
+		Kind:   "app",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
 
 	orchestrator := NewBootstrapOrchestrator(
 		projectStore,
@@ -56,7 +69,7 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 		newFakeMeshNetworkStore(),
 		clusterStore,
 		nil,
-	)
+	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil)
 
 	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
 	if err != nil {
@@ -76,6 +89,65 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 	}
 	if status.Steps[2].State != "ready" {
 		t.Fatalf("expected deploy ready, got %q", status.Steps[2].State)
+	}
+}
+
+func TestBootstrapOrchestratorGetStatusBlocksDeployWhenServiceInventoryIsEmpty(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Empty Project",
+		Slug:          "empty-project",
+		DefaultBranch: "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	clusterStore := newFakeClusterStore(&models.Cluster{
+		ID:                  "cls_123",
+		UserID:              "usr_123",
+		Name:                "prod-k3s",
+		InstanceID:          ptrString("inst_123"),
+		Provider:            "k3s",
+		KubeconfigSecretRef: "secret://clusters/prod-k3s/kubeconfig",
+		Status:              "ready",
+	})
+	serviceStore := newFakeProjectServiceStore()
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		newFakeProjectRepoLinkStore(),
+		nil,
+		nil,
+		newFakeDeploymentStore(),
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		clusterStore,
+		nil,
+	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil)
+
+	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	if status.Steps[0].State != "healthy" {
+		t.Fatalf("expected code step healthy for empty inventory, got %q", status.Steps[0].State)
+	}
+	if status.Steps[2].State != "blocked" {
+		t.Fatalf("expected deploy step blocked, got %q", status.Steps[2].State)
+	}
+	if status.Steps[2].Summary != "Chưa có service nào được cấu hình. Hãy thêm ít nhất một service trong mục Dịch vụ" {
+		t.Fatalf("unexpected deploy summary %q", status.Steps[2].Summary)
+	}
+	if len(status.Steps[2].Actions) != 1 || status.Steps[2].Actions[0].Href != "/projects/prj_123/services" {
+		t.Fatalf("expected configure services action, got %#v", status.Steps[2].Actions)
 	}
 }
 
@@ -677,7 +749,7 @@ func TestBootstrapOrchestratorOnInventoryChangedKeepsLegacyBindingUntilClusterEx
 	}
 }
 
-func TestBootstrapOrchestratorOneClickDeployCreatesDeploymentWithDefaultService(t *testing.T) {
+func TestBootstrapOrchestratorOneClickDeployRequiresConfiguredServices(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",
 		UserID:        "usr_123",
@@ -745,28 +817,89 @@ func TestBootstrapOrchestratorOneClickDeployCreatesDeploymentWithDefaultService(
 		RequesterRole:   RoleOperator,
 		ProjectID:       "prj_123",
 	})
+	if !errors.Is(err, ErrNoProjectServicesConfigured) {
+		t.Fatalf("expected ErrNoProjectServicesConfigured, got result=%#v err=%v", result, err)
+	}
+}
+
+func TestBootstrapOrchestratorOneClickDeployAllowsInternalOnlyProjectsWithoutRepoLink(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme Internal",
+		Slug:          "acme-internal",
+		DefaultBranch: "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	meshStore := newFakeMeshNetworkStore()
+	clusterStore := newFakeClusterStore()
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto standalone",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "standalone",
+		TargetKind:              "instance",
+		TargetID:                "inst_123",
+		PlacementPolicyJSON:     `{"strategy":"single-node"}`,
+		DomainPolicyJSON:        `{"mode":"auto"}`,
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "standalone", []ConfigureProjectServiceItem{{
+		Name:               "db",
+		Kind:               "postgres",
+		SourceType:         serviceSourceTypeInternal,
+		ManagedByLazyops:   true,
+		ConnectionTemplate: defaultPostgresConnectionTemplate(),
+	}})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+
+	compiler := NewServiceInventoryBlueprintCompiler(newFakeProjectRepoLinkStore(), bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		newFakeProjectRepoLinkStore(),
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		meshStore,
+		clusterStore,
+		nil,
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
+
+	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+	})
 	if err != nil {
 		t.Fatalf("one-click deploy: %v", err)
 	}
-	if result.ProjectID != "prj_123" {
-		t.Fatalf("expected project prj_123, got %q", result.ProjectID)
+	if result.ProjectID != "prj_123" || result.BlueprintID == "" || result.DeploymentID == "" {
+		t.Fatalf("unexpected one-click result %#v", result)
 	}
-	if result.BlueprintID == "" || result.DeploymentID == "" || result.RevisionID == "" {
-		t.Fatalf("expected blueprint/deployment/revision ids, got %#v", result)
-	}
-	if result.RolloutStatus != "not_started" {
-		t.Fatalf("expected rollout status not_started, got %q", result.RolloutStatus)
-	}
-	if len(result.Timeline) < 3 {
-		t.Fatalf("expected at least 3 timeline events, got %d", len(result.Timeline))
-	}
-	if result.Timeline[0].ID != "compile_inventory" || result.Timeline[0].State != "completed" {
-		t.Fatalf("expected completed compile_inventory step, got %#v", result.Timeline[0])
-	}
-	if result.Timeline[1].ID != "create_deployment" || result.Timeline[1].State != "completed" {
-		t.Fatalf("expected completed create_deployment step, got %#v", result.Timeline[1])
-	}
-
 	storedBlueprint, err := blueprintStore.GetByIDForProject("prj_123", result.BlueprintID)
 	if err != nil {
 		t.Fatalf("load stored blueprint: %v", err)
@@ -778,11 +911,11 @@ func TestBootstrapOrchestratorOneClickDeployCreatesDeploymentWithDefaultService(
 	if err != nil {
 		t.Fatalf("decode blueprint record: %v", err)
 	}
-	if len(blueprintRecord.Compiled.Services) != 1 {
-		t.Fatalf("expected one default service, got %d", len(blueprintRecord.Compiled.Services))
+	if len(blueprintRecord.Compiled.Services) != 1 || blueprintRecord.Compiled.Services[0].Name != "db" {
+		t.Fatalf("expected internal db service in blueprint, got %#v", blueprintRecord.Compiled.Services)
 	}
-	if blueprintRecord.Compiled.Services[0].Name != "app" || blueprintRecord.Compiled.Services[0].Path != "." {
-		t.Fatalf("expected default app service, got %#v", blueprintRecord.Compiled.Services[0])
+	if blueprintRecord.SourceRef != "service_inventory" {
+		t.Fatalf("expected service_inventory source ref, got %q", blueprintRecord.SourceRef)
 	}
 }
 
@@ -817,7 +950,19 @@ func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 		CompatibilityPolicyJSON: `{"env_injection":true}`,
 		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
 	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "standalone", []ConfigureProjectServiceItem{{
+		Name:   "api",
+		Path:   "apps/api",
+		Kind:   "app",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured services: %v", err)
+	}
 	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
 	blueprintStore := newFakeBlueprintStore()
 	revisionStore := newFakeDesiredStateRevisionStore()
 	deploymentStore := newFakeDeploymentStore()
@@ -840,7 +985,7 @@ func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 		nil,
 	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
 
-	_, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+	_, err = orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",
 		RequesterRole:   RoleOperator,
 		ProjectID:       "prj_123",

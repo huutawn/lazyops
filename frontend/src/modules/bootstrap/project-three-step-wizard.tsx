@@ -55,6 +55,7 @@ function translatedActionLabel(action: BootstrapStepAction): string {
   const mapByID: Record<string, string> = {
     reconnect_github: 'Kết nối GitHub',
     add_server: 'Kết nối máy chủ',
+    configure_services: 'Cấu hình dịch vụ',
     deploy_now: 'Triển khai ngay',
     view_deployments: 'Xem lịch sử triển khai',
   };
@@ -258,7 +259,7 @@ export function ProjectThreeStepWizard({
             </div>
 
             <Link
-              href={`/projects/${projectId}/services?source=internal`}
+              href={`/projects/${projectId}/services`}
               className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
             >
               Services

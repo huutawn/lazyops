@@ -38,7 +38,7 @@ export default function OnboardingPage() {
           Project la namespace, <span className="bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] bg-clip-text text-transparent underline decoration-[#0EA5E9]/30 underline-offset-8">service moi la don vi deploy</span>
         </h1>
         <p className="text-[#94a3b8] text-[19px] max-w-3xl leading-relaxed font-medium">
-          Bat dau bang service-first workspace: scaffold repo services, internal services, va deployment flow ngay tren cung mot inventory thong nhat.
+          Bắt đầu bằng project shell gọn nhẹ, rồi cấu hình repo services, internal services và deployment flow ngay trên cùng một inventory thống nhất.
         </p>
       </div>
 
@@ -54,7 +54,7 @@ export default function OnboardingPage() {
               </div>
               <h2 className="text-3xl font-bold text-white mb-4">Chào mừng bạn đến với LazyOps</h2>
               <p className="text-[#94a3b8] mb-10 text-lg max-w-lg mx-auto leading-relaxed">
-                He thong chua co project shell nao. Tao project dau tien va scaffold thang service inventory de bat dau.
+                Hệ thống chưa có project shell nào. Tạo project đầu tiên rồi thêm service theo đúng nhu cầu của bạn trong inventory.
               </p>
               <button
                 type="button"

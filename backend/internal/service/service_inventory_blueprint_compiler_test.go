@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	"lazyops-server/internal/models"
@@ -112,5 +113,36 @@ func TestServiceInventoryBlueprintCompilerInjectsPostgresTemplatePerService(t *t
 	}
 	if apiSvc.EnvBundle["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app" {
 		t.Fatalf("expected DATABASE_URL to use internal dns host, got %#v", apiSvc.EnvBundle)
+	}
+}
+
+func TestServiceInventoryBlueprintCompilerRejectsEmptyInventory(t *testing.T) {
+	project := models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Empty Project",
+		Slug:          "empty-project",
+		NamespaceSlug: "empty-project",
+		RuntimeMode:   "distributed-k3s",
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore()
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		PlacementPolicyJSON:     `{}`,
+		DomainPolicyJSON:        `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, newFakeProjectServiceStore(), newFakeBlueprintStore())
+
+	_, err := compiler.Compile(project, ServiceInventoryBlueprintCompileInput{TriggerKind: "manual"})
+	if !errors.Is(err, ErrNoProjectServicesConfigured) {
+		t.Fatalf("expected ErrNoProjectServicesConfigured, got %v", err)
 	}
 }

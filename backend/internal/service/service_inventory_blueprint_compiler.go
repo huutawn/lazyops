@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,8 @@ import (
 )
 
 const hiddenServiceInventoryBlueprintSourceKind = "service_inventory"
+
+var ErrNoProjectServicesConfigured = errors.New("no project services configured")
 
 type ServiceInventoryBlueprintCompiler struct {
 	repoLinks  ProjectRepoLinkStore
@@ -77,7 +80,7 @@ func (c *ServiceInventoryBlueprintCompiler) Compile(project models.Project, inpu
 		return nil, err
 	}
 
-	services, err := c.loadProjectServices(project.ID, binding.RuntimeMode)
+	services, err := c.loadProjectServices(project.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -252,13 +255,13 @@ func (c *ServiceInventoryBlueprintCompiler) resolveRepoState(projectID, rawSourc
 	return repoState, sourceRef, nil
 }
 
-func (c *ServiceInventoryBlueprintCompiler) loadProjectServices(projectID, runtimeMode string) ([]ProjectServiceRecord, error) {
+func (c *ServiceInventoryBlueprintCompiler) loadProjectServices(projectID string) ([]ProjectServiceRecord, error) {
 	items, err := c.services.ListByProject(projectID)
 	if err != nil {
 		return nil, err
 	}
 	if len(items) == 0 {
-		return []ProjectServiceRecord{defaultHiddenProjectService(projectID, runtimeMode)}, nil
+		return nil, ErrNoProjectServicesConfigured
 	}
 	records := make([]ProjectServiceRecord, 0, len(items))
 	for _, item := range items {
@@ -278,34 +281,6 @@ func (c *ServiceInventoryBlueprintCompiler) loadProjectServices(projectID, runti
 		return records[i].Path < records[j].Path
 	})
 	return records, nil
-}
-
-func defaultHiddenProjectService(projectID, runtimeMode string) ProjectServiceRecord {
-	public := true
-	profile := "web"
-	if strings.TrimSpace(runtimeMode) == "distributed-k3s" {
-		profile = "service"
-	}
-	return ProjectServiceRecord{
-		ID:               utils.NewPrefixedID("svc"),
-		ProjectID:        projectID,
-		Name:             "app",
-		Path:             ".",
-		Kind:             "app",
-		SourceType:       serviceSourceTypeRepo,
-		Public:           public,
-		RuntimeProfile:   profile,
-		PlacementMode:    servicePlacementModeSharedCluster,
-		StartHint:        "",
-		TargetPort:       8080,
-		ServicePort:      8080,
-		Replicas:         1,
-		EnvBundle:        map[string]string{},
-		PVCSpec:          map[string]any{},
-		DeployStrategy:   map[string]any{},
-		Healthcheck:      map[string]any{"path": "/", "port": 8080, "protocol": "http"},
-		ManagedByLazyops: false,
-	}
 }
 
 func (c *ServiceInventoryBlueprintCompiler) buildDependencyBindings(services []ProjectServiceRecord, runtimeMode string) []LazyopsYAMLDependencyBinding {
