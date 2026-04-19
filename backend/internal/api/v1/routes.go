@@ -103,11 +103,11 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/projects/:id/placement-nodes", projectController.ListPlacementNodes)
 			userProtected.GET("/projects/:id/repo-link", projectController.GetRepoLink)
 			userProtected.PUT("/projects/:id/services",
-				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator, service.RoleViewer),
 				projectController.ConfigureServices,
 			)
 			userProtected.POST("/projects/:id/services/:service_id/actions",
-				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator, service.RoleViewer),
 				projectController.ActOnService,
 			)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)

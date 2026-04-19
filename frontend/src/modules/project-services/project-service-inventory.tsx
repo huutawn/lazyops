@@ -51,7 +51,7 @@ type DrawerMode =
 type RepoFormState = {
   name: string;
   path: string;
-  kind: string;
+  kind: RepoServiceKind;
   public: boolean;
   placement_mode: string;
   placement_node_id: string;
@@ -63,6 +63,15 @@ type InternalFormState = {
   service_name: string;
   connection_template: Record<string, string>;
 };
+
+type RepoServiceKind = 'app' | 'api' | 'web' | 'worker';
+
+const REPO_SERVICE_KIND_OPTIONS: Array<{ value: RepoServiceKind; label: string; description: string }> = [
+  { value: 'app', label: 'App tổng quát', description: 'Giữ lựa chọn này nếu bạn chưa chắc. Detector/build sẽ tự suy ra thêm.' },
+  { value: 'api', label: 'API / backend', description: 'Service HTTP cho backend hoặc API server.' },
+  { value: 'web', label: 'Frontend web', description: 'Service giao diện web public hoặc admin panel.' },
+  { value: 'worker', label: 'Worker nền', description: 'Job runner, queue consumer hoặc cron worker.' },
+];
 
 export function ProjectServiceInventory({
   projectId,
@@ -85,24 +94,6 @@ export function ProjectServiceInventory({
   const [activeAction, setActiveAction] = useState<{ serviceId: string; action: ProjectServiceAction } | null>(null);
   const [lastActionResult, setLastActionResult] = useState<ProjectServiceActionResponse | null>(null);
   const [lastActionError, setLastActionError] = useState<{ serviceId: string; message: string } | null>(null);
-
-  if (services.isLoading) {
-    return (
-      <SectionCard title={title} description={description}>
-        <LoadingBlock label="Dang tai service inventory..." className="py-10" />
-      </SectionCard>
-    );
-  }
-
-  if (services.isError) {
-    return (
-      <ErrorState
-        title="Khong the tai service inventory"
-        message={services.error instanceof Error ? services.error.message : 'Khong tai duoc danh sach services.'}
-      />
-    );
-  }
-
   const items = services.data?.items ?? [];
   const filteredItems = items.filter((item) => {
     if (sourceFilter === 'repo') {
@@ -132,6 +123,23 @@ export function ProjectServiceInventory({
     () => new Map((runtime.data?.services ?? []).map((item) => [item.service_id, item])),
     [runtime.data?.services],
   );
+
+  if (services.isLoading) {
+    return (
+      <SectionCard title={title} description={description}>
+        <LoadingBlock label="Dang tai service inventory..." className="py-10" />
+      </SectionCard>
+    );
+  }
+
+  if (services.isError) {
+    return (
+      <ErrorState
+        title="Khong the tai service inventory"
+        message={services.error instanceof Error ? services.error.message : 'Khong tai duoc danh sach services.'}
+      />
+    );
+  }
 
   const openChooseDrawer = () => {
     configureServices.reset();
@@ -465,7 +473,14 @@ export function ProjectServiceInventory({
               void submitRepoService();
             }}
           >
-            <FieldLabel label="Tên dịch vụ">
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+              <div className="font-semibold text-white">Service từ repository là gì?</div>
+              <p className="mt-2 text-[#94a3b8]">
+                Đây là code nằm trong repo GitHub của bạn. Nếu repo chỉ có một app duy nhất ở root thì thư mục là <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">.</code>.
+                Nếu là monorepo, hãy điền đường dẫn tương đối như <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">apps/api</code> hoặc <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">apps/web</code>.
+              </p>
+            </div>
+            <FieldLabel label="Tên dịch vụ" help="Tên định danh nội bộ của service, ví dụ: api, web, worker, auth.">
               <input
                 value={repoForm.name}
                 onChange={(event) => setRepoForm((current) => ({ ...current, name: event.target.value }))}
@@ -474,25 +489,36 @@ export function ProjectServiceInventory({
                 required
               />
             </FieldLabel>
-            <FieldLabel label="Thư mục trong repo">
+            <FieldLabel
+              label="Thư mục trong repo"
+              help="Đường dẫn tương đối tính từ root repo GitHub. Dùng . nếu app nằm ngay ở root repo."
+            >
               <input
                 value={repoForm.path}
                 onChange={(event) => setRepoForm((current) => ({ ...current, path: event.target.value }))}
                 className={fieldClassName}
-                placeholder="apps/api"
+                placeholder="., apps/api, services/worker"
                 required
               />
             </FieldLabel>
             <div className="grid gap-5 md:grid-cols-2">
-              <FieldLabel label="Loại service">
-                <input
+              <FieldLabel label="Loại service" help="Giữ App tổng quát nếu bạn chưa chắc. Hệ thống vẫn sẽ tự detect thêm khi build/deploy.">
+                <select
                   value={repoForm.kind}
-                  onChange={(event) => setRepoForm((current) => ({ ...current, kind: event.target.value }))}
+                  onChange={(event) => setRepoForm((current) => ({ ...current, kind: event.target.value as RepoServiceKind }))}
                   className={fieldClassName}
-                  placeholder="app"
-                />
+                >
+                  {REPO_SERVICE_KIND_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-[#94a3b8]">
+                  {REPO_SERVICE_KIND_OPTIONS.find((option) => option.value === repoForm.kind)?.description}
+                </p>
               </FieldLabel>
-              <FieldLabel label="Database kết nối">
+              <FieldLabel label="Database kết nối" help="Tùy chọn. Chỉ chọn khi service này cần được inject biến môi trường kết nối tới database nội bộ đã tạo trước đó.">
                 <select
                   value={repoForm.connection_target_service}
                   onChange={(event) => setRepoForm((current) => ({ ...current, connection_target_service: event.target.value }))}
@@ -603,7 +629,13 @@ export function ProjectServiceInventory({
               void submitInternalService();
             }}
           >
-            <FieldLabel label="Loại internal service">
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+              <div className="font-semibold text-white">Internal service là gì?</div>
+              <p className="mt-2 text-[#94a3b8]">
+                Đây là service hạ tầng do LazyOps quản lý cho project của bạn, ví dụ PostgreSQL, MySQL, Redis hoặc RabbitMQ. Bạn không cần có thư mục code cho loại này trong repo.
+              </p>
+            </div>
+            <FieldLabel label="Loại internal service" help="Chọn loại hạ tầng mà app của bạn sẽ dùng nội bộ.">
               <select
                 value={internalForm.kind}
                 onChange={(event) =>
@@ -639,6 +671,9 @@ export function ProjectServiceInventory({
                 placeholder={defaultInternalServiceName(internalForm.kind)}
                 required
               />
+              <p className="text-xs text-[#94a3b8]">
+                Tên này sẽ trở thành DNS nội bộ trong cluster, ví dụ <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">{internalForm.service_name.trim() || defaultInternalServiceName(internalForm.kind)}</code>.
+              </p>
             </FieldLabel>
             <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">Đường dẫn nội bộ</div>
@@ -772,12 +807,20 @@ function defaultRepoForm(service?: ProjectService): RepoFormState {
   return {
     name: service?.name || '',
     path: service?.path || '',
-    kind: service?.kind || 'app',
+    kind: normalizeRepoServiceKind(service?.kind),
     public: service?.public ?? false,
     placement_mode: service?.placement_mode || 'shared_cluster',
     placement_node_id: service?.placement_node_id || '',
     connection_target_service: service?.connection_target_service || '',
   };
+}
+
+function normalizeRepoServiceKind(kind?: string): RepoServiceKind {
+  const value = (kind || '').trim().toLowerCase();
+  if (REPO_SERVICE_KIND_OPTIONS.some((option) => option.value === value)) {
+    return value as RepoServiceKind;
+  }
+  return 'app';
 }
 
 function defaultInternalForm(service?: ProjectService): InternalFormState {
@@ -1050,11 +1093,12 @@ function DrawerActions({
   );
 }
 
-function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
+function FieldLabel({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return (
     <label className="grid gap-2">
       <span className="text-sm font-semibold text-[#e2e8f0]">{label}</span>
       {children}
+      {help ? <span className="text-xs leading-relaxed text-[#94a3b8]">{help}</span> : null}
     </label>
   );
 }
