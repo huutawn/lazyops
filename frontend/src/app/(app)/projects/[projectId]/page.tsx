@@ -11,8 +11,8 @@ export default async function ProjectRootPage({ params }: ProjectRootPageProps) 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Project namespace"
-        subtitle="Project nay chi dong vai tro namespace va folder logic. Service moi la trung tam cua deploy, runtime, va ket noi."
+        title="Bắt đầu"
+        subtitle="Thiết lập project, nối mã nguồn và máy chủ, rồi triển khai ngay từ một nơi."
       />
       <ProjectOverviewDashboard projectId={projectId} />
     </div>

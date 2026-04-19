@@ -8,10 +8,10 @@ import { ErrorState } from '@/components/primitives/error-state';
 import { LoadingBlock } from '@/components/primitives/loading';
 import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge, type StatusBadgeProps } from '@/components/primitives/status-badge';
-import { Modal } from '@/components/primitives/modal';
-import { FormButton, FormField, FormInput } from '@/components/forms/form-fields';
-import { bootstrapStatusQueryKey, useAutoBootstrapProject, useConnectProjectInfraSSH, useOneClickDeploy, useProjectBootstrapStatus } from '@/modules/bootstrap/bootstrap-hooks';
+import { bootstrapStatusQueryKey, useAutoBootstrapProject, useOneClickDeploy, useProjectBootstrapStatus } from '@/modules/bootstrap/bootstrap-hooks';
 import type { BootstrapOneClickDeployResult, BootstrapPipelineEvent, BootstrapStep, BootstrapStepAction } from '@/modules/bootstrap/bootstrap-types';
+import { formatBootstrapStateLabelVN } from '@/modules/bootstrap/bootstrap-ui';
+import { ProjectConnectInfraModal } from '@/modules/bootstrap/project-connect-infra-modal';
 import { cn } from '@/lib/utils';
 import { getProjectDeployment } from '@/modules/deployments/deployment-api';
 import type { DeploymentDetail, DeploymentTimelineEvent } from '@/modules/deployments/deployment-types';
@@ -37,28 +37,6 @@ const STEP_NUMBER: Record<string, string> = {
   deploy: '3',
 };
 
-const STEP_BADGE: Record<string, StatusBadgeProps['variant']> = {
-  healthy: 'success',
-  ready: 'success',
-  linked: 'info',
-  deploying: 'warning',
-  installing: 'warning',
-  degraded: 'warning',
-  blocked: 'neutral',
-  missing: 'neutral',
-  error: 'danger',
-  rolled_back: 'danger',
-};
-
-const OVERALL_BADGE: Record<string, StatusBadgeProps['variant']> = {
-  running: 'success',
-  ready_to_deploy: 'info',
-  deploying: 'warning',
-  partially_ready: 'warning',
-  not_ready: 'neutral',
-  attention_required: 'danger',
-};
-
 const TIMELINE_BADGE: Record<string, StatusBadgeProps['variant']> = {
   completed: 'success',
   success: 'success',
@@ -72,42 +50,6 @@ const TIMELINE_BADGE: Record<string, StatusBadgeProps['variant']> = {
   queued: 'neutral',
   promoted: 'success',
 };
-
-function formatStateLabel(value: string): string {
-  return value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
-}
-
-function formatStateLabelVN(value: string): string {
-  const normalized = value.toLowerCase();
-  const map: Record<string, string> = {
-    missing: 'Chưa kết nối',
-    linked: 'Đã liên kết',
-    healthy: 'Sẵn sàng',
-    installing: 'Đang cài',
-    ready: 'Sẵn sàng',
-    blocked: 'Bị chặn',
-    deploying: 'Đang triển khai',
-    degraded: 'Cảnh báo',
-    rolled_back: 'Đã hoàn tác',
-    error: 'Lỗi',
-    running: 'Đang chạy',
-    attention_required: 'Cần xử lý',
-    ready_to_deploy: 'Sẵn sàng triển khai',
-    partially_ready: 'Chưa hoàn tất',
-    not_ready: 'Chưa sẵn sàng',
-    completed: 'Hoàn tất',
-    success: 'Thành công',
-    pending: 'Chờ xử lý',
-    failed: 'Thất bại',
-    started: 'Đã bắt đầu',
-    queued: 'Đang xếp hàng',
-    promoted: 'Đã phát hành',
-  };
-  if (map[normalized]) {
-    return map[normalized];
-  }
-  return formatStateLabel(value);
-}
 
 function translatedActionLabel(action: BootstrapStepAction): string {
   const mapByID: Record<string, string> = {
@@ -138,25 +80,12 @@ export function ProjectThreeStepWizard({
   const { data: session } = useSession();
   const { data, isLoading, isError, error, refetch } = useProjectBootstrapStatus(projectId);
   const autoBootstrap = useAutoBootstrapProject(projectId);
-  const connectInfra = useConnectProjectInfraSSH(projectId);
   const oneClickDeploy = useOneClickDeploy(projectId);
   const [actionError, setActionError] = useState<string | null>(null);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [latestOneClick, setLatestOneClick] = useState<BootstrapOneClickDeployResult | null>(null);
   const [activeDeploymentId, setActiveDeploymentId] = useState<string | null>(null);
   const [showConnectInfraModal, setShowConnectInfraModal] = useState(false);
-  const [infraForm, setInfraForm] = useState({
-    instance_name: '',
-    public_ip: '',
-    ssh_host: '',
-    ssh_port: '22',
-    ssh_username: 'root',
-    ssh_password: '',
-    ssh_private_key: '',
-    ssh_host_key_fingerprint: '',
-  });
-  const [showInfraAdvanced, setShowInfraAdvanced] = useState(false);
-  const [infraFormError, setInfraFormError] = useState<string | null>(null);
   const isAdmin = session?.role === 'admin';
 
   const deploymentDetail = useQuery({
@@ -265,51 +194,6 @@ export function ProjectThreeStepWizard({
     }
   };
 
-  const onConnectInfraSubmit = async () => {
-    setInfraFormError(null);
-    if (!infraForm.ssh_host.trim()) {
-      setInfraFormError('Vui lòng nhập địa chỉ SSH host.');
-      return;
-    }
-    if (!infraForm.ssh_username.trim()) {
-      setInfraFormError('Vui lòng nhập SSH username.');
-      return;
-    }
-    if (!infraForm.ssh_password.trim() && !infraForm.ssh_private_key.trim()) {
-      setInfraFormError('Vui lòng nhập mật khẩu hoặc private key.');
-      return;
-    }
-
-    try {
-      await connectInfra.mutateAsync({
-        instance_name: infraForm.instance_name.trim() || undefined,
-        public_ip: infraForm.public_ip.trim() || undefined,
-        ssh_host: infraForm.ssh_host.trim(),
-        ssh_port: Number.parseInt(infraForm.ssh_port, 10) || 22,
-        ssh_username: infraForm.ssh_username.trim(),
-        ssh_password: infraForm.ssh_password || undefined,
-        ssh_private_key: infraForm.ssh_private_key || undefined,
-        ssh_host_key_fingerprint: infraForm.ssh_host_key_fingerprint.trim() || undefined,
-        control_plane_url: typeof window !== 'undefined' ? window.location.origin : undefined,
-      });
-      setShowConnectInfraModal(false);
-      setInfraForm({
-        instance_name: '',
-        public_ip: '',
-        ssh_host: '',
-        ssh_port: '22',
-        ssh_username: 'root',
-        ssh_password: '',
-        ssh_private_key: '',
-        ssh_host_key_fingerprint: '',
-      });
-      setShowInfraAdvanced(false);
-      await queryClient.invalidateQueries({ queryKey: bootstrapStatusQueryKey(projectId) });
-    } catch (err) {
-      setInfraFormError(err instanceof Error ? err.message : 'Kết nối SSH thất bại');
-    }
-  };
-
   const pipelineEvents = latestOneClick?.timeline ?? [];
   const runtimeEvents = deploymentDetail.data?.timeline ?? [];
 
@@ -345,7 +229,7 @@ export function ProjectThreeStepWizard({
                     item.value === 'error' || item.value === 'failed' ? 'text-[#EF4444]' :
                     'text-[#0EA5E9]'
                   )}>
-                    {formatStateLabelVN(item.value)}
+                    {formatBootstrapStateLabelVN(item.value)}
                   </span>
                 </div>
                 <p className="mt-2 line-clamp-2 text-[13px] leading-snug text-white">{item.summary}</p>
@@ -360,7 +244,7 @@ export function ProjectThreeStepWizard({
                 'text-[13px] font-medium',
                 data.overall_state === 'running' ? 'text-[#10B981]' : 'text-[#EF4444]'
               )}>
-                {formatStateLabelVN(data.overall_state)}
+                {formatBootstrapStateLabelVN(data.overall_state)}
               </span>
             </div>
 
@@ -440,7 +324,7 @@ export function ProjectThreeStepWizard({
                       step.state === 'error' || step.state === 'failed' ? "text-[#EF4444]" :
                       "text-[#0EA5E9]"
                     )}>
-                      {formatStateLabelVN(step.state)}
+                      {formatBootstrapStateLabelVN(step.state)}
                     </span>
                   </div>
                 </div>
@@ -451,9 +335,8 @@ export function ProjectThreeStepWizard({
                       type="button"
                       className="rounded-lg bg-[#0EA5E9] px-6 py-2.5 text-[14px] font-bold text-white transition-all hover:bg-[#0284c7] shadow-lg shadow-[#0ea5e9]/10 disabled:opacity-60"
                       onClick={() => setShowConnectInfraModal(true)}
-                      disabled={connectInfra.isPending}
                     >
-                      {connectInfra.isPending ? 'Đang kết nối...' : 'Kết nối máy chủ'}
+                      Kết nối máy chủ
                     </button>
                   ) : null}
 
@@ -516,7 +399,7 @@ export function ProjectThreeStepWizard({
           {latestOneClick ? (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <StatusBadge
-                label={`Rollout: ${formatStateLabelVN(latestOneClick.rollout_status)}`}
+                label={`Rollout: ${formatBootstrapStateLabelVN(latestOneClick.rollout_status)}`}
                 variant={TIMELINE_BADGE[latestOneClick.rollout_status] ?? 'neutral'}
                 size="sm"
               />
@@ -558,120 +441,11 @@ export function ProjectThreeStepWizard({
         </div>
       ) : null}
 
-      <Modal
+      <ProjectConnectInfraModal
+        projectId={projectId}
         open={showConnectInfraModal}
         onClose={() => setShowConnectInfraModal(false)}
-        title="Kết nối máy chủ qua SSH"
-        size="lg"
-      >
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-lazyops-muted">
-            Nhập thông tin SSH, LazyOps sẽ tự cài agent và tự gắn máy chủ vào dự án. Bạn không cần biết Private IP.
-          </p>
-
-          <FormField label="Tên máy chủ (tuỳ chọn)">
-            <FormInput
-              type="text"
-              placeholder="prod-app-01"
-              value={infraForm.instance_name}
-              onChange={(event) => setInfraForm((prev) => ({ ...prev, instance_name: event.target.value }))}
-            />
-          </FormField>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="SSH host">
-              <FormInput
-                type="text"
-                placeholder="203.0.113.10"
-                value={infraForm.ssh_host}
-                onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_host: event.target.value }))}
-              />
-            </FormField>
-            <FormField label="SSH port">
-              <FormInput
-                type="number"
-                placeholder="22"
-                value={infraForm.ssh_port}
-                onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_port: event.target.value }))}
-              />
-            </FormField>
-          </div>
-
-          <button
-            type="button"
-            className="w-fit rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-muted transition-colors hover:bg-lazyops-border/10"
-            onClick={() => setShowInfraAdvanced((prev) => !prev)}
-          >
-            {showInfraAdvanced ? 'Ẩn cấu hình nâng cao' : 'Mở cấu hình nâng cao'}
-          </button>
-
-          {showInfraAdvanced ? (
-            <div className="grid gap-4 sm:grid-cols-1">
-              <FormField label="Public IP (tuỳ chọn)">
-                <FormInput
-                  type="text"
-                  placeholder="203.0.113.10"
-                  value={infraForm.public_ip}
-                  onChange={(event) => setInfraForm((prev) => ({ ...prev, public_ip: event.target.value }))}
-                />
-              </FormField>
-            </div>
-          ) : null}
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="SSH username">
-              <FormInput
-                type="text"
-                placeholder="root"
-                value={infraForm.ssh_username}
-                onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_username: event.target.value }))}
-              />
-            </FormField>
-            <FormField label="Host key fingerprint (tuỳ chọn)">
-              <FormInput
-                type="text"
-                placeholder="SHA256:..."
-                value={infraForm.ssh_host_key_fingerprint}
-                onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_host_key_fingerprint: event.target.value }))}
-              />
-            </FormField>
-          </div>
-
-          <FormField label="Mật khẩu SSH (hoặc dùng private key)">
-            <FormInput
-              type="password"
-              placeholder="••••••••"
-              value={infraForm.ssh_password}
-              onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_password: event.target.value }))}
-            />
-          </FormField>
-
-          <FormField label="SSH private key (tuỳ chọn)">
-            <textarea
-              className="min-h-24 w-full rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 px-3 py-2 text-sm text-lazyops-text outline-none transition-colors placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
-              placeholder="-----BEGIN OPENSSH PRIVATE KEY----- ..."
-              value={infraForm.ssh_private_key}
-              onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_private_key: event.target.value }))}
-            />
-          </FormField>
-
-          {infraFormError ? (
-            <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
-              {infraFormError}
-            </div>
-          ) : null}
-
-          <FormButton
-            type="button"
-            loading={connectInfra.isPending}
-            onClick={() => {
-              void onConnectInfraSubmit();
-            }}
-          >
-            Kết nối và cài agent
-          </FormButton>
-        </div>
-      </Modal>
+      />
     </div>
   );
 }
@@ -692,7 +466,7 @@ function TimelineRow({
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs font-medium text-lazyops-text">{label}</span>
         <StatusBadge
-          label={formatStateLabelVN(state)}
+          label={formatBootstrapStateLabelVN(state)}
           variant={TIMELINE_BADGE[state] ?? 'neutral'}
           size="sm"
         />

@@ -101,6 +101,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/projects/:id/services", projectController.ListServices)
 			userProtected.GET("/projects/:id/runtime", projectController.GetRuntimeSummary)
 			userProtected.GET("/projects/:id/placement-nodes", projectController.ListPlacementNodes)
+			userProtected.GET("/projects/:id/repo-link", projectController.GetRepoLink)
 			userProtected.PUT("/projects/:id/services",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
 				projectController.ConfigureServices,

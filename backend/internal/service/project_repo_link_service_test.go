@@ -274,3 +274,80 @@ func TestProjectRepoLinkServiceLookupWebhookRoute(t *testing.T) {
 		t.Fatalf("expected full name lazyops/backend, got %q", result.RepoFullName)
 	}
 }
+
+func TestProjectRepoLinkServiceGetProjectLink(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme",
+		Slug:          "acme",
+		DefaultBranch: "main",
+	})
+	installStore := newFakeGitHubInstallationStore(&models.GitHubInstallation{
+		ID:                   "ghi_alpha",
+		UserID:               "usr_123",
+		GitHubInstallationID: 100,
+		AccountLogin:         "lazyops",
+		AccountType:          "Organization",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+		PreviewEnabled:       true,
+	})
+	service := NewProjectRepoLinkService(projectStore, installStore, repoLinkStore)
+
+	result, err := service.GetProjectLink("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get project link: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected repo link result")
+	}
+	if result.GitHubInstallationID != 100 {
+		t.Fatalf("expected github installation id 100, got %d", result.GitHubInstallationID)
+	}
+	if result.RepoFullName != "lazyops/backend" {
+		t.Fatalf("expected repo full name lazyops/backend, got %q", result.RepoFullName)
+	}
+}
+
+func TestProjectRepoLinkServiceGetProjectLinkReturnsNilWhenMissing(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme",
+		Slug:          "acme",
+		DefaultBranch: "main",
+	})
+	service := NewProjectRepoLinkService(projectStore, newFakeGitHubInstallationStore(), newFakeProjectRepoLinkStore())
+
+	result, err := service.GetProjectLink("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get missing project link: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil repo link, got %#v", result)
+	}
+}
+
+func TestProjectRepoLinkServiceGetProjectLinkRejectsOwnershipMismatch(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_owner",
+		Name:          "Acme",
+		Slug:          "acme",
+		DefaultBranch: "main",
+	})
+	service := NewProjectRepoLinkService(projectStore, newFakeGitHubInstallationStore(), newFakeProjectRepoLinkStore())
+
+	_, err := service.GetProjectLink("usr_other", RoleViewer, "prj_123")
+	if !errors.Is(err, ErrProjectAccessDenied) {
+		t.Fatalf("expected ErrProjectAccessDenied, got %v", err)
+	}
+}

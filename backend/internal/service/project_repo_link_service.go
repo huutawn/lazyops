@@ -99,6 +99,33 @@ func (s *ProjectRepoLinkService) LinkRepository(cmd CreateProjectRepoLinkCommand
 	return &record, nil
 }
 
+func (s *ProjectRepoLinkService) GetProjectLink(requesterUserID, requesterRole, projectID string) (*ProjectRepoLinkRecord, error) {
+	project, err := s.resolveProjectForWrite(requesterUserID, requesterRole, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.repoLinks == nil {
+		return nil, nil
+	}
+
+	link, err := s.repoLinks.GetByProjectID(project.ID)
+	if err != nil {
+		return nil, err
+	}
+	if link == nil {
+		return nil, nil
+	}
+
+	githubInstallationID, err := s.resolveExternalInstallationID(project.UserID, link.GitHubInstallationID)
+	if err != nil {
+		return nil, err
+	}
+
+	record := ToProjectRepoLinkRecord(*link, githubInstallationID)
+	return &record, nil
+}
+
 func (s *ProjectRepoLinkService) LookupWebhookRoute(cmd WebhookRouteLookupCommand) (*ProjectRepoLinkRecord, error) {
 	if cmd.GitHubInstallationID <= 0 || cmd.GitHubRepoID <= 0 {
 		return nil, ErrInvalidInput
@@ -197,6 +224,25 @@ func (s *ProjectRepoLinkService) resolveInstallationRepository(ownerUserID strin
 	}
 
 	return nil, nil, ErrRepoNotAccessible
+}
+
+func (s *ProjectRepoLinkService) resolveExternalInstallationID(ownerUserID, installationRecordID string) (int64, error) {
+	if strings.TrimSpace(installationRecordID) == "" || s.installations == nil {
+		return 0, nil
+	}
+
+	installations, err := s.installations.ListByUser(ownerUserID)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, installation := range installations {
+		if installation.ID == installationRecordID {
+			return installation.GitHubInstallationID, nil
+		}
+	}
+
+	return 0, nil
 }
 
 func normalizeTrackedBranch(branch string, fallback string) (string, error) {

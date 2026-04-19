@@ -2,9 +2,7 @@
 
 import { useParams } from 'next/navigation';
 import { useGitHubAppConfig, useGitHubInstallations } from '@/modules/github-sync/github-hooks';
-import { repoLinkQueryKey } from '@/modules/repo-link/repo-link-hooks';
-import { useQuery } from '@tanstack/react-query';
-import type { ProjectRepoLink } from '@/modules/repo-link/repo-link-types';
+import { useProjectRepoLink } from '@/modules/repo-link/repo-link-hooks';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge } from '@/components/primitives/status-badge';
@@ -20,24 +18,20 @@ export default function ProjectIntegrationsPage() {
 
   const { data: reposData, isLoading: reposLoading } = useGitHubInstallations();
   const { data: appConfig } = useGitHubAppConfig();
-  const { data: repoLink, isLoading: linkLoading } = useQuery({
-    queryKey: repoLinkQueryKey(projectId),
-    queryFn: () => Promise.resolve(null as ProjectRepoLink | null),
-    staleTime: 60 * 1000,
-  });
+  const repoLink = useProjectRepoLink(projectId);
 
   if (shouldBlock) {
     return <SkeletonPage title cards={3} />;
   }
 
-  if (reposLoading || linkLoading) {
+  if (reposLoading || repoLink.isLoading) {
     return <SkeletonPage title cards={3} />;
   }
 
   const repos = reposData?.items ?? [];
   const webhookURL = appConfig?.webhook_url?.trim() || 'https://your-domain.com/api/v1/integrations/github/webhook';
   const hasGitHub = repos.length > 0;
-  const hasRepoLink = !!repoLink;
+  const hasRepoLink = !!repoLink.data;
 
   return (
     <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
@@ -86,7 +80,7 @@ export default function ProjectIntegrationsPage() {
           <div className="flex items-center justify-between border-b pb-4">
             <span className="text-base font-medium">Kho lưu trữ đã gán</span>
             {hasRepoLink ? (
-              <StatusBadge label={repoLink!.repo_full_name} variant="info" size="md" dot={false} />
+              <StatusBadge label={repoLink.data!.repo_full_name} variant="info" size="md" dot={false} />
             ) : (
               <StatusBadge label="Chưa gán" variant="neutral" size="md" dot={false} />
             )}
@@ -94,10 +88,10 @@ export default function ProjectIntegrationsPage() {
 
           {hasRepoLink ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 bg-muted/30 p-4 rounded-xl">
-              <SummaryField label="Nhánh theo dõi (Branch)" value={repoLink!.tracked_branch} />
+              <SummaryField label="Nhánh theo dõi (Branch)" value={repoLink.data!.tracked_branch} />
               <SummaryField
                 label="Bản nháp (Preview Deploys)"
-                value={repoLink!.preview_enabled ? 'Bật' : 'Tắt'}
+                value={repoLink.data!.preview_enabled ? 'Bật' : 'Tắt'}
               />
               <SummaryField
                 label="Cập nhật tự động"

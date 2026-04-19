@@ -9,6 +9,7 @@ import (
 	"lazyops-server/internal/api/middleware"
 	"lazyops-server/internal/api/response"
 	requestdto "lazyops-server/internal/api/v1/dto/request"
+	responsedto "lazyops-server/internal/api/v1/dto/response"
 	"lazyops-server/internal/api/v1/mapper"
 	"lazyops-server/internal/service"
 )
@@ -213,6 +214,32 @@ func (ctl *ProjectController) LinkRepo(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusCreated, "repo linked", mapper.ToProjectRepoLinkResponse(*result))
+}
+
+func (ctl *ProjectController) GetRepoLink(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	result, err := ctl.repoLinks.GetProjectLink(claims.UserID, claims.Role, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load repo link", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load repo link", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load repo link", "ownership_mismatch", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load repo link", "internal_error", err.Error())
+		}
+		return
+	}
+
+	var payload *responsedto.ProjectRepoLinkResponse
+	if result != nil {
+		mapped := mapper.ToProjectRepoLinkResponse(*result)
+		payload = &mapped
+	}
+
+	response.JSON(c, http.StatusOK, "repo link loaded", payload)
 }
 
 func (ctl *ProjectController) ActOnService(c *gin.Context) {

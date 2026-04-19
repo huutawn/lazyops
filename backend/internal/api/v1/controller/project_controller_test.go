@@ -35,6 +35,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	protected.Use(middleware.Authenticate(nil))
 	protected.GET("/projects", projectController.List)
 	protected.POST("/projects", projectController.Create)
+	protected.GET("/projects/:id/repo-link", projectController.GetRepoLink)
 	protected.POST("/projects/:id/repo-link", projectController.LinkRepo)
 	protected.GET("/projects/:id/services", projectController.ListServices)
 	protected.PUT("/projects/:id/services", projectController.ConfigureServices)
@@ -68,6 +69,7 @@ func TestDay9ProtectedRoutesRequireAuthentication(t *testing.T) {
 	}{
 		{name: "list projects", method: http.MethodGet, target: "/api/v1/projects"},
 		{name: "create project", method: http.MethodPost, target: "/api/v1/projects", body: `{"name":"Acme"}`},
+		{name: "get repo link", method: http.MethodGet, target: "/api/v1/projects/prj_123/repo-link"},
 		{name: "link repo", method: http.MethodPost, target: "/api/v1/projects/prj_123/repo-link", body: `{"github_installation_id":1,"github_repo_id":2}`},
 		{name: "list project services", method: http.MethodGet, target: "/api/v1/projects/prj_123/services"},
 		{name: "configure project services", method: http.MethodPut, target: "/api/v1/projects/prj_123/services", body: `{"items":[{"name":"api","path":"apps/api"}]}`},

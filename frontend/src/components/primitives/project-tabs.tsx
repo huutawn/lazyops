@@ -11,19 +11,21 @@ export type ProjectTabDefinition = {
 };
 
 export const GUIDED_PROJECT_TABS: ProjectTabDefinition[] = [
-  { label: 'Tổng quan', href: (id: string) => `/projects/${id}` },
-  { label: 'Services', href: (id: string) => `/projects/${id}/services` },
+  { label: 'Bắt đầu', href: (id: string) => `/projects/${id}` },
+  { label: 'Mã nguồn', href: (id: string) => `/projects/${id}/repo-link` },
+  { label: 'Dịch vụ', href: (id: string) => `/projects/${id}/services` },
   { label: 'Biến môi trường', href: (id: string) => `/projects/${id}/env` },
   { label: 'Triển khai', href: (id: string) => `/projects/${id}/deployments` },
-  { label: 'Logs / Runtime', href: (id: string) => `/projects/${id}/observability` },
+  { label: 'Nhật ký', href: (id: string) => `/projects/${id}/observability` },
 ];
 
 export const ADMIN_PROJECT_TABS: ProjectTabDefinition[] = [
-  { label: 'Tổng quan', href: (id: string) => `/projects/${id}` },
-  { label: 'Services', href: (id: string) => `/projects/${id}/services` },
+  { label: 'Bắt đầu', href: (id: string) => `/projects/${id}` },
+  { label: 'Mã nguồn', href: (id: string) => `/projects/${id}/repo-link` },
+  { label: 'Dịch vụ', href: (id: string) => `/projects/${id}/services` },
   { label: 'Biến môi trường', href: (id: string) => `/projects/${id}/env` },
   { label: 'Triển khai', href: (id: string) => `/projects/${id}/deployments` },
-  { label: 'Logs / Runtime', href: (id: string) => `/projects/${id}/observability` },
+  { label: 'Nhật ký', href: (id: string) => `/projects/${id}/observability` },
 ];
 
 type ProjectTabsProps = {

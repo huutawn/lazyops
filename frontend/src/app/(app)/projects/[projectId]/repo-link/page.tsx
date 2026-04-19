@@ -1,62 +1,60 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { useLinkProjectRepo, repoLinkQueryKey } from '@/modules/repo-link/repo-link-hooks';
-import { linkRepoSchema, type LinkRepoFormData, type ProjectRepoLink, type GitHubRepoOption } from '@/modules/repo-link/repo-link-types';
 import { useGitHubInstallations } from '@/modules/github-sync/github-hooks';
+import { useProjectRepoLink } from '@/modules/repo-link/repo-link-hooks';
+import { ProjectRepoLinkModal } from '@/modules/repo-link/repo-link-modal';
+import type { ProjectRepoLink } from '@/modules/repo-link/repo-link-types';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { EmptyState } from '@/components/primitives/empty-state';
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
-import { Modal } from '@/components/primitives/modal';
-import { FormField, FormInput, FormButton } from '@/components/forms/form-fields';
 
 export default function RepoLinkPage() {
   const params = useParams();
   const projectId = params?.projectId as string;
-
   const { data: reposData, isLoading: reposLoading, isError: reposError } = useGitHubInstallations();
+  const repoLink = useProjectRepoLink(projectId);
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [linkedRepo, setLinkedRepo] = useState<ProjectRepoLink | null>(null);
 
-  if (reposLoading) {
+  if (reposLoading || repoLink.isLoading) {
     return <SkeletonPage title cards={2} />;
   }
 
-  if (reposError) {
+  if (reposError || repoLink.isError) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Repository Link" subtitle="Connect a GitHub repository to this project." />
+        <PageHeader title="Mã nguồn" subtitle="Kết nối repository để LazyOps biết lấy code từ đâu." />
         <ErrorState
-          title="Failed to load GitHub repositories"
-          message="Could not fetch your GitHub repositories. Make sure you have synced your GitHub App installations."
+          title="Không tải được cấu hình mã nguồn"
+          message="Không thể lấy danh sách repository hoặc trạng thái kết nối hiện tại."
         />
       </div>
     );
   }
 
   const repos = reposData?.items ?? [];
+  const linkedRepo = repoLink.data ?? null;
 
   if (repos.length === 0) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Repository Link" subtitle="Connect a GitHub repository to this project." />
-        <SectionCard title="No repositories available" description="You need to sync your GitHub installations first.">
+        <PageHeader title="Mã nguồn" subtitle="Kết nối repository để LazyOps biết lấy code từ đâu." />
+        <SectionCard title="Chưa có repository khả dụng" description="Bạn cần kết nối GitHub App trước khi chọn repository cho project này.">
           <EmptyState
-            title="No GitHub repositories found"
-            description="Sync your GitHub App installations to see available repositories."
+            title="Chưa thấy repository nào"
+            description="Hãy kết nối GitHub App hoặc sync lại danh sách repository rồi quay lại đây."
             action={
-              <a
+              <Link
                 href="/integrations/github"
                 className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
               >
-                Go to GitHub App
-              </a>
+                Mở GitHub App
+              </Link>
             }
           />
         </SectionCard>
@@ -67,15 +65,15 @@ export default function RepoLinkPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Repository Link"
-        subtitle="Connect this project to a GitHub repository for automated deployments."
+        title="Mã nguồn"
+        subtitle="Chọn repository và nhánh theo dõi. Sau bước này bạn có thể nối máy chủ và deploy ngay từ tab Bắt đầu."
         actions={
           <button
             type="button"
             className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
             onClick={() => setShowLinkModal(true)}
           >
-            Link repository
+            {linkedRepo ? 'Đổi repository' : 'Kết nối repository'}
           </button>
         }
       />
@@ -83,32 +81,28 @@ export default function RepoLinkPage() {
       {linkedRepo ? (
         <LinkedRepoCard repo={linkedRepo} />
       ) : (
-        <SectionCard title="No repository linked" description="Link a GitHub repository to enable automated deployments.">
+        <SectionCard title="Chưa kết nối mã nguồn" description="Project này chưa biết phải lấy code từ repository nào.">
           <EmptyState
-            title="No repository linked yet"
-            description="Select a GitHub repository to link to this project. Once linked, pushes to the tracked branch will trigger deployments."
+            title="Hãy kết nối repository đầu tiên"
+            description="Chọn đúng repo và nhánh theo dõi để LazyOps có thể build và deploy cho project này."
             action={
               <button
                 type="button"
                 className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                 onClick={() => setShowLinkModal(true)}
               >
-                Link repository
+                Kết nối repository
               </button>
             }
           />
         </SectionCard>
       )}
 
-      <LinkRepoModal
+      <ProjectRepoLinkModal
         projectId={projectId}
         repos={repos}
         open={showLinkModal}
         onClose={() => setShowLinkModal(false)}
-        onSuccess={(repo) => {
-          setLinkedRepo(repo);
-          setShowLinkModal(false);
-        }}
       />
     </div>
   );
@@ -116,154 +110,20 @@ export default function RepoLinkPage() {
 
 function LinkedRepoCard({ repo }: { repo: ProjectRepoLink }) {
   return (
-    <SectionCard title="Linked repository" description={repo.repo_full_name}>
+    <SectionCard title="Repository đang dùng" description={repo.repo_full_name}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <SummaryField label="Repository" value={repo.repo_full_name} />
-        <SummaryField label="Tracked branch" value={repo.tracked_branch} />
-        <SummaryField label="Preview deploys" value={repo.preview_enabled ? 'Enabled' : 'Disabled'} />
-        <SummaryField label="Installation" value={String(repo.github_installation_id)} />
-        <SummaryField label="Linked at" value={new Date(repo.created_at).toLocaleString()} />
+        <SummaryField label="Nhánh theo dõi" value={repo.tracked_branch} />
+        <SummaryField label="Preview deploy" value={repo.preview_enabled ? 'Bật' : 'Tắt'} />
+        <SummaryField label="Kết nối lúc" value={new Date(repo.created_at).toLocaleString()} />
       </div>
-      <div className="mt-3 flex items-center gap-2">
-        <StatusBadge label="Linked" variant="success" size="md" />
+      <div className="mt-4 flex items-center gap-2">
+        <StatusBadge label="Đã kết nối" variant="success" size="md" />
         <span className="text-sm text-lazyops-muted">
-          Pushes to <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-xs">{repo.tracked_branch}</code> will trigger deployments.
+          Mỗi lần push vào nhánh <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-xs">{repo.tracked_branch}</code> sẽ sẵn sàng cho build/deploy.
         </span>
       </div>
     </SectionCard>
-  );
-}
-
-type LinkRepoModalProps = {
-  projectId: string;
-  repos: GitHubRepoOption[];
-  open: boolean;
-  onClose: () => void;
-  onSuccess: (repo: ProjectRepoLink) => void;
-};
-
-function LinkRepoModal({ projectId, repos, open, onClose, onSuccess }: LinkRepoModalProps) {
-  const [selectedRepoId, setSelectedRepoId] = useState<number | null>(null);
-
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    formState: { errors, isSubmitting },
-  } = useForm<LinkRepoFormData>({
-    resolver: zodResolver(linkRepoSchema),
-    defaultValues: {
-      github_installation_id: 0,
-      github_repo_id: 0,
-      tracked_branch: 'main',
-      preview_enabled: false,
-    },
-  });
-
-  const linkRepo = useLinkProjectRepo(projectId);
-  const serverError = linkRepo.error?.message ?? null;
-
-  const selectedRepo = useMemo(
-    () => repos.find((r) => r.github_repo_id === selectedRepoId),
-    [repos, selectedRepoId],
-  );
-
-  const handleRepoSelect = (repo: GitHubRepoOption) => {
-    setSelectedRepoId(repo.github_repo_id);
-    setValue('github_installation_id', repo.github_installation_id);
-    setValue('github_repo_id', repo.github_repo_id);
-  };
-
-  const onSubmit = (data: LinkRepoFormData) => {
-    return linkRepo.mutateAsync(data).then((result) => {
-      if (result.data) {
-        onSuccess(result.data);
-      }
-    });
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="Link repository" size="lg">
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
-        <div>
-          <label className="mb-2 block text-sm font-medium text-lazyops-text">Select repository</label>
-          <div className="max-h-64 overflow-y-auto rounded-lg border border-lazyops-border">
-            {repos.map((repo) => {
-              const isSelected = selectedRepoId === repo.github_repo_id;
-              return (
-                <button
-                  key={repo.github_repo_id}
-                  type="button"
-                  className={`flex w-full items-center justify-between border-b border-lazyops-border/50 px-4 py-3 text-left last:border-b-0 transition-colors ${
-                    isSelected
-                      ? 'bg-primary/10'
-                      : 'hover:bg-lazyops-border/10'
-                  }`}
-                  onClick={() => handleRepoSelect(repo)}
-                >
-                  <div>
-                    <span className="text-sm font-medium text-lazyops-text">{repo.full_name}</span>
-                    <span className="ml-2 text-xs text-lazyops-muted">
-                      ({repo.installation_account_login})
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge
-                      label={repo.private ? 'Private' : 'Public'}
-                      variant={repo.private ? 'warning' : 'neutral'}
-                      size="sm"
-                      dot={false}
-                    />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          {errors.github_repo_id && (
-            <p className="mt-1 text-xs text-health-unhealthy">{errors.github_repo_id.message}</p>
-          )}
-        </div>
-
-        {selectedRepo && (
-          <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-4">
-            <h4 className="mb-3 text-sm font-medium text-lazyops-text">Configuration</h4>
-            <div className="flex flex-col gap-4">
-              <FormField label="Tracked branch" error={errors.tracked_branch?.message}>
-                <FormInput
-                  type="text"
-                  placeholder="main"
-                  error={!!errors.tracked_branch}
-                  {...register('tracked_branch')}
-                />
-                <p className="mt-1 text-[10px] text-lazyops-muted/60">
-                  Pushes to this branch will trigger deployments.
-                </p>
-              </FormField>
-
-              <label className="flex items-center gap-2 text-sm text-lazyops-text">
-                <input
-                  type="checkbox"
-                  className="accent-primary"
-                  {...register('preview_enabled')}
-                />
-                Enable preview deployments for pull requests
-              </label>
-            </div>
-          </div>
-        )}
-
-        {serverError && (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
-            {serverError}
-          </div>
-        )}
-
-        <FormButton type="submit" loading={isSubmitting || linkRepo.isPending}>
-          Link repository
-        </FormButton>
-      </form>
-    </Modal>
   );
 }
 

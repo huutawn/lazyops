@@ -8,9 +8,9 @@ type ProjectServicesPageProps = {
 };
 
 const SOURCE_FILTERS = [
-  { key: 'all', label: 'Tat ca' },
-  { key: 'repo', label: 'Repo services' },
-  { key: 'internal', label: 'Internal services' },
+  { key: 'all', label: 'Tất cả' },
+  { key: 'repo', label: 'Từ repository' },
+  { key: 'internal', label: 'Nội bộ' },
 ] as const;
 
 export default async function ProjectServicesPage({ params, searchParams }: ProjectServicesPageProps) {
@@ -21,8 +21,8 @@ export default async function ProjectServicesPage({ params, searchParams }: Proj
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Services"
-        subtitle="Service inventory nay la source of truth duy nhat cua project. Repo service va internal service cung song trong mot catalog thong nhat."
+        title="Dịch vụ"
+        subtitle="Mỗi service là một phần chạy độc lập của project. Hãy cấu hình source, database và cách truy cập thật rõ ràng."
       />
       <div className="flex flex-wrap gap-3">
         {SOURCE_FILTERS.map((filter) => {
@@ -48,7 +48,7 @@ export default async function ProjectServicesPage({ params, searchParams }: Proj
       </div>
       <ProjectServiceInventory
         projectId={projectId}
-        description="Repo service va internal service deu duoc doc tu cung mot API service inventory. Lane internal-services cu chi con la compatibility path."
+        description="Bạn có thể xem, sửa và deploy từng service ngay tại đây. Thông tin kỹ thuật sâu hơn được đặt trong phần Nâng cao."
         compact
         sourceFilter={sourceFilter}
       />
