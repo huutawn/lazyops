@@ -458,6 +458,17 @@ spec:
                 name: {{ .Name }}-env
 {{- end }}
 {{- if .HasHealthCheck }}
+          startupProbe:
+{{- if .HealthPath }}
+            httpGet:
+              path: {{ .HealthPath }}
+              port: {{ .HealthPort }}
+{{- else }}
+            tcpSocket:
+              port: {{ .HealthPort }}
+{{- end }}
+            periodSeconds: 5
+            failureThreshold: 18
           readinessProbe:
 {{- if .HealthPath }}
             httpGet:

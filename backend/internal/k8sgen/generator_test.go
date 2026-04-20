@@ -78,6 +78,8 @@ func TestGeneratorRendersNamespaceServiceIngressSecretAndPVC(t *testing.T) {
 		"targetPort: 8080",
 		"kind: Deployment",
 		"image: ghcr.io/lazyops/api:rev_123",
+		"startupProbe:",
+		"failureThreshold: 18",
 		"kind: Ingress",
 		"host: api.lazyops-prj-123.203.0.113.10.nip.io",
 		"kind: PersistentVolumeClaim",
