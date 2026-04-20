@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"lazyops-server/internal/config"
 )
 
 func TestDetectFrontendMetadataNext(t *testing.T) {
@@ -95,6 +97,34 @@ func TestSelectSuggestedTargetPortChoosesSuggestedHealthcheckEvenWhenNotExposed(
 
 	if port != 3000 || confidence != "medium" {
 		t.Fatalf("expected healthcheck port 3000 with medium confidence, got port=%d confidence=%q", port, confidence)
+	}
+}
+
+func TestImageNameForServiceUsesDistinctRepositoryPerService(t *testing.T) {
+	worker := &Worker{
+		cfg: config.Config{
+			BuildWorker: config.BuildWorkerConfig{
+				RegistryHost: "docker.io",
+			},
+		},
+	}
+	input := BuildWorkerInput{
+		ProjectID: "prj_demo",
+		RepoOwner: "tawn",
+		CommitSHA: "6918dcb1117a0fad1b343f4e370ec65723de1ad4",
+	}
+
+	beImage := worker.imageNameForService(input, "be")
+	feImage := worker.imageNameForService(input, "fe")
+
+	if beImage == feImage {
+		t.Fatalf("expected distinct image refs per service, got be=%q fe=%q", beImage, feImage)
+	}
+	if beImage != "docker.io/tawn/prj_demo-be:6918dcb1117a" {
+		t.Fatalf("expected backend image ref to include service suffix, got %q", beImage)
+	}
+	if feImage != "docker.io/tawn/prj_demo-fe:6918dcb1117a" {
+		t.Fatalf("expected frontend image ref to include service suffix, got %q", feImage)
 	}
 }
 

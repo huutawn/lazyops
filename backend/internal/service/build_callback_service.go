@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -424,6 +425,9 @@ func validateBuildCallbackArtifactMetadata(expectedTargets []BuildTargetServiceR
 	if err := validateStagedServiceArtifactCoverage(normalizedTargets, artifact.ServiceArtifacts); err != nil {
 		return err
 	}
+	if err := validateServiceArtifactImageReferences(artifact.ServiceArtifacts); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -485,6 +489,9 @@ func validateStagedServiceArtifactCoverage(expectedTargets []BuildTargetServiceR
 }
 
 func validateResolvedBuildArtifacts(expectedTargets []BuildTargetServiceRecord, services []BlueprintServiceContractRecord, artifact BuildArtifactMetadataStageRecord) error {
+	if err := validateServiceArtifactImageReferences(artifact.ServiceArtifacts); err != nil {
+		return err
+	}
 	if err := validateServiceArtifactsAgainstBlueprintServices(services, artifact.ServiceArtifacts); err != nil {
 		return err
 	}
@@ -538,6 +545,36 @@ func validateServiceArtifactsAgainstBlueprintServices(services []BlueprintServic
 		parts = append(parts, "service_artifacts map ambiguously to the same compiled service: "+strings.Join(duplicates, ", "))
 	}
 	return newBuildArtifactMismatch(strings.Join(parts, "; "))
+}
+
+func validateServiceArtifactImageReferences(artifacts []BuildServiceArtifactRecord) error {
+	if len(artifacts) < 2 {
+		return nil
+	}
+	digestByImageRef := make(map[string]string, len(artifacts))
+	conflicts := make([]string, 0)
+	for _, artifact := range artifacts {
+		imageRef := strings.TrimSpace(artifact.ImageRef)
+		imageDigest := strings.TrimSpace(artifact.ImageDigest)
+		if imageRef == "" || imageDigest == "" {
+			continue
+		}
+		if priorDigest, exists := digestByImageRef[imageRef]; exists {
+			if priorDigest != imageDigest {
+				conflicts = append(conflicts, imageRef)
+			}
+			continue
+		}
+		digestByImageRef[imageRef] = imageDigest
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	sort.Strings(conflicts)
+	conflicts = slices.Compact(conflicts)
+	return newBuildArtifactMismatch(
+		"service_artifacts reuse the same image_ref with different image_digest values: " + strings.Join(conflicts, ", "),
+	)
 }
 
 func newBuildArtifactMismatch(message string) error {

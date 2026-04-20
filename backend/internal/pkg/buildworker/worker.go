@@ -347,7 +347,7 @@ func (w *Worker) imageNameForService(input BuildWorkerInput, serviceName string)
 		serviceName = "app"
 	}
 	return w.imageName(BuildWorkerInput{
-		ProjectID: input.ProjectID,
+		ProjectID: "",
 		RepoOwner: input.RepoOwner,
 		RepoName:  repoName + "-" + serviceName,
 	}, shortCommitTag(input.CommitSHA))

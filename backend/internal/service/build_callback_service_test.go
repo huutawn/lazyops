@@ -724,6 +724,44 @@ func TestBuildCallbackServiceRejectsPartialMultiServiceCallbackArtifacts(t *test
 	}
 }
 
+func TestBuildCallbackServiceRejectsSharedImageRefWithDifferentDigests(t *testing.T) {
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend"}, {ServiceName: "web", ServicePath: "fe"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(newFakeProjectStore(), newFakeBlueprintStore(), newFakeDesiredStateRevisionStore(), newFakeDeploymentStore(), buildStore, nil)
+
+	_, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName: "api",
+				ServicePath: "backend",
+				ImageRef:    "docker.io/tawn/prj_123:abc123",
+				ImageDigest: "sha256:api",
+			},
+			{
+				ServiceName: "web",
+				ServicePath: "fe",
+				ImageRef:    "docker.io/tawn/prj_123:abc123",
+				ImageDigest: "sha256:web",
+			},
+		},
+	})
+	if !errors.Is(err, ErrBuildArtifactMismatch) {
+		t.Fatalf("expected ErrBuildArtifactMismatch, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "reuse the same image_ref") {
+		t.Fatalf("expected shared image_ref detail, got %v", err)
+	}
+}
+
 func TestBuildCallbackServiceRejectsArtifactsThatDoNotMapToBlueprintServices(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:     "prj_123",
