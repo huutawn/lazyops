@@ -193,7 +193,15 @@ func (d *K3sDriver) ReconcileRevision(ctx context.Context, runtimeCtx RuntimeCon
 			continue
 		}
 		if err := d.runKubectl(ctx, runtimeCtx.Project.Namespace, "rollout", "status", fmt.Sprintf("deployment/%s", spec.Name), "--timeout=120s"); err != nil {
-			return ReconcileRevisionResult{}, wrapK3sError("k8s_rollout_failed", err, true)
+			tolerated, toleratedProgress := d.shouldTolerateRolloutStatusFailure(ctx, runtimeCtx.Project.Namespace, spec.Name, err)
+			if !tolerated {
+				return ReconcileRevisionResult{}, wrapK3sError("k8s_rollout_failed", err, true)
+			}
+			appliedSteps = append(appliedSteps, "rollout_status:tolerated:"+spec.Name)
+			if toleratedProgress.Status != "" {
+				appliedSteps = append(appliedSteps, "rollout_status:"+spec.Name+":"+toleratedProgress.Status)
+			}
+			continue
 		}
 		appliedSteps = append(appliedSteps, "rollout_status:"+spec.Name)
 	}
@@ -1205,6 +1213,38 @@ func (d *K3sDriver) collectRolloutProgress(ctx context.Context, runtimeCtx Runti
 		progress = append(progress, buildRolloutProgress(spec.Name, deploymentJSON, d.now()))
 	}
 	return progress
+}
+
+func (d *K3sDriver) shouldTolerateRolloutStatusFailure(ctx context.Context, namespace, serviceName string, rolloutErr error) (bool, RolloutProgress) {
+	progress := RolloutProgress{
+		ServiceName: strings.TrimSpace(serviceName),
+		Status:      "unverified",
+		ObservedAt:  d.now(),
+	}
+	if rolloutErr == nil || strings.TrimSpace(serviceName) == "" {
+		return false, progress
+	}
+
+	deploymentJSON, err := d.kubectlOutput(ctx, namespace, "get", fmt.Sprintf("deployment/%s", serviceName), "-o", "json")
+	if err != nil {
+		progress.Message = fmt.Sprintf("collect deployment rollout status failed: %s", err.Error())
+		return false, progress
+	}
+	progress = buildRolloutProgress(serviceName, deploymentJSON, d.now())
+	if progress.Status != "ready" {
+		return false, progress
+	}
+
+	errText := strings.ToLower(rolloutErr.Error())
+	if strings.Contains(errText, "old replicas are pending termination") {
+		progress.Message = "deployment is ready; tolerating old replicas pending termination"
+		return true, progress
+	}
+	if strings.Contains(errText, "timed out waiting for the condition") {
+		progress.Message = "deployment is ready; tolerating rollout status timeout"
+		return true, progress
+	}
+	return false, progress
 }
 
 func buildRolloutProgress(serviceName string, deploymentJSON []byte, observedAt time.Time) RolloutProgress {

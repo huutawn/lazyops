@@ -314,3 +314,108 @@ func TestReconcileRevisionAppliesNamespaceBeforeDryRun(t *testing.T) {
 		t.Fatalf("expected resource apply after dry-run, got %q", lines[3])
 	}
 }
+
+func TestReconcileRevisionToleratesRolloutTimeoutWhenDeploymentIsReady(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "kubectl.log")
+	kubectlPath := filepath.Join(root, "kubectl")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> \"" + logPath + "\"\n" +
+		"case \"$*\" in\n" +
+		"  *\"get namespace lazyops-test -o name\"*)\n" +
+		"    printf 'namespace/lazyops-test\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"rollout status deployment/api\"*)\n" +
+		"    printf 'Waiting for deployment \"api\" rollout to finish: 1 old replicas are pending termination...\\nerror: timed out waiting for the condition\\n' >&2\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"  *\"get deployment/api -o json\"*)\n" +
+		"    printf '{\"metadata\":{\"generation\":2},\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"api\",\"ports\":[{\"containerPort\":8080,\"name\":\"http\"}]}]}}},\"status\":{\"observedGeneration\":2,\"replicas\":1,\"readyReplicas\":1,\"updatedReplicas\":1,\"availableReplicas\":1,\"conditions\":[{\"type\":\"Available\",\"status\":\"True\",\"message\":\"deployment has minimum availability\"}]}}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"get service/api -o json\"*)\n" +
+		"    printf '{\"spec\":{\"ports\":[{\"port\":8080,\"targetPort\":\"http\"}]}}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"get service/traefik -o json\"*)\n" +
+		"    printf '{}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"apply -f \"*\"k8s-manifest-namespaces.yaml\"*)\n" +
+		"    printf 'namespace/lazyops-test created\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"apply --dry-run=server -f \"*\"k8s-manifest-resources.yaml\"*)\n" +
+		"    printf 'deployment.apps/api configured\\nservice/api configured\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"apply -f \"*\"k8s-manifest-resources.yaml\"*)\n" +
+		"    printf 'deployment.apps/api configured\\nservice/api configured\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"printf 'unexpected kubectl args: %s\\n' \"$*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+
+	driver := NewK3sDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root, kubectlPath, "")
+	payload := samplePreparePayload(contracts.RuntimeModeDistributedK3s)
+	payload.Project.Namespace = "lazyops-test"
+	payload.Revision.Namespace = "lazyops-test"
+	payload.Revision.ServiceSpecs = []contracts.K3sServiceSpecPayload{
+		{
+			Name:        "api",
+			Kind:        "app",
+			Path:        "apps/api",
+			TargetPort:  8080,
+			ServicePort: 8080,
+			Replicas:    1,
+		},
+	}
+	payload.Revision.Services = nil
+	payload.Revision.InternalBindings = nil
+	payload.Revision.PublicDomains = nil
+	payload.Revision.ManifestBundle = contracts.ManifestBundlePayload{
+		Namespace: "lazyops-test",
+		CombinedYAML: joinManifestDocuments([]string{
+			"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: lazyops-test",
+			"apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  selector:\n    app.kubernetes.io/name: api\n  ports:\n    - port: 8080\n      targetPort: 8080",
+			"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: api\n    spec:\n      containers:\n        - name: api\n          image: nginxinc/nginx-unprivileged:stable-alpine\n          ports:\n            - containerPort: 8080\n              name: http",
+		}),
+		Documents: []contracts.ManifestDocumentPayload{
+			{
+				Kind:    "Namespace",
+				Name:    "lazyops-test",
+				Path:    "namespace.yaml",
+				Content: "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: lazyops-test",
+			},
+			{
+				Kind:    "Service",
+				Name:    "api",
+				Path:    "api-service.yaml",
+				Content: "apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  selector:\n    app.kubernetes.io/name: api\n  ports:\n    - port: 8080\n      targetPort: 8080",
+			},
+			{
+				Kind:    "Deployment",
+				Name:    "api",
+				Path:    "api-deployment.yaml",
+				Content: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  namespace: lazyops-test\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: api\n    spec:\n      containers:\n        - name: api\n          image: nginxinc/nginx-unprivileged:stable-alpine\n          ports:\n            - containerPort: 8080\n              name: http",
+			},
+		},
+	}
+
+	runtimeCtx, err := ContextFromPreparePayload(payload)
+	if err != nil {
+		t.Fatalf("build runtime context: %v", err)
+	}
+	result, err := driver.ReconcileRevision(context.Background(), runtimeCtx)
+	if err != nil {
+		t.Fatalf("reconcile revision should tolerate rollout timeout when ready: %v", err)
+	}
+	if !strings.Contains(strings.Join(result.AppliedSteps, ","), "rollout_status:tolerated:api") {
+		t.Fatalf("expected tolerated rollout step, got %#v", result.AppliedSteps)
+	}
+}
