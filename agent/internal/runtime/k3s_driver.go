@@ -999,6 +999,9 @@ type deploymentRolloutState struct {
 	Metadata struct {
 		Generation int64 `json:"generation"`
 	} `json:"metadata"`
+	Spec struct {
+		Replicas int `json:"replicas"`
+	} `json:"spec"`
 	Status struct {
 		ObservedGeneration int64 `json:"observedGeneration"`
 		Replicas           int   `json:"replicas"`
@@ -1258,19 +1261,23 @@ func buildRolloutProgress(serviceName string, deploymentJSON []byte, observedAt 
 		progress.Message = fmt.Sprintf("decode deployment rollout status failed: %s", err.Error())
 		return progress
 	}
-	progress.DesiredReplicas = deployment.Status.Replicas
+	desiredReplicas := deployment.Spec.Replicas
+	if desiredReplicas <= 0 {
+		desiredReplicas = deployment.Status.Replicas
+	}
+	progress.DesiredReplicas = desiredReplicas
 	progress.ReadyReplicas = deployment.Status.ReadyReplicas
 	progress.UpdatedReplicas = deployment.Status.UpdatedReplicas
 	progress.AvailableReplicas = deployment.Status.AvailableReplicas
 	progress.ObservedGeneration = deployment.Status.ObservedGeneration
 
 	switch {
-	case deployment.Status.Replicas == 0:
+	case desiredReplicas == 0:
 		progress.Status = "scaled_to_zero"
 		progress.Message = "deployment has zero desired replicas"
-	case deployment.Status.ReadyReplicas >= deployment.Status.Replicas &&
-		deployment.Status.AvailableReplicas >= deployment.Status.Replicas &&
-		deployment.Status.UpdatedReplicas >= deployment.Status.Replicas:
+	case deployment.Status.ReadyReplicas >= desiredReplicas &&
+		deployment.Status.AvailableReplicas >= desiredReplicas &&
+		deployment.Status.UpdatedReplicas >= desiredReplicas:
 		progress.Status = "ready"
 		progress.Message = "deployment replicas are fully available"
 	default:

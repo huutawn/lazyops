@@ -61,6 +61,7 @@ func TestBuildPortApplyObservationMatchesExpectedPorts(t *testing.T) {
 func TestBuildRolloutProgressReady(t *testing.T) {
 	progress := buildRolloutProgress("api", []byte(`{
 		"metadata":{"generation":3},
+		"spec":{"replicas":2},
 		"status":{
 			"observedGeneration":3,
 			"replicas":2,
@@ -76,6 +77,28 @@ func TestBuildRolloutProgressReady(t *testing.T) {
 	}
 	if progress.ReadyReplicas != 2 || progress.DesiredReplicas != 2 {
 		t.Fatalf("unexpected rollout progress: %#v", progress)
+	}
+}
+
+func TestBuildRolloutProgressUsesDesiredReplicasDuringRollingUpdate(t *testing.T) {
+	progress := buildRolloutProgress("api", []byte(`{
+		"metadata":{"generation":4},
+		"spec":{"replicas":1},
+		"status":{
+			"observedGeneration":4,
+			"replicas":2,
+			"readyReplicas":2,
+			"updatedReplicas":1,
+			"availableReplicas":2,
+			"conditions":[{"type":"Available","status":"True","message":"old replica pending termination"}]
+		}
+	}`), time.Date(2026, 4, 20, 3, 0, 0, 0, time.UTC))
+
+	if progress.Status != "ready" {
+		t.Fatalf("expected ready status during rolling update, got %#v", progress)
+	}
+	if progress.DesiredReplicas != 1 {
+		t.Fatalf("expected desired replicas to come from spec.replicas, got %#v", progress)
 	}
 }
 
