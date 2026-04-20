@@ -118,6 +118,9 @@ func (c *ServiceInventoryBlueprintCompiler) Compile(project models.Project, inpu
 		SourceRef:  sourceRef,
 		Compiled:   compiled,
 	}
+	if err := validateServiceArtifactsAgainstBlueprintServices(record.Compiled.Services, artifact.ServiceArtifacts); err != nil {
+		return nil, err
+	}
 	if artifact.ImageRef != "" || artifact.ArtifactRef != "" || artifact.CommitSHA != "" || len(artifact.ServiceArtifacts) > 0 {
 		appliedServices = applyArtifactToBlueprintServices(&record, BuildArtifactMetadataStageRecord{
 			CommitSHA:        artifact.CommitSHA,

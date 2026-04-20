@@ -1,6 +1,10 @@
 package service
 
-import "time"
+import (
+	"sort"
+	"strings"
+	"time"
+)
 
 const (
 	BuildJobStatusQueued    = "queued"
@@ -143,4 +147,65 @@ type BuildFailureRealtimePayload struct {
 	CommitSHA        string                           `json:"commit_sha"`
 	TrackedBranch    string                           `json:"tracked_branch"`
 	ArtifactMetadata BuildArtifactMetadataStageRecord `json:"artifact_metadata"`
+}
+
+func normalizeBuildTargetServices(items []BuildTargetServiceRecord) []BuildTargetServiceRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]BuildTargetServiceRecord, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.ServiceName)
+		path := strings.TrimSpace(item.ServicePath)
+		if name == "" || path == "" {
+			continue
+		}
+		key := buildTargetServiceKey(name, path)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, BuildTargetServiceRecord{
+			ServiceName: name,
+			ServicePath: path,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ServicePath != out[j].ServicePath {
+			return out[i].ServicePath < out[j].ServicePath
+		}
+		return out[i].ServiceName < out[j].ServiceName
+	})
+	return out
+}
+
+func buildTargetServiceKey(serviceName, servicePath string) string {
+	return normalizeArtifactServiceMatcher(serviceName) + "|" + normalizeArtifactServiceMatcher(servicePath)
+}
+
+func buildTargetServiceSummaries(items []BuildTargetServiceRecord) []string {
+	normalized := normalizeBuildTargetServices(items)
+	if len(normalized) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(normalized))
+	for _, item := range normalized {
+		out = append(out, strings.TrimSpace(item.ServiceName)+"@"+strings.TrimSpace(item.ServicePath))
+	}
+	return out
+}
+
+func buildCallbackRequiredFields(serviceTargets []BuildTargetServiceRecord) []string {
+	fields := []string{
+		"build_job_id",
+		"project_id",
+		"commit_sha",
+		"status",
+		"metadata.detected_services",
+	}
+	if len(normalizeBuildTargetServices(serviceTargets)) > 1 {
+		return append(fields, "metadata.service_artifacts")
+	}
+	return append(fields, "image_ref", "image_digest")
 }

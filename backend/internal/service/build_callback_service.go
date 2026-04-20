@@ -96,6 +96,10 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 	if strings.TrimSpace(job.CommitSHA) != commitSHA {
 		return nil, ErrBuildArtifactMismatch
 	}
+	buildJobRecord, err := ToBuildJobRecord(*job)
+	if err != nil {
+		return nil, err
+	}
 
 	artifactMetadata, err := normalizeBuildArtifactMetadata(
 		status,
@@ -112,6 +116,9 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 		cmd.SuggestedHealthcheck,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateBuildCallbackArtifactMetadata(buildJobRecord.WorkerInput.ServiceTargets, status, artifactMetadata); err != nil {
 		return nil, err
 	}
 	artifactMetadataJSON, err := json.Marshal(artifactMetadata)
@@ -135,14 +142,14 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 	job.CompletedAt = completedAt
 	job.UpdatedAt = now
 
-	buildJobRecord, err := ToBuildJobRecord(*job)
+	buildJobRecord, err = ToBuildJobRecord(*job)
 	if err != nil {
 		return nil, err
 	}
 
 	result := &BuildCallbackResult{BuildJob: buildJobRecord}
 	if status == BuildJobStatusSucceeded {
-		revision, appliedServices, err := s.createArtifactReadyRevision(*job, artifactMetadata)
+		revision, appliedServices, err := s.createArtifactReadyRevision(*job, buildJobRecord.WorkerInput.ServiceTargets, artifactMetadata)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +188,7 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 	return result, nil
 }
 
-func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, artifact BuildArtifactMetadataStageRecord) (*DesiredStateRevisionRecord, []string, error) {
+func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, expectedTargets []BuildTargetServiceRecord, artifact BuildArtifactMetadataStageRecord) (*DesiredStateRevisionRecord, []string, error) {
 	if s.revisions == nil {
 		return nil, nil, nil
 	}
@@ -227,6 +234,9 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 		}
 		blueprintRecord = parsed
 		appliedServices = applyArtifactToBlueprintServices(&blueprintRecord, artifact)
+	}
+	if err := validateResolvedBuildArtifacts(expectedTargets, blueprintRecord.Compiled.Services, artifact); err != nil {
+		return nil, nil, err
 	}
 
 	blueprintRecord.Compiled.ArtifactMetadata = BlueprintArtifactMetadata{
@@ -401,6 +411,137 @@ func normalizeBuildArtifactMetadata(
 	}
 	artifact.ArtifactRef = deriveBuildArtifactRef(artifact.ImageRef, artifact.ImageDigest)
 	return artifact, nil
+}
+
+func validateBuildCallbackArtifactMetadata(expectedTargets []BuildTargetServiceRecord, status string, artifact BuildArtifactMetadataStageRecord) error {
+	if status != BuildJobStatusSucceeded {
+		return nil
+	}
+	normalizedTargets := normalizeBuildTargetServices(expectedTargets)
+	if len(normalizedTargets) == 0 {
+		return nil
+	}
+	if err := validateStagedServiceArtifactCoverage(normalizedTargets, artifact.ServiceArtifacts); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateStagedServiceArtifactCoverage(expectedTargets []BuildTargetServiceRecord, artifacts []BuildServiceArtifactRecord) error {
+	if len(expectedTargets) == 0 {
+		return nil
+	}
+	if len(artifacts) == 0 {
+		if len(expectedTargets) > 1 {
+			return newBuildArtifactMismatch(
+				fmt.Sprintf(
+					"multi-service build callback requires metadata.service_artifacts for staged targets %s",
+					strings.Join(buildTargetServiceSummaries(expectedTargets), ", "),
+				),
+			)
+		}
+		return nil
+	}
+
+	expectedByKey := make(map[string]BuildTargetServiceRecord, len(expectedTargets))
+	for _, target := range expectedTargets {
+		expectedByKey[buildTargetServiceKey(target.ServiceName, target.ServicePath)] = target
+	}
+
+	missing := make([]string, 0)
+	unexpected := make([]string, 0)
+	seen := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		key := buildTargetServiceKey(artifact.ServiceName, artifact.ServicePath)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := expectedByKey[key]; !ok {
+			unexpected = append(unexpected, strings.TrimSpace(artifact.ServiceName)+"@"+strings.TrimSpace(artifact.ServicePath))
+		}
+	}
+	for key, target := range expectedByKey {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		missing = append(missing, strings.TrimSpace(target.ServiceName)+"@"+strings.TrimSpace(target.ServicePath))
+	}
+	sort.Strings(missing)
+	sort.Strings(unexpected)
+
+	if len(missing) == 0 && len(unexpected) == 0 {
+		return nil
+	}
+
+	parts := make([]string, 0, 2)
+	if len(missing) > 0 {
+		parts = append(parts, "missing service_artifacts for "+strings.Join(missing, ", "))
+	}
+	if len(unexpected) > 0 {
+		parts = append(parts, "unexpected service_artifacts for "+strings.Join(unexpected, ", "))
+	}
+	return newBuildArtifactMismatch(strings.Join(parts, "; "))
+}
+
+func validateResolvedBuildArtifacts(expectedTargets []BuildTargetServiceRecord, services []BlueprintServiceContractRecord, artifact BuildArtifactMetadataStageRecord) error {
+	if err := validateServiceArtifactsAgainstBlueprintServices(services, artifact.ServiceArtifacts); err != nil {
+		return err
+	}
+	if len(normalizeBuildTargetServices(expectedTargets)) > 1 && len(artifact.ServiceArtifacts) == 0 {
+		return newBuildArtifactMismatch(
+			"multi-service build callback cannot fall back to a shared top-level image without metadata.service_artifacts",
+		)
+	}
+	return nil
+}
+
+func validateServiceArtifactsAgainstBlueprintServices(services []BlueprintServiceContractRecord, artifacts []BuildServiceArtifactRecord) error {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	ambiguous := make([]string, 0)
+	duplicates := make([]string, 0)
+	seen := make(map[int]string, len(artifacts))
+	unmapped := make([]string, 0)
+	for _, artifact := range artifacts {
+		matches := resolveServiceArtifactTargetIndexes(services, artifact)
+		summary := strings.TrimSpace(artifact.ServiceName) + "@" + strings.TrimSpace(artifact.ServicePath)
+		switch len(matches) {
+		case 0:
+			unmapped = append(unmapped, summary)
+			continue
+		case 1:
+			if prior, exists := seen[matches[0]]; exists {
+				duplicates = append(duplicates, prior+" and "+summary)
+				continue
+			}
+			seen[matches[0]] = summary
+		default:
+			ambiguous = append(ambiguous, summary)
+		}
+	}
+	sort.Strings(ambiguous)
+	sort.Strings(unmapped)
+	sort.Strings(duplicates)
+	if len(unmapped) == 0 && len(duplicates) == 0 && len(ambiguous) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, 3)
+	if len(unmapped) > 0 {
+		parts = append(parts, "service_artifacts do not map to compiled services: "+strings.Join(unmapped, ", "))
+	}
+	if len(ambiguous) > 0 {
+		parts = append(parts, "service_artifacts map ambiguously to multiple compiled services: "+strings.Join(ambiguous, ", "))
+	}
+	if len(duplicates) > 0 {
+		parts = append(parts, "service_artifacts map ambiguously to the same compiled service: "+strings.Join(duplicates, ", "))
+	}
+	return newBuildArtifactMismatch(strings.Join(parts, "; "))
+}
+
+func newBuildArtifactMismatch(message string) error {
+	return fmt.Errorf("%w: %s", ErrBuildArtifactMismatch, strings.TrimSpace(message))
 }
 
 func normalizeBuildServiceArtifacts(items []BuildServiceArtifactRecord) []BuildServiceArtifactRecord {
@@ -647,7 +788,11 @@ func applyServiceArtifactsToBlueprintServices(blueprint *BlueprintRecord, artifa
 	applied := make([]string, 0, len(artifacts))
 	seen := make(map[string]struct{}, len(artifacts))
 	for _, artifact := range artifacts {
-		index := resolveServiceArtifactTargetIndex(blueprint.Compiled.Services, artifact)
+		matches := resolveServiceArtifactTargetIndexes(blueprint.Compiled.Services, artifact)
+		if len(matches) != 1 {
+			continue
+		}
+		index := matches[0]
 		if index < 0 || index >= len(blueprint.Compiled.Services) {
 			continue
 		}
@@ -673,26 +818,54 @@ func applyServiceArtifactsToBlueprintServices(blueprint *BlueprintRecord, artifa
 }
 
 func resolveServiceArtifactTargetIndex(services []BlueprintServiceContractRecord, artifact BuildServiceArtifactRecord) int {
+	matches := resolveServiceArtifactTargetIndexes(services, artifact)
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return -1
+}
+
+func resolveServiceArtifactTargetIndexes(services []BlueprintServiceContractRecord, artifact BuildServiceArtifactRecord) []int {
 	if len(services) == 0 {
-		return -1
+		return nil
 	}
 	artifactName := normalizeArtifactServiceMatcher(artifact.ServiceName)
 	artifactPath := normalizeArtifactServiceMatcher(artifact.ServicePath)
-	for index, service := range services {
-		if artifactName != "" && normalizeArtifactServiceMatcher(service.Name) == artifactName {
-			if artifactPath == "" || matchesArtifactServicePath(service.Path, artifactPath) {
-				return index
+	if artifactName == "" && artifactPath == "" {
+		return nil
+	}
+
+	matches := make([]int, 0, len(services))
+	if artifactName != "" && artifactPath != "" {
+		for index, service := range services {
+			if normalizeArtifactServiceMatcher(service.Name) != artifactName {
+				continue
 			}
+			if !matchesArtifactServicePath(service.Path, artifactPath) {
+				continue
+			}
+			matches = append(matches, index)
+		}
+		return matches
+	}
+	if artifactName != "" {
+		for index, service := range services {
+			if normalizeArtifactServiceMatcher(service.Name) == artifactName {
+				matches = append(matches, index)
+			}
+		}
+		if len(matches) > 0 {
+			return matches
 		}
 	}
 	if artifactPath != "" {
 		for index, service := range services {
 			if matchesArtifactServicePath(service.Path, artifactPath) {
-				return index
+				matches = append(matches, index)
 			}
 		}
 	}
-	return -1
+	return matches
 }
 
 func matchesArtifactServicePath(servicePath, artifactPath string) bool {

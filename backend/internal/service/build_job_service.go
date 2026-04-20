@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"lazyops-server/internal/models"
+	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
 )
 
@@ -81,6 +82,7 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 	if err != nil {
 		return nil, err
 	}
+	serviceTargets = normalizeBuildTargetServices(serviceTargets)
 	workerInput := BuildWorkerInputRecord{
 		BuildJobID:            jobID,
 		ProjectID:             event.ProjectID,
@@ -103,16 +105,8 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 			Backoff:     "linear",
 		},
 		CallbackExpectation: BuildCallbackExpectationRecord{
-			Path: "/api/v1/builds/callback",
-			RequiredFields: []string{
-				"build_job_id",
-				"project_id",
-				"commit_sha",
-				"status",
-				"image_ref",
-				"image_digest",
-				"metadata.detected_services",
-			},
+			Path:           "/api/v1/builds/callback",
+			RequiredFields: buildCallbackRequiredFields(serviceTargets),
 		},
 	}
 
@@ -151,6 +145,15 @@ func (s *BuildJobService) EnqueueFromWebhook(deliveryID string, event GitHubWebh
 	if err != nil {
 		return nil, err
 	}
+	logger.Info("build_job_enqueued",
+		"build_job_id", record.ID,
+		"project_id", record.ProjectID,
+		"commit_sha", record.CommitSHA,
+		"repo_full_name", record.RepoFullName,
+		"service_target_count", len(record.WorkerInput.ServiceTargets),
+		"service_targets", buildTargetServiceSummaries(record.WorkerInput.ServiceTargets),
+		"callback_required_fields", record.WorkerInput.CallbackExpectation.RequiredFields,
+	)
 	return &record, nil
 }
 

@@ -666,6 +666,131 @@ func TestBuildCallbackServiceAppliesMultiServiceArtifactsFromServiceInventoryCom
 	}
 }
 
+func TestBuildCallbackServiceRejectsMultiServiceCallbackWithoutServiceArtifacts(t *testing.T) {
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend"}, {ServiceName: "web", ServicePath: "fe"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(newFakeProjectStore(), newFakeBlueprintStore(), newFakeDesiredStateRevisionStore(), newFakeDeploymentStore(), buildStore, nil)
+
+	_, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:  "bld_123",
+		ProjectID:   "prj_123",
+		CommitSHA:   "abc123def456",
+		Status:      "succeeded",
+		ImageRef:    "ghcr.io/lazyops/acme-monorepo:abc123",
+		ImageDigest: "sha256:deadbeef",
+	})
+	if !errors.Is(err, ErrBuildArtifactMismatch) {
+		t.Fatalf("expected ErrBuildArtifactMismatch, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "requires metadata.service_artifacts") {
+		t.Fatalf("expected missing service_artifacts detail, got %v", err)
+	}
+}
+
+func TestBuildCallbackServiceRejectsPartialMultiServiceCallbackArtifacts(t *testing.T) {
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend"}, {ServiceName: "web", ServicePath: "fe"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(newFakeProjectStore(), newFakeBlueprintStore(), newFakeDesiredStateRevisionStore(), newFakeDeploymentStore(), buildStore, nil)
+
+	_, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName: "api",
+				ServicePath: "backend",
+				ImageRef:    "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest: "sha256:api",
+			},
+		},
+	})
+	if !errors.Is(err, ErrBuildArtifactMismatch) {
+		t.Fatalf("expected ErrBuildArtifactMismatch, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing service_artifacts for web@fe") {
+		t.Fatalf("expected missing web artifact detail, got %v", err)
+	}
+}
+
+func TestBuildCallbackServiceRejectsArtifactsThatDoNotMapToBlueprintServices(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithServices(
+		t,
+		"bp_123",
+		"prj_123",
+		[]BlueprintServiceContractRecord{
+			{
+				Name:           "api",
+				Path:           "backend",
+				RuntimeProfile: "service",
+				Healthcheck:    map[string]any{"path": "/healthz", "port": 8080, "protocol": "http"},
+			},
+			{
+				Name:           "web",
+				Path:           "frontend",
+				Public:         true,
+				RuntimeProfile: "web",
+				Healthcheck:    map[string]any{"path": "/", "port": 3000, "protocol": "http"},
+			},
+		},
+	))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend"}, {ServiceName: "web", ServicePath: "fe"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	_, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName: "api",
+				ServicePath: "backend",
+				ImageRef:    "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest: "sha256:api",
+			},
+			{
+				ServiceName: "web",
+				ServicePath: "fe",
+				ImageRef:    "ghcr.io/lazyops/prj_123-web:abc123",
+				ImageDigest: "sha256:web",
+			},
+		},
+	})
+	if !errors.Is(err, ErrBuildArtifactMismatch) {
+		t.Fatalf("expected ErrBuildArtifactMismatch, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "do not map to compiled services") {
+		t.Fatalf("expected compiled service mapping detail, got %v", err)
+	}
+}
+
 func mustBlueprintModelWithSingleService(
 	t *testing.T,
 	blueprintID string,
@@ -691,4 +816,57 @@ func mustBlueprintModelWithSingleService(
 	}
 	base.CompiledJSON = string(compiledJSON)
 	return base
+}
+
+func mustBlueprintModelWithServices(
+	t *testing.T,
+	blueprintID string,
+	projectID string,
+	services []BlueprintServiceContractRecord,
+) models.Blueprint {
+	t.Helper()
+
+	base := mustBlueprintModel(t, blueprintID, projectID)
+	var compiled BlueprintCompiledContractRecord
+	if err := json.Unmarshal([]byte(base.CompiledJSON), &compiled); err != nil {
+		t.Fatalf("unmarshal base compiled blueprint: %v", err)
+	}
+	compiled.Services = services
+
+	compiledJSON, err := json.Marshal(compiled)
+	if err != nil {
+		t.Fatalf("marshal compiled blueprint: %v", err)
+	}
+	base.CompiledJSON = string(compiledJSON)
+	return base
+}
+
+func mustBuildWorkerInputJSON(
+	t *testing.T,
+	buildJobID string,
+	projectID string,
+	commitSHA string,
+	serviceTargets []BuildTargetServiceRecord,
+) string {
+	t.Helper()
+
+	payload, err := json.Marshal(BuildWorkerInputRecord{
+		BuildJobID:            buildJobID,
+		ProjectID:             projectID,
+		CommitSHA:             commitSHA,
+		ServiceTargets:        serviceTargets,
+		ArtifactMetadataStage: BuildArtifactMetadataStageRecord{CommitSHA: commitSHA},
+		RetryPolicy: BuildRetryPolicyRecord{
+			MaxAttempts: DefaultBuildJobMaxAttempts,
+			Backoff:     "linear",
+		},
+		CallbackExpectation: BuildCallbackExpectationRecord{
+			Path:           "/api/v1/builds/callback",
+			RequiredFields: buildCallbackRequiredFields(serviceTargets),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal build worker input: %v", err)
+	}
+	return string(payload)
 }

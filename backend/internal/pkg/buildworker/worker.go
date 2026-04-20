@@ -149,6 +149,12 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 		w.failJob(job.ID, fmt.Sprintf("parse worker input: %v", err))
 		return
 	}
+	slog.Info("build job worker input parsed",
+		"job_id", job.ID,
+		"project_id", input.ProjectID,
+		"service_target_count", len(input.ServiceTargets),
+		"service_targets", normalizeBuildTargets(input.ServiceTargets),
+	)
 
 	// Build
 	imageRef, imageDigest, serviceArtifacts, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
@@ -613,7 +619,13 @@ func (w *Worker) callback(
 	// Prefer explicit BUILD_WORKER_CALLBACK_BASE_URL; otherwise use an internal-safe default.
 	url := w.callbackURL()
 
-	slog.Info("sending build callback", "url", url, "status", status, "image", imageRef)
+	slog.Info("sending build callback",
+		"url", url,
+		"status", status,
+		"image", imageRef,
+		"service_artifact_count", len(serviceArtifacts),
+		"detected_services", services,
+	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(payload)))
 	if err != nil {

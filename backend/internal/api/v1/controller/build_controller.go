@@ -54,6 +54,8 @@ func logBuildCallbackOutcome(req requestdto.BuildCallbackRequest, result *servic
 		"project_id", req.ProjectID,
 		"commit_sha", req.CommitSHA,
 		"status", req.Status,
+		"service_artifact_count", len(req.Metadata.ServiceArtifacts),
+		"detected_service_count", len(req.Metadata.DetectedServices),
 	}
 	if result != nil {
 		args = append(args,

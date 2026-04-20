@@ -304,6 +304,13 @@ func TestBuildJobServiceStagesRepoServiceTargetsForWorker(t *testing.T) {
 	if record.WorkerInput.ServiceTargets[1].ServiceName != "web" || record.WorkerInput.ServiceTargets[1].ServicePath != "fe" {
 		t.Fatalf("expected fe target second, got %#v", record.WorkerInput.ServiceTargets)
 	}
+	requiredFields := record.WorkerInput.CallbackExpectation.RequiredFields
+	if !containsString(requiredFields, "metadata.service_artifacts") {
+		t.Fatalf("expected multi-service callback requirement metadata.service_artifacts, got %#v", requiredFields)
+	}
+	if containsString(requiredFields, "image_ref") || containsString(requiredFields, "image_digest") {
+		t.Fatalf("expected multi-service callback requirement to avoid shared top-level image fields, got %#v", requiredFields)
+	}
 }
 
 func TestBuildJobServiceReturnsExistingBuildForDuplicateDelivery(t *testing.T) {
@@ -358,4 +365,13 @@ func TestBuildJobServiceReturnsExistingBuildForDuplicateDelivery(t *testing.T) {
 	if len(buildStore.byProjectID["prj_123"]) != 1 {
 		t.Fatalf("expected no extra build to be created for duplicate delivery, got %d", len(buildStore.byProjectID["prj_123"]))
 	}
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
