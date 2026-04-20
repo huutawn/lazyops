@@ -426,8 +426,8 @@ func healthCheckPortCandidates(service ServiceRuntimeContext, protocol string) [
 		ports = append(ports, port)
 	}
 
-	addPort(service.RuntimePort)
-	addPort(service.HealthCheck.Port)
+	addPort(effectiveRuntimePort(service))
+	addPort(declaredHealthcheckPort(service))
 
 	if strings.EqualFold(strings.TrimSpace(service.Name), "app") {
 		switch strings.ToLower(strings.TrimSpace(protocol)) {

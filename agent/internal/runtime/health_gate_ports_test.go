@@ -42,6 +42,38 @@ func TestHealthCheckPortCandidatesForNonAppService(t *testing.T) {
 	}
 }
 
+func TestHealthCheckPortCandidatesFallbackToDeclaredServicePort(t *testing.T) {
+	service := ServiceRuntimeContext{
+		Name:        "be",
+		Kind:        "api",
+		TargetPort:  8080,
+		ServicePort: 8080,
+		HealthCheck: contracts.HealthCheckPayload{
+			Protocol: "http",
+		},
+	}
+
+	ports := healthCheckPortCandidates(service, "http")
+	if len(ports) != 1 || ports[0] != 8080 {
+		t.Fatalf("expected target/service port fallback 8080, got %v", ports)
+	}
+}
+
+func TestHealthCheckPortCandidatesFallbackToDefaultPortForAPI(t *testing.T) {
+	service := ServiceRuntimeContext{
+		Name: "be",
+		Kind: "api",
+		HealthCheck: contracts.HealthCheckPayload{
+			Protocol: "http",
+		},
+	}
+
+	ports := healthCheckPortCandidates(service, "http")
+	if len(ports) != 1 || ports[0] != 8080 {
+		t.Fatalf("expected default api fallback port 8080, got %v", ports)
+	}
+}
+
 func TestRunServiceHealthCheckUsesFallbackPortForApp(t *testing.T) {
 	originalProbe := healthProbeOnce
 	defer func() { healthProbeOnce = originalProbe }()

@@ -18,11 +18,47 @@ func effectiveRuntimePort(service ServiceRuntimeContext) int {
 	if service.HealthCheck.Port > 0 {
 		return service.HealthCheck.Port
 	}
-	return 0
+	if service.TargetPort > 0 {
+		return service.TargetPort
+	}
+	if service.ServicePort > 0 {
+		return service.ServicePort
+	}
+	for _, port := range service.DetectedPorts {
+		if port.Port > 0 {
+			return port.Port
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(service.Kind)) {
+	case "postgres":
+		return 5432
+	case "mysql":
+		return 3306
+	case "redis":
+		return 6379
+	case "rabbitmq":
+		return 5672
+	default:
+		return 8080
+	}
 }
 
 func declaredHealthcheckPort(service ServiceRuntimeContext) int {
-	return service.HealthCheck.Port
+	if service.HealthCheck.Port > 0 {
+		return service.HealthCheck.Port
+	}
+	if service.TargetPort > 0 {
+		return service.TargetPort
+	}
+	if service.ServicePort > 0 {
+		return service.ServicePort
+	}
+	for _, port := range service.DetectedPorts {
+		if port.Port > 0 {
+			return port.Port
+		}
+	}
+	return 0
 }
 
 func isInternalServiceName(name string) bool {
