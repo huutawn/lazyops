@@ -3205,6 +3205,23 @@ func TestRunHealthGateHandlerReturnsRollbackDirectiveOnFailure(t *testing.T) {
 	if result.Error.Details["policy_action"] != HealthGatePolicyRollbackRelease {
 		t.Fatalf("expected rollback_release policy action, got %#v", result.Error.Details["policy_action"])
 	}
+	if result.Error.Details["summary"] == "" {
+		t.Fatalf("expected health gate summary detail, got %#v", result.Error.Details)
+	}
+	failingServices, ok := result.Error.Details["failing_services"].([]string)
+	if !ok {
+		t.Fatalf("expected failing_services detail, got %#v", result.Error.Details["failing_services"])
+	}
+	if len(failingServices) != 1 || failingServices[0] != "api" {
+		t.Fatalf("expected api to be reported as failing service, got %#v", failingServices)
+	}
+	services, ok := result.Error.Details["services"].([]ServiceHealthResult)
+	if !ok {
+		t.Fatalf("expected services detail, got %#v", result.Error.Details["services"])
+	}
+	if len(services) == 0 || services[0].Passed {
+		t.Fatalf("expected failing service details, got %#v", services)
+	}
 
 	local, err := store.Load(context.Background())
 	if err != nil {

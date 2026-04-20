@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -255,6 +256,139 @@ func TestRolloutExecutionServiceRollbacksFailedHealthGate(t *testing.T) {
 	}
 	if len(incidentStore.items) == 0 || incidentStore.items[0].Kind != IncidentKindUnhealthyCandidate {
 		t.Fatalf("expected unhealthy_candidate incident, got %#v", incidentStore.items)
+	}
+}
+
+func TestRolloutExecutionServicePreservesTrackedHealthGateFailureDetails(t *testing.T) {
+	registry := runtime.NewRegistry()
+	registry.Register(runtime.NewStandaloneDriver())
+
+	revisionStore := newFakeDesiredStateRevisionStore(
+		&models.DesiredStateRevision{
+			ID:                   "rev_stable",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_123",
+			CommitSHA:            "stable123",
+			TriggerKind:          "push",
+			Status:               RevisionStatusPromoted,
+			CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_stable", "bp_123", "prj_123"),
+			CreatedAt:            time.Date(2026, 4, 4, 8, 0, 0, 0, time.UTC),
+		},
+		&models.DesiredStateRevision{
+			ID:                   "rev_123",
+			ProjectID:            "prj_123",
+			BlueprintID:          "bp_123",
+			DeploymentBindingID:  "bind_123",
+			CommitSHA:            "abc123",
+			TriggerKind:          "manual",
+			Status:               RevisionStatusArtifactReady,
+			CompiledRevisionJSON: mustCompiledRevisionJSON(t, "rev_123", "bp_123", "prj_123"),
+			CreatedAt:            time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC),
+		},
+	)
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusQueued,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Production",
+		TargetRef:   "prod-main",
+		RuntimeMode: runtime.RuntimeModeStandalone,
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:      "inst_123",
+		UserID:  "usr_123",
+		Name:    "edge-1",
+		Status:  "online",
+		AgentID: ptrString("agt_123"),
+	})
+	incidentStore := newFakeRuntimeIncidentStore()
+	broadcaster := &fakeOperatorEventBroadcaster{}
+	dispatcher := &fakeRolloutDispatcher{
+		waitResultsByType: map[string][]*TrackedCommand{
+			runtime.CommandTypeRunHealthGate: {
+				{
+					State: CommandStateFailed,
+					Error: "health gate failed for 1/3 services: be",
+					Output: map[string]any{
+						"code":             "health_gate_failed",
+						"policy_action":    "rollback_release",
+						"summary":          "health gate failed for 1/3 services: be",
+						"failing_services": []any{"be"},
+						"services": []map[string]any{
+							{
+								"service_name": "be",
+								"passed":       false,
+								"message":      "rollout progressing: waiting for available replicas",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployments := NewDeploymentService(newFakeProjectStore(), newFakeBlueprintStore(), revisionStore, deploymentStore)
+	planner := newTestRolloutPlanner(registry, revisionStore, deploymentStore, incidentStore, bindingStore, broadcaster)
+	service := NewRolloutExecutionService(deployments, planner, instanceStore, dispatcher, broadcaster)
+
+	result, err := service.StartDeployment(context.Background(), "prj_123", "dep_123")
+	if err == nil {
+		t.Fatal("expected health gate command failure")
+	}
+	if result.Rollback == nil {
+		t.Fatal("expected rollback result after health gate command failure")
+	}
+
+	expected := []string{
+		runtime.CommandTypePrepareReleaseWorkspace,
+		runtime.CommandTypeRenderSidecars,
+		runtime.CommandTypeRenderGatewayConfig,
+		runtime.CommandTypeReconcileRevision,
+		runtime.CommandTypeProvisionInternalSvc,
+		runtime.CommandTypeStartReleaseCandidate,
+		runtime.CommandTypeRunHealthGate,
+		runtime.CommandTypeRollbackRelease,
+		runtime.CommandTypeGarbageCollectRuntime,
+	}
+	for index, commandType := range expected {
+		if dispatcher.commands[index].Type != commandType {
+			t.Fatalf("expected command %d to be %q, got %q", index, commandType, dispatcher.commands[index].Type)
+		}
+	}
+
+	if len(incidentStore.items) == 0 {
+		t.Fatal("expected unhealthy candidate incident to be recorded")
+	}
+	incident := incidentStore.items[0]
+	if incident.Kind != IncidentKindUnhealthyCandidate {
+		t.Fatalf("expected unhealthy candidate incident, got %#v", incident)
+	}
+	var details map[string]any
+	if err := json.Unmarshal([]byte(incident.DetailsJSON), &details); err != nil {
+		t.Fatalf("decode incident details: %v", err)
+	}
+	if details["policy_action"] != "rollback_release" {
+		t.Fatalf("expected rollback policy in incident details, got %#v", details)
+	}
+	failingServices, ok := details["failing_services"].([]any)
+	if !ok || len(failingServices) != 1 || failingServices[0] != "be" {
+		t.Fatalf("expected failing_services to include be, got %#v", details["failing_services"])
+	}
+	services, ok := details["services"].([]any)
+	if !ok || len(services) != 1 {
+		t.Fatalf("expected services details to be preserved, got %#v", details["services"])
+	}
+	firstService, ok := services[0].(map[string]any)
+	if !ok || firstService["service_name"] != "be" {
+		t.Fatalf("expected be service details, got %#v", services[0])
 	}
 }
 

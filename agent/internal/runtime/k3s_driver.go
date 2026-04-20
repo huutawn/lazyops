@@ -405,36 +405,28 @@ func (d *K3sDriver) StartReleaseCandidate(_ context.Context, runtimeCtx RuntimeC
 
 func (d *K3sDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext) (HealthGateResult, error) {
 	results := make([]ServiceHealthResult, 0, len(runtimeCtx.Revision.ServiceSpecs))
-	passed := true
 	for _, spec := range runtimeCtx.Revision.ServiceSpecs {
-		checkedAt := d.now()
-		err := d.runKubectl(ctx, runtimeCtx.Project.Namespace, "rollout", "status", fmt.Sprintf("deployment/%s", spec.Name), "--timeout=60s")
-		serviceResult := ServiceHealthResult{
-			ServiceName: spec.Name,
-			Protocol:    "http",
-			Address:     fmt.Sprintf("%s.%s.svc.cluster.local:%d", spec.Name, runtimeCtx.Project.Namespace, firstPositiveK3s(spec.ServicePort, spec.TargetPort)),
-			Path:        spec.HealthCheck.Path,
-			Attempts:    1,
-			Successes:   1,
-			Failures:    0,
-			Passed:      true,
-			CheckedAt:   checkedAt,
-			Message:     "deployment rollout is healthy",
+		if strings.TrimSpace(spec.Name) == "" {
+			continue
 		}
-		if err != nil {
-			passed = false
-			serviceResult.Passed = false
-			serviceResult.Successes = 0
-			serviceResult.Failures = 1
-			serviceResult.Message = err.Error()
-		}
-		results = append(results, serviceResult)
+		results = append(results, d.runK3sServiceHealthGateCheck(ctx, runtimeCtx.Project.Namespace, spec))
 	}
 
-	summary := fmt.Sprintf("%d/%d services passed k3s rollout health gate", countHealthyServices(results), len(results))
+	passed := true
+	failingServices := make([]string, 0)
+	for _, result := range results {
+		if result.Passed {
+			continue
+		}
+		passed = false
+		failingServices = append(failingServices, result.ServiceName)
+	}
+
+	summary := fmt.Sprintf("health gate passed for %d/%d services; candidate is promotable", countHealthyServices(results), len(results))
 	policy := HealthGatePolicyPromoteCandidate
 	candidateState := CandidateStatePromotable
 	if !passed {
+		summary = fmt.Sprintf("health gate failed for %d/%d services: %s", len(failingServices), len(results), strings.Join(failingServices, ", "))
 		policy = HealthGatePolicyRollbackRelease
 		candidateState = CandidateStateFailed
 	}
@@ -447,6 +439,100 @@ func (d *K3sDriver) RunHealthGate(ctx context.Context, runtimeCtx RuntimeContext
 		CheckedAt:      d.now(),
 		Services:       results,
 	}, nil
+}
+
+func (d *K3sDriver) runK3sServiceHealthGateCheck(ctx context.Context, namespace string, spec contracts.K3sServiceSpecPayload) ServiceHealthResult {
+	checkedAt := d.now()
+	result := ServiceHealthResult{
+		ServiceName: spec.Name,
+		Protocol:    k3sHealthGateProtocol(spec),
+		Address:     fmt.Sprintf("%s.%s.svc.cluster.local:%d", spec.Name, namespace, effectiveK3sHealthGatePort(spec)),
+		Path:        spec.HealthCheck.Path,
+		Attempts:    1,
+		Successes:   1,
+		Failures:    0,
+		Passed:      true,
+		CheckedAt:   checkedAt,
+		Message:     "deployment rollout is healthy",
+	}
+
+	err := d.runKubectl(ctx, namespace, "rollout", "status", fmt.Sprintf("deployment/%s", spec.Name), "--timeout=60s")
+	if err == nil {
+		return result
+	}
+
+	tolerated, progress := d.shouldTolerateRolloutStatusFailure(ctx, namespace, spec.Name, err)
+	if tolerated {
+		result.Message = firstNonEmptyK3s(strings.TrimSpace(progress.Message), "deployment rollout timeout tolerated after readiness verification")
+		return result
+	}
+
+	result.Passed = false
+	result.Successes = 0
+	result.Failures = 1
+	result.Message = formatK3sHealthGateFailure(err, progress)
+	return result
+}
+
+func formatK3sHealthGateFailure(err error, progress RolloutProgress) string {
+	parts := make([]string, 0, 3)
+	if err != nil {
+		parts = append(parts, strings.TrimSpace(err.Error()))
+	}
+	if progress.Status != "" && progress.Status != "unverified" {
+		message := strings.TrimSpace(progress.Message)
+		if message != "" {
+			parts = append(parts, fmt.Sprintf("rollout %s: %s", progress.Status, message))
+		} else {
+			parts = append(parts, fmt.Sprintf("rollout %s", progress.Status))
+		}
+	}
+	if progress.DesiredReplicas > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"replicas desired=%d ready=%d updated=%d available=%d",
+			progress.DesiredReplicas,
+			progress.ReadyReplicas,
+			progress.UpdatedReplicas,
+			progress.AvailableReplicas,
+		))
+	}
+	return firstNonEmptyK3s(strings.Join(parts, "; "), "deployment rollout health gate failed")
+}
+
+func effectiveK3sHealthGatePort(spec contracts.K3sServiceSpecPayload) int {
+	return firstPositiveK3s(
+		spec.ServicePort,
+		spec.TargetPort,
+		spec.HealthCheck.Port,
+		defaultK3sServicePort(spec.Kind),
+	)
+}
+
+func k3sHealthGateProtocol(spec contracts.K3sServiceSpecPayload) string {
+	if protocol := strings.ToLower(strings.TrimSpace(spec.HealthCheck.Protocol)); protocol != "" {
+		return protocol
+	}
+	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
+	case "postgres", "mysql", "redis", "rabbitmq":
+		return "tcp"
+	default:
+		return "http"
+	}
+}
+
+func defaultK3sServicePort(kind string) int {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "postgres":
+		return 5432
+	case "mysql":
+		return 3306
+	case "redis":
+		return 6379
+	case "rabbitmq":
+		return 5672
+	default:
+		return 8080
+	}
 }
 
 func (d *K3sDriver) PromoteRelease(_ context.Context, runtimeCtx RuntimeContext) (PromoteReleaseResult, error) {

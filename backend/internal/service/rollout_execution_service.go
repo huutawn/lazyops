@@ -373,25 +373,52 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 		}
 
 		if tracked.State == CommandStateFailed {
+			failureSummary := tracked.Error
+			if summary, ok := tracked.Output["summary"].(string); ok && strings.TrimSpace(summary) != "" {
+				failureSummary = summary
+			}
 			logger.Error("rollout_command_failed",
 				"project_id", projectID,
 				"deployment_id", deploymentID,
 				"command_type", cmd.Type,
 				"request_id", cmdResult.RequestID,
 				"tracked_error", tracked.Error,
+				"tracked_code", tracked.Output["code"],
+				"policy_action", tracked.Output["policy_action"],
+				"failure_summary", failureSummary,
+				"failing_services", tracked.Output["failing_services"],
+				"services", tracked.Output["services"],
 			)
 			_ = s.failDeployment(projectID, deployment.ID, revision.ID)
-			_, _ = s.planner.RecordIncident(projectID, deployment.ID, revision.ID, IncidentKindUnhealthyCandidate, IncidentSeverityCritical, "command execution failed", map[string]any{
+			incidentDetails := map[string]any{
 				"command_type": cmd.Type,
 				"request_id":   cmdResult.RequestID,
 				"error":        tracked.Error,
-			}, "command_dispatch")
+			}
+			if tracked.Output != nil {
+				if code, ok := tracked.Output["code"]; ok {
+					incidentDetails["code"] = code
+				}
+				if policyAction, ok := tracked.Output["policy_action"]; ok {
+					incidentDetails["policy_action"] = policyAction
+				}
+				if summary, ok := tracked.Output["summary"]; ok {
+					incidentDetails["summary"] = summary
+				}
+				if failingServices, ok := tracked.Output["failing_services"]; ok {
+					incidentDetails["failing_services"] = failingServices
+				}
+				if services, ok := tracked.Output["services"]; ok {
+					incidentDetails["services"] = services
+				}
+			}
+			_, _ = s.planner.RecordIncident(projectID, deployment.ID, revision.ID, IncidentKindUnhealthyCandidate, IncidentSeverityCritical, "command execution failed", incidentDetails, "command_dispatch")
 			rollbackResult, rollbackErr := s.rollbackDeployment(ctx, projectID, deployment.ID, revision.ID, agentID, correlationID, result)
 			result.Rollback = rollbackResult
 			if rollbackErr != nil {
 				return result, rollbackErr
 			}
-			return result, fmt.Errorf("command %q failed: %s", cmd.Type, tracked.Error)
+			return result, fmt.Errorf("command %q failed: %s", cmd.Type, failureSummary)
 		}
 
 		logger.Info("rollout_command_completed",

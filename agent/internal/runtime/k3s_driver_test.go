@@ -442,3 +442,144 @@ func TestReconcileRevisionToleratesRolloutTimeoutWhenDeploymentIsReady(t *testin
 		t.Fatalf("expected tolerated rollout step, got %#v", result.AppliedSteps)
 	}
 }
+
+func TestRunHealthGatePassesWhenDeploymentsRollOut(t *testing.T) {
+	root := t.TempDir()
+	kubectlPath := filepath.Join(root, "kubectl")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"rollout status deployment/api\"*)\n" +
+		"    printf 'deployment \"api\" successfully rolled out\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"rollout status deployment/web\"*)\n" +
+		"    printf 'deployment \"web\" successfully rolled out\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"printf 'unexpected kubectl args: %s\\n' \"$*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+
+	driver := NewK3sDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root, kubectlPath, "")
+	result, err := driver.RunHealthGate(context.Background(), k3sHealthGateRuntimeContext(
+		contracts.K3sServiceSpecPayload{Name: "api", Kind: "api", ServicePort: 8080, TargetPort: 8080},
+		contracts.K3sServiceSpecPayload{Name: "web", Kind: "web", ServicePort: 3000, TargetPort: 3000},
+	))
+	if err != nil {
+		t.Fatalf("run health gate: %v", err)
+	}
+	if !result.Promotable {
+		t.Fatalf("expected promotable result, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "health gate passed for 2/2 services") {
+		t.Fatalf("expected passing summary, got %#v", result)
+	}
+	if len(result.Services) != 2 || !result.Services[0].Passed || !result.Services[1].Passed {
+		t.Fatalf("expected both services to pass, got %#v", result.Services)
+	}
+}
+
+func TestRunHealthGateToleratesRolloutTimeoutWhenDeploymentIsReady(t *testing.T) {
+	root := t.TempDir()
+	kubectlPath := filepath.Join(root, "kubectl")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"rollout status deployment/api\"*)\n" +
+		"    printf 'Waiting for deployment \"api\" rollout to finish: 1 old replicas are pending termination...\\nerror: timed out waiting for the condition\\n' >&2\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"  *\"get deployment/api -o json\"*)\n" +
+		"    printf '{\"metadata\":{\"generation\":3},\"spec\":{\"replicas\":1},\"status\":{\"observedGeneration\":3,\"replicas\":1,\"readyReplicas\":1,\"updatedReplicas\":1,\"availableReplicas\":1,\"conditions\":[{\"type\":\"Available\",\"status\":\"True\",\"message\":\"deployment has minimum availability\"}]}}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"printf 'unexpected kubectl args: %s\\n' \"$*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+
+	driver := NewK3sDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root, kubectlPath, "")
+	result, err := driver.RunHealthGate(context.Background(), k3sHealthGateRuntimeContext(
+		contracts.K3sServiceSpecPayload{Name: "api", Kind: "api", ServicePort: 8080, TargetPort: 8080},
+	))
+	if err != nil {
+		t.Fatalf("run health gate: %v", err)
+	}
+	if !result.Promotable {
+		t.Fatalf("expected rollout timeout to be tolerated, got %#v", result)
+	}
+	if len(result.Services) != 1 || !result.Services[0].Passed {
+		t.Fatalf("expected api service to pass, got %#v", result.Services)
+	}
+	if !strings.Contains(result.Services[0].Message, "tolerating") {
+		t.Fatalf("expected tolerated rollout message, got %#v", result.Services[0])
+	}
+}
+
+func TestRunHealthGateFailsWithServiceNameWhenDeploymentIsNotReady(t *testing.T) {
+	root := t.TempDir()
+	kubectlPath := filepath.Join(root, "kubectl")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"rollout status deployment/api\"*)\n" +
+		"    printf 'error: timed out waiting for the condition\\n' >&2\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"  *\"get deployment/api -o json\"*)\n" +
+		"    printf '{\"metadata\":{\"generation\":4},\"spec\":{\"replicas\":1},\"status\":{\"observedGeneration\":4,\"replicas\":1,\"readyReplicas\":0,\"updatedReplicas\":0,\"availableReplicas\":0,\"conditions\":[{\"type\":\"Progressing\",\"status\":\"True\",\"reason\":\"ReplicaSetUpdated\",\"message\":\"waiting for available replicas\"}]}}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"printf 'unexpected kubectl args: %s\\n' \"$*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+
+	driver := NewK3sDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root, kubectlPath, "")
+	result, err := driver.RunHealthGate(context.Background(), k3sHealthGateRuntimeContext(
+		contracts.K3sServiceSpecPayload{Name: "api", Kind: "api", ServicePort: 8080, TargetPort: 8080},
+	))
+	if err != nil {
+		t.Fatalf("run health gate: %v", err)
+	}
+	if result.Promotable {
+		t.Fatalf("expected non-promotable result, got %#v", result)
+	}
+	if result.PolicyAction != HealthGatePolicyRollbackRelease || result.CandidateState != CandidateStateFailed {
+		t.Fatalf("expected rollback policy and failed state, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "api") {
+		t.Fatalf("expected failing service name in summary, got %#v", result)
+	}
+	if len(result.Services) != 1 || result.Services[0].Passed {
+		t.Fatalf("expected api service to fail, got %#v", result.Services)
+	}
+	if !strings.Contains(result.Services[0].Message, "rollout progressing") {
+		t.Fatalf("expected rollout progress details in message, got %#v", result.Services[0])
+	}
+}
+
+func k3sHealthGateRuntimeContext(specs ...contracts.K3sServiceSpecPayload) RuntimeContext {
+	return RuntimeContext{
+		Project: ProjectMetadata{
+			ProjectID: "prj_test",
+			Namespace: "lazyops-test",
+		},
+		Binding: contracts.DeploymentBindingPayload{
+			BindingID:   "bind_test",
+			ProjectID:   "prj_test",
+			RuntimeMode: contracts.RuntimeModeDistributedK3s,
+			TargetKind:  contracts.TargetKindCluster,
+			TargetID:    "cls_test",
+		},
+		Revision: contracts.DesiredRevisionPayload{
+			RevisionID:   "rev_test",
+			ServiceSpecs: specs,
+		},
+	}
+}

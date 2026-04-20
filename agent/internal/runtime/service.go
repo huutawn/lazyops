@@ -758,11 +758,23 @@ func (s *Service) handleRunHealthGate(ctx context.Context, envelope contracts.Co
 	})
 
 	if !report.Promotable {
+		failingServices := make([]string, 0)
+		for _, item := range report.Services {
+			if item.Passed {
+				continue
+			}
+			failingServices = append(failingServices, item.ServiceName)
+		}
 		details := map[string]any{
 			"candidate_state":      report.CandidateState,
 			"policy_action":        report.PolicyAction,
+			"summary":              report.Summary,
+			"services":             report.Services,
 			"report_path":          report.ReportPath,
 			"rollout_summary_path": report.RolloutSummaryPath,
+		}
+		if len(failingServices) > 0 {
+			details["failing_services"] = failingServices
 		}
 		if runtimeCtx.Rollout.StableRevisionID != "" {
 			details["stable_revision_id"] = runtimeCtx.Rollout.StableRevisionID
