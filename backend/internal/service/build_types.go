@@ -20,6 +20,7 @@ const (
 	BuildPortResolutionStatusUnresolved = "unresolved"
 
 	BuildPortResolutionSourceExplicit      = "explicit"
+	BuildPortResolutionSourceNixpacksPlan  = "nixpacks_plan"
 	BuildPortResolutionSourceDockerInspect = "docker_inspect"
 	BuildPortResolutionSourceFrameworkHint = "framework_hint"
 	BuildPortResolutionSourceSmokeRun      = "smoke_run"

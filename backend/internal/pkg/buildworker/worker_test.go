@@ -134,7 +134,7 @@ func TestResolveBuildPortMarksUnresolvedWhenNoCandidateExists(t *testing.T) {
 }
 
 func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
-	resolution := resolveBuildPort(
+	resolution := resolveRepoServiceBuildPort(
 		BuildTargetServiceMetadata{
 			DeclaredTargetPort: 7000,
 			DeclaredHealthcheck: map[string]any{
@@ -142,13 +142,12 @@ func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
 				"port": 7000,
 			},
 		},
-		[]string{"api"},
 		[]BuildDetectedPortMetadata{{Port: 3000, Protocol: "tcp", Exposed: true}},
-		[]int{3000},
-		"next",
 		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
-		"",
-		true,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "PORT=3000 ./out",
+		},
 	)
 
 	if resolution.Status != buildPortResolutionStatusResolved {
@@ -165,52 +164,50 @@ func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
 	}
 }
 
-func TestResolveBuildPortUsesDockerInspectExposeForRepoService(t *testing.T) {
-	resolution := resolveBuildPort(
+func TestResolveRepoServiceBuildPortUsesNixpacksPlan(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
 		BuildTargetServiceMetadata{
 			ServiceName:    "api",
 			ServicePath:    "backend",
 			RuntimeProfile: "service",
 			Public:         true,
 		},
-		[]string{"api"},
 		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp", Exposed: true}},
-		[]int{4321},
-		"",
 		nil,
-		"timed out waiting for the container to expose a listening port",
-		true,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "PORT=3000 ./out",
+		},
 	)
 
 	if resolution.Status != buildPortResolutionStatusResolved {
 		t.Fatalf("expected resolved status, got %#v", resolution)
 	}
-	if resolution.Source != buildPortResolutionSourceDockerInspect {
-		t.Fatalf("expected docker_inspect source, got %#v", resolution)
+	if resolution.Source != buildPortResolutionSourceNixpacksPlan {
+		t.Fatalf("expected nixpacks_plan source, got %#v", resolution)
 	}
-	if resolution.SuggestedTargetPort != 8080 {
-		t.Fatalf("expected EXPOSE port 8080, got %#v", resolution)
+	if resolution.SuggestedTargetPort != 3000 {
+		t.Fatalf("expected nixpacks port 3000, got %#v", resolution)
 	}
-	if got := resolution.CandidatePorts; len(got) != 1 || got[0] != 8080 {
-		t.Fatalf("expected candidate ports [8080], got %#v", got)
+	if got := resolution.CandidatePorts; len(got) != 1 || got[0] != 3000 {
+		t.Fatalf("expected candidate ports [3000], got %#v", got)
 	}
 }
 
-func TestResolveBuildPortRewritesSuggestedHealthcheckPortToExposePort(t *testing.T) {
-	resolution := resolveBuildPort(
+func TestResolveRepoServiceBuildPortRewritesSuggestedHealthcheckPortToNixpacksPort(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
 		BuildTargetServiceMetadata{
 			ServiceName:    "web",
 			ServicePath:    "fe",
 			RuntimeProfile: "web",
 			Public:         true,
 		},
-		[]string{"web"},
 		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp", Exposed: true}},
-		nil,
-		"next",
 		&BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000},
-		"",
-		true,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "node server.js --port 8080",
+		},
 	)
 
 	if resolution.SuggestedHealthcheck == nil {
@@ -221,65 +218,102 @@ func TestResolveBuildPortRewritesSuggestedHealthcheckPortToExposePort(t *testing
 	}
 }
 
-func TestResolveBuildPortRejectsRepoServiceWithoutExpose(t *testing.T) {
-	resolution := resolveBuildPort(
+func TestResolveRepoServiceBuildPortRejectsNixpacksPlanWithoutNumericPort(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
 		BuildTargetServiceMetadata{
 			ServiceName:    "api",
 			ServicePath:    "backend",
 			RuntimeProfile: "service",
 			Public:         true,
 		},
-		[]string{"api"},
 		nil,
-		[]int{4321},
-		"",
 		nil,
-		"timed out waiting for the container to expose a listening port",
-		true,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "PORT=$PORT ./out",
+		},
 	)
 
 	if resolution.Status != buildPortResolutionStatusUnresolved {
 		t.Fatalf("expected unresolved status, got %#v", resolution)
 	}
-	if resolution.Reason != "image exposes no TCP ports via EXPOSE" {
-		t.Fatalf("expected EXPOSE-specific unresolved reason, got %#v", resolution)
+	if resolution.Source != buildPortResolutionSourceNixpacksPlan {
+		t.Fatalf("expected nixpacks_plan source, got %#v", resolution)
+	}
+	if resolution.Reason != "nixpacks start command contains no numeric port" {
+		t.Fatalf("expected nixpacks-specific unresolved reason, got %#v", resolution)
 	}
 	if resolution.SuggestedTargetPort != 0 {
-		t.Fatalf("expected unresolved EXPOSE result to omit suggested port, got %#v", resolution)
+		t.Fatalf("expected unresolved Nixpacks result to omit suggested port, got %#v", resolution)
 	}
 }
 
-func TestResolveBuildPortRejectsRepoServiceWithMultipleExposePorts(t *testing.T) {
-	resolution := resolveBuildPort(
+func TestResolveRepoServiceBuildPortRejectsMissingNixpacksPlanPort(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
 		BuildTargetServiceMetadata{
 			ServiceName:    "api",
 			ServicePath:    "backend",
 			RuntimeProfile: "service",
 			Public:         true,
 		},
-		[]string{"api"},
-		[]BuildDetectedPortMetadata{
-			{Port: 3000, Protocol: "tcp", Exposed: true},
-			{Port: 9229, Protocol: "tcp", Exposed: true},
+		nil,
+		nil,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanError: "nixpacks plan did not define start.cmd",
+		},
+	)
+
+	if resolution.Status != buildPortResolutionStatusUnresolved {
+		t.Fatalf("expected unresolved status, got %#v", resolution)
+	}
+	if resolution.Source != "" {
+		t.Fatalf("expected empty source when plan has no usable start command, got %#v", resolution)
+	}
+	if resolution.Reason != "nixpacks plan did not expose a single numeric start port; nixpacks plan did not define start.cmd" {
+		t.Fatalf("expected nixpacks-plan-specific unresolved reason, got %#v", resolution)
+	}
+}
+
+func TestResolveRepoServiceBuildPortRejectsNixpacksPlanWithMultiplePorts(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			RuntimeProfile: "service",
+			Public:         true,
 		},
 		nil,
-		"",
 		nil,
-		"",
-		true,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "PORT=3000 ./out --port 9229",
+		},
 	)
 
 	if resolution.Status != buildPortResolutionStatusAmbiguous {
 		t.Fatalf("expected ambiguous status, got %#v", resolution)
 	}
-	if resolution.Source != buildPortResolutionSourceDockerInspect {
-		t.Fatalf("expected docker_inspect source, got %#v", resolution)
+	if resolution.Source != buildPortResolutionSourceNixpacksPlan {
+		t.Fatalf("expected nixpacks_plan source, got %#v", resolution)
 	}
-	if resolution.Reason != "image exposes multiple TCP ports: 3000, 9229" {
-		t.Fatalf("expected EXPOSE-specific ambiguous reason, got %#v", resolution)
+	if resolution.Reason != "nixpacks start command contains multiple candidate ports: 3000, 9229" {
+		t.Fatalf("expected Nixpacks-specific ambiguous reason, got %#v", resolution)
 	}
 	if resolution.SuggestedTargetPort != 0 {
-		t.Fatalf("expected ambiguous EXPOSE result to omit suggested port, got %#v", resolution)
+		t.Fatalf("expected ambiguous Nixpacks result to omit suggested port, got %#v", resolution)
+	}
+}
+
+func TestExtractJSONDocumentHandlesPrefixedNixpacksOutput(t *testing.T) {
+	payload := []byte("Final Nixpacks plan: {\n  \"start\": {\"cmd\": \"node server.js --port 3000\"}\n}\n")
+
+	document, err := extractJSONDocument(payload)
+	if err != nil {
+		t.Fatalf("expected JSON extraction to succeed, got %v", err)
+	}
+	if string(document) != "{\n  \"start\": {\"cmd\": \"node server.js --port 3000\"}\n}" {
+		t.Fatalf("unexpected extracted JSON document: %q", string(document))
 	}
 }
 

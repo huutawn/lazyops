@@ -576,12 +576,12 @@ func validateResolvedServicePorts(expectedTargets []BuildTargetServiceRecord, se
 		}
 		if hasExpectedTarget && !hasDeclaredBuildTargetPort(expectedTarget) && !isAcceptedResolvedServicePortSource(snapshot.Source) {
 			if strings.TrimSpace(snapshot.Reason) == "" {
-				snapshot.Reason = "distributed-k3s only accepts ports resolved from explicit config or image EXPOSE"
+				snapshot.Reason = "distributed-k3s only accepts ports resolved from explicit config or nixpacks plan"
 			}
 			return newPortResolutionError(
 				service,
 				snapshot,
-				"service requires a resolved target_port/service_port from explicit config or a single TCP EXPOSE before rollout",
+				"service requires a resolved target_port/service_port from explicit config or nixpacks plan before rollout",
 			)
 		}
 		if err := validateServiceHealthcheckConsistency(service); err != nil {
@@ -667,7 +667,7 @@ func hasDeclaredBuildTargetPort(expectedTarget BuildTargetServiceRecord) bool {
 
 func isAcceptedResolvedServicePortSource(raw string) bool {
 	switch normalizePortResolutionSource(raw) {
-	case BuildPortResolutionSourceExplicit, BuildPortResolutionSourceDockerInspect:
+	case BuildPortResolutionSourceExplicit, BuildPortResolutionSourceNixpacksPlan, BuildPortResolutionSourceDockerInspect:
 		return true
 	default:
 		return false
@@ -996,6 +996,8 @@ func normalizePortResolutionSource(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case BuildPortResolutionSourceExplicit:
 		return BuildPortResolutionSourceExplicit
+	case BuildPortResolutionSourceNixpacksPlan:
+		return BuildPortResolutionSourceNixpacksPlan
 	case BuildPortResolutionSourceDockerInspect:
 		return BuildPortResolutionSourceDockerInspect
 	case BuildPortResolutionSourceFrameworkHint:
@@ -1017,11 +1019,18 @@ func normalizeSuggestedTargetPort(port int, detectedPorts []ServiceDetectedPortR
 	if port > 0 {
 		return port
 	}
-	if normalizePortResolutionStatus(portResolutionStatus) == BuildPortResolutionStatusResolved {
+	status := normalizePortResolutionStatus(portResolutionStatus)
+	if status == BuildPortResolutionStatusResolved {
 		normalizedCandidates := normalizeCandidatePorts(candidatePorts)
 		if len(normalizedCandidates) == 1 {
 			return normalizedCandidates[0]
 		}
+		if suggestedHealthcheck != nil && suggestedHealthcheck.Port > 0 {
+			return suggestedHealthcheck.Port
+		}
+	}
+	if status != "" {
+		return 0
 	}
 	if suggestedHealthcheck != nil && suggestedHealthcheck.Port > 0 {
 		return suggestedHealthcheck.Port

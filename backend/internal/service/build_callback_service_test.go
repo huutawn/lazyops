@@ -934,7 +934,7 @@ func TestBuildCallbackServiceRejectsUnresolvedPortForDeployableService(t *testin
 	}
 }
 
-func TestBuildCallbackServiceAllowsDockerInspectPortResolutionForDeployableService(t *testing.T) {
+func TestBuildCallbackServiceAllowsNixpacksPlanPortResolutionForDeployableService(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{ID: "prj_123", UserID: "usr_123", Name: "Acme API", Slug: "acme-api"})
 	blueprintStore := newFakeBlueprintStore()
 	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
@@ -975,19 +975,19 @@ func TestBuildCallbackServiceAllowsDockerInspectPortResolutionForDeployableServi
 				ImageDigest:          "sha256:api",
 				SuggestedTargetPort:  8080,
 				PortResolutionStatus: BuildPortResolutionStatusResolved,
-				PortResolutionSource: BuildPortResolutionSourceDockerInspect,
+				PortResolutionSource: BuildPortResolutionSourceNixpacksPlan,
 				CandidatePorts:       []int{8080},
 			},
 		},
 	})
 	if err != nil {
-		t.Fatalf("expected docker inspect resolution to pass, got %v", err)
+		t.Fatalf("expected nixpacks plan resolution to pass, got %v", err)
 	}
 	if result.Revision == nil || len(result.Revision.Services) != 1 {
 		t.Fatalf("expected single-service revision, got %#v", result)
 	}
 	if result.Revision.Services[0].TargetPort != 8080 || result.Revision.Services[0].ServicePort != 8080 {
-		t.Fatalf("expected service ports to hydrate from docker inspect EXPOSE, got %#v", result.Revision.Services[0])
+		t.Fatalf("expected service ports to hydrate from nixpacks plan, got %#v", result.Revision.Services[0])
 	}
 }
 
@@ -1095,8 +1095,8 @@ func TestBuildCallbackServiceRejectsSmokeRunOnlyPortResolutionForDeployableServi
 	if !errors.Is(err, ErrPortResolutionFailed) {
 		t.Fatalf("expected ErrPortResolutionFailed for smoke-run-only source, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "single TCP EXPOSE") {
-		t.Fatalf("expected EXPOSE-specific guidance, got %v", err)
+	if !strings.Contains(err.Error(), "explicit config or nixpacks plan") {
+		t.Fatalf("expected nixpacks-specific guidance, got %v", err)
 	}
 }
 

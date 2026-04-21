@@ -1,6 +1,7 @@
 package buildworker
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -176,7 +177,8 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	// Callback
 	if err := w.callback(ctx, input, status, result); err != nil {
 		slog.Error("build callback failed", "job_id", job.ID, "error", err)
-		w.failJob(job.ID, fmt.Sprintf("callback failed: %v", err))
+		artifactMetadataJSON := marshalBuildArtifactMetadata(result, strings.TrimSpace(input.CommitSHA), err.Error())
+		w.failJobWithArtifact(job.ID, fmt.Sprintf("callback failed: %v", err), artifactMetadataJSON)
 		return
 	}
 
@@ -257,12 +259,19 @@ type buildPortResolution struct {
 	PortDetectionConfidence string
 }
 
+type buildInvocationMetadata struct {
+	UsedNixpacks      bool
+	NixpacksPlanStart string
+	NixpacksPlanError string
+}
+
 const (
 	buildPortResolutionStatusResolved   = "resolved"
 	buildPortResolutionStatusAmbiguous  = "ambiguous"
 	buildPortResolutionStatusUnresolved = "unresolved"
 
 	buildPortResolutionSourceExplicit      = "explicit"
+	buildPortResolutionSourceNixpacksPlan  = "nixpacks_plan"
 	buildPortResolutionSourceDockerInspect = "docker_inspect"
 	buildPortResolutionSourceFrameworkHint = "framework_hint"
 	buildPortResolutionSourceSmokeRun      = "smoke_run"
@@ -303,7 +312,8 @@ func (w *Worker) buildAndPush(
 				return buildResult{}, err
 			}
 			imageName := w.imageNameForService(input, target.ServiceName)
-			if err := w.buildImage(ctx, serviceDir, imageName); err != nil {
+			buildMeta, err := w.buildImage(ctx, serviceDir, imageName)
+			if err != nil {
 				return buildResult{}, err
 			}
 			slog.Info("pushing docker image", "image", imageName, "service", target.ServiceName)
@@ -314,12 +324,11 @@ func (w *Worker) buildAndPush(
 			}
 
 			digest, _ := w.getImageDigest(ctx, imageName)
-			detectedServices := w.detectServices(serviceDir)
 			detectedFramework, suggestedHealthcheck := w.detectFrontendMetadata(serviceDir)
 			exposedPorts, _, _ := w.inspectImagePorts(ctx, imageName)
-			smokePorts, smokeReason := w.smokeRunImagePorts(ctx, imageName)
+			smokePorts, _ := w.smokeRunImagePorts(ctx, imageName)
 			detectedPorts, portDetectionSource := mergeDetectedPorts(exposedPorts, smokePorts)
-			resolution := resolveBuildPort(target, detectedServices, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason, true)
+			resolution := resolveRepoServiceBuildPort(target, detectedPorts, suggestedHealthcheck, buildMeta)
 			result.Services = append(result.Services, target.ServiceName)
 			result.ServiceArtifacts = append(result.ServiceArtifacts, BuildServiceArtifactMetadata{
 				ServiceName:             target.ServiceName,
@@ -342,7 +351,7 @@ func (w *Worker) buildAndPush(
 	}
 
 	imageName := w.imageName(input, shortCommitTag(input.CommitSHA))
-	if err := w.buildImage(ctx, repoDir, imageName); err != nil {
+	if _, err := w.buildImage(ctx, repoDir, imageName); err != nil {
 		return buildResult{}, err
 	}
 
@@ -430,17 +439,22 @@ func (w *Worker) imageNameForService(input BuildWorkerInput, serviceName string)
 	}, shortCommitTag(input.CommitSHA))
 }
 
-func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) error {
+func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) (buildInvocationMetadata, error) {
 	if _, err := exec.LookPath(w.cfg.BuildWorker.NixpacksBin); err == nil {
+		planStart, planErr := w.inspectNixpacksPlan(ctx, repoDir)
 		slog.Info("running nixpacks build", "dir", repoDir, "image", imageName)
 		cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.NixpacksBin, "build", repoDir, "-t", imageName)
 		cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=0")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if runErr := cmd.Run(); runErr != nil {
-			return fmt.Errorf("nixpacks build: %w", runErr)
+			return buildInvocationMetadata{}, fmt.Errorf("nixpacks build: %w", runErr)
 		}
-		return nil
+		return buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: planStart,
+			NixpacksPlanError: planErr,
+		}, nil
 	}
 
 	dockerfilePath := filepath.Join(repoDir, "Dockerfile")
@@ -451,12 +465,78 @@ func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) erro
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if runErr := cmd.Run(); runErr != nil {
-			return fmt.Errorf("docker build fallback: %w", runErr)
+			return buildInvocationMetadata{}, fmt.Errorf("docker build fallback: %w", runErr)
 		}
-		return nil
+		return buildInvocationMetadata{}, nil
 	}
 
-	return fmt.Errorf("nixpacks not found and Dockerfile missing at repository root")
+	return buildInvocationMetadata{}, fmt.Errorf("nixpacks not found and Dockerfile missing at repository root")
+}
+
+func (w *Worker) inspectNixpacksPlan(ctx context.Context, repoDir string) (string, string) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.NixpacksBin, "plan", repoDir)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", formatNixpacksPlanError(stdout.String(), stderr.String(), err)
+	}
+
+	planJSON, err := extractJSONDocument(stdout.Bytes())
+	if err != nil {
+		return "", fmt.Sprintf("nixpacks plan output was not parseable JSON: %v", err)
+	}
+
+	var plan struct {
+		Start struct {
+			Cmd string `json:"cmd"`
+		} `json:"start"`
+	}
+	if err := json.Unmarshal(planJSON, &plan); err != nil {
+		return "", fmt.Sprintf("nixpacks plan output was not parseable JSON: %v", err)
+	}
+
+	startCmd := strings.TrimSpace(plan.Start.Cmd)
+	if startCmd == "" {
+		return "", "nixpacks plan did not define start.cmd"
+	}
+	return startCmd, ""
+}
+
+func extractJSONDocument(payload []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(payload)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty output")
+	}
+	if json.Valid(trimmed) {
+		return trimmed, nil
+	}
+
+	start := bytes.IndexByte(trimmed, '{')
+	end := bytes.LastIndexByte(trimmed, '}')
+	if start < 0 || end < start {
+		return nil, fmt.Errorf("JSON object not found in output")
+	}
+
+	candidate := bytes.TrimSpace(trimmed[start : end+1])
+	if !json.Valid(candidate) {
+		return nil, fmt.Errorf("JSON object not found in output")
+	}
+	return candidate, nil
+}
+
+func formatNixpacksPlanError(stdout, stderr string, err error) string {
+	detail := strings.TrimSpace(stderr)
+	if detail == "" {
+		detail = strings.TrimSpace(stdout)
+	}
+	if detail == "" {
+		detail = err.Error()
+	}
+	return fmt.Sprintf("nixpacks plan failed: %s", detail)
 }
 
 func (w *Worker) cloneRepo(ctx context.Context, input BuildWorkerInput) (string, string, error) {
@@ -848,6 +928,65 @@ func (w *Worker) callback(
 	return nil
 }
 
+func marshalBuildArtifactMetadata(result buildResult, commitSHA string, failureReason string) string {
+	payload := struct {
+		CommitSHA               string                             `json:"commit_sha"`
+		ArtifactRef             string                             `json:"artifact_ref,omitempty"`
+		ImageRef                string                             `json:"image_ref,omitempty"`
+		ImageDigest             string                             `json:"image_digest,omitempty"`
+		ServiceArtifacts        []BuildServiceArtifactMetadata     `json:"service_artifacts,omitempty"`
+		DetectedServices        []string                           `json:"detected_services,omitempty"`
+		DetectedPorts           []BuildDetectedPortMetadata        `json:"detected_ports,omitempty"`
+		PortDetectionSource     string                             `json:"port_detection_source,omitempty"`
+		PortDetectionConfidence string                             `json:"port_detection_confidence,omitempty"`
+		SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
+		DetectedFramework       string                             `json:"detected_framework,omitempty"`
+		SuggestedHealthcheck    *BuildSuggestedHealthcheckMetadata `json:"suggested_healthcheck,omitempty"`
+		PortResolutionStatus    string                             `json:"port_resolution_status,omitempty"`
+		PortResolutionSource    string                             `json:"port_resolution_source,omitempty"`
+		PortResolutionReason    string                             `json:"port_resolution_reason,omitempty"`
+		CandidatePorts          []int                              `json:"candidate_ports,omitempty"`
+	}{
+		CommitSHA:               strings.TrimSpace(commitSHA),
+		ArtifactRef:             deriveBuildArtifactRef(result.ImageRef, result.ImageDigest),
+		ImageRef:                strings.TrimSpace(result.ImageRef),
+		ImageDigest:             strings.TrimSpace(result.ImageDigest),
+		ServiceArtifacts:        result.ServiceArtifacts,
+		DetectedServices:        result.Services,
+		DetectedPorts:           result.DetectedPorts,
+		PortDetectionSource:     strings.TrimSpace(result.PortDetectionSource),
+		PortDetectionConfidence: strings.TrimSpace(result.PortDetectionConfidence),
+		SuggestedTargetPort:     result.SuggestedTargetPort,
+		DetectedFramework:       strings.TrimSpace(result.DetectedFramework),
+		SuggestedHealthcheck:    cloneSuggestedHealthcheck(result.SuggestedHealthcheck),
+		PortResolutionStatus:    strings.TrimSpace(result.PortResolutionStatus),
+		PortResolutionSource:    strings.TrimSpace(result.PortResolutionSource),
+		PortResolutionReason:    strings.TrimSpace(result.PortResolutionReason),
+		CandidatePorts:          cloneIntSlice(result.CandidatePorts),
+	}
+	if payload.PortResolutionReason == "" {
+		payload.PortResolutionReason = strings.TrimSpace(failureReason)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func deriveBuildArtifactRef(imageRef, imageDigest string) string {
+	imageRef = strings.TrimSpace(imageRef)
+	imageDigest = strings.TrimSpace(imageDigest)
+	switch {
+	case imageRef != "" && imageDigest != "":
+		return imageRef + "@" + imageDigest
+	case imageRef != "":
+		return imageRef
+	default:
+		return ""
+	}
+}
+
 func (w *Worker) inspectImagePorts(ctx context.Context, imageName string) ([]BuildDetectedPortMetadata, string, error) {
 	cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "inspect", imageName, "--format", "{{json .Config.ExposedPorts}}")
 	output, err := cmd.Output()
@@ -1031,6 +1170,35 @@ func parseProcNetListeningPorts(payload string) []int {
 	return normalizeCandidatePorts(mapKeysToInts(ports))
 }
 
+func resolveRepoServiceBuildPort(
+	target BuildTargetServiceMetadata,
+	detectedPorts []BuildDetectedPortMetadata,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+	buildMeta buildInvocationMetadata,
+) buildPortResolution {
+	if declaredPort, declaredReason, declaredHealthcheck := declaredPortHint(target); declaredPort > 0 {
+		reason := declaredReason
+		if reason == "" {
+			reason = fmt.Sprintf("using declared service port %d", declaredPort)
+		}
+		return buildPortResolution{
+			Status:                  buildPortResolutionStatusResolved,
+			Source:                  buildPortResolutionSourceExplicit,
+			Reason:                  strings.TrimSpace(reason),
+			CandidatePorts:          []int{declaredPort},
+			SuggestedTargetPort:     declaredPort,
+			SuggestedHealthcheck:    cloneSuggestedHealthcheck(declaredHealthcheck),
+			PortDetectionConfidence: "high",
+		}
+	}
+
+	if buildMeta.UsedNixpacks {
+		return resolveBuildPortFromNixpacksPlan(buildMeta.NixpacksPlanStart, buildMeta.NixpacksPlanError, suggestedHealthcheck)
+	}
+
+	return resolveBuildPortFromExpose(detectedPorts, suggestedHealthcheck)
+}
+
 func resolveBuildPort(
 	target BuildTargetServiceMetadata,
 	services []string,
@@ -1150,6 +1318,61 @@ func resolveBuildPort(
 		SuggestedTargetPort:     port,
 		SuggestedHealthcheck:    healthcheck,
 		PortDetectionConfidence: resolutionConfidenceForSources(portSources),
+	}
+}
+
+func resolveBuildPortFromNixpacksPlan(
+	startCmd string,
+	planErr string,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+) buildPortResolution {
+	startCmd = strings.TrimSpace(startCmd)
+	if startCmd == "" {
+		reason := "nixpacks plan did not expose a single numeric start port"
+		if detail := strings.TrimSpace(planErr); detail != "" {
+			reason += "; " + detail
+		}
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusUnresolved,
+			Reason:         reason,
+			CandidatePorts: nil,
+		}
+	}
+
+	candidatePorts := parseStartHintPorts(startCmd)
+	switch len(candidatePorts) {
+	case 0:
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusUnresolved,
+			Source:         buildPortResolutionSourceNixpacksPlan,
+			Reason:         "nixpacks start command contains no numeric port",
+			CandidatePorts: nil,
+		}
+	case 1:
+		port := candidatePorts[0]
+		var healthcheck *BuildSuggestedHealthcheckMetadata
+		if suggestedHealthcheck != nil && strings.TrimSpace(suggestedHealthcheck.Path) != "" {
+			healthcheck = cloneSuggestedHealthcheck(&BuildSuggestedHealthcheckMetadata{
+				Path: suggestedHealthcheck.Path,
+				Port: port,
+			})
+		}
+		return buildPortResolution{
+			Status:                  buildPortResolutionStatusResolved,
+			Source:                  buildPortResolutionSourceNixpacksPlan,
+			Reason:                  fmt.Sprintf("resolved port %d from nixpacks plan start.cmd", port),
+			CandidatePorts:          candidatePorts,
+			SuggestedTargetPort:     port,
+			SuggestedHealthcheck:    healthcheck,
+			PortDetectionConfidence: "high",
+		}
+	default:
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusAmbiguous,
+			Source:         buildPortResolutionSourceNixpacksPlan,
+			Reason:         fmt.Sprintf("nixpacks start command contains multiple candidate ports: %s", intsToCSV(candidatePorts)),
+			CandidatePorts: candidatePorts,
+		}
 	}
 }
 
@@ -1581,13 +1804,21 @@ func resolveServiceBuildDir(repoDir, servicePath string) (string, error) {
 }
 
 func (w *Worker) failJob(jobID string, reason string) {
+	w.failJobWithArtifact(jobID, reason, "")
+}
+
+func (w *Worker) failJobWithArtifact(jobID string, reason string, artifactMetadataJSON string) {
 	now := time.Now().UTC()
-	w.db.Model(&models.BuildJob{}).Where("id = ?", jobID).Updates(map[string]any{
+	updates := map[string]any{
 		"status":       "failed",
 		"started_at":   now,
 		"completed_at": now,
 		"updated_at":   now,
-	})
+	}
+	if strings.TrimSpace(artifactMetadataJSON) != "" {
+		updates["artifact_metadata_json"] = artifactMetadataJSON
+	}
+	w.db.Model(&models.BuildJob{}).Where("id = ?", jobID).Updates(updates)
 	slog.Error("build job marked as failed", "job_id", jobID, "reason", reason)
 }
 
