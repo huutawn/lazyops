@@ -1095,8 +1095,73 @@ func TestBuildCallbackServiceRejectsSmokeRunOnlyPortResolutionForDeployableServi
 	if !errors.Is(err, ErrPortResolutionFailed) {
 		t.Fatalf("expected ErrPortResolutionFailed for smoke-run-only source, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "explicit config or nixpacks plan") {
+	if !strings.Contains(err.Error(), "explicit config, nixpacks plan, language default, or docker inspect") {
 		t.Fatalf("expected nixpacks-specific guidance, got %v", err)
+	}
+}
+
+func TestBuildCallbackServiceAcceptsLanguageDefaultResolvedPortForRepoService(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:          "prj_123",
+		UserID:      "usr_123",
+		Name:        "Acme API",
+		Slug:        "acme-api",
+		RuntimeMode: "distributed-k3s",
+	})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:           "api",
+			Path:           "backend",
+			Kind:           "service",
+			RuntimeProfile: "service",
+			Public:         true,
+			ServicePort:    0,
+			TargetPort:     0,
+		},
+		"",
+	))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend", Public: true, RuntimeProfile: "service"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName:          "api",
+				ServicePath:          "backend",
+				ImageRef:             "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest:          "sha256:api",
+				SuggestedTargetPort:  8080,
+				PortResolutionStatus: BuildPortResolutionStatusResolved,
+				PortResolutionSource: BuildPortResolutionSourceLanguageDefault,
+				CandidatePorts:       []int{8080},
+				PortResolutionReason: "nixpacks start command contains no numeric port; falling back to default go port 8080",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected language_default source to be accepted, got %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 1 {
+		t.Fatalf("expected one revision service, got %#v", result.Revision)
+	}
+	if result.Revision.Services[0].TargetPort != 8080 || result.Revision.Services[0].ServicePort != 8080 {
+		t.Fatalf("expected hydrated ports 8080, got service=%d target=%d", result.Revision.Services[0].ServicePort, result.Revision.Services[0].TargetPort)
 	}
 }
 

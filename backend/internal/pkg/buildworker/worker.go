@@ -270,14 +270,15 @@ const (
 	buildPortResolutionStatusAmbiguous  = "ambiguous"
 	buildPortResolutionStatusUnresolved = "unresolved"
 
-	buildPortResolutionSourceExplicit      = "explicit"
-	buildPortResolutionSourceNixpacksPlan  = "nixpacks_plan"
-	buildPortResolutionSourceDockerInspect = "docker_inspect"
-	buildPortResolutionSourceFrameworkHint = "framework_hint"
-	buildPortResolutionSourceSmokeRun      = "smoke_run"
-	buildPortResolutionSourceStartHint     = "start_hint"
-	buildPortResolutionSourceMixed         = "mixed"
-	buildPortResolutionSourceInternal      = "internal_default"
+	buildPortResolutionSourceExplicit        = "explicit"
+	buildPortResolutionSourceNixpacksPlan    = "nixpacks_plan"
+	buildPortResolutionSourceLanguageDefault = "language_default"
+	buildPortResolutionSourceDockerInspect   = "docker_inspect"
+	buildPortResolutionSourceFrameworkHint   = "framework_hint"
+	buildPortResolutionSourceSmokeRun        = "smoke_run"
+	buildPortResolutionSourceStartHint       = "start_hint"
+	buildPortResolutionSourceMixed           = "mixed"
+	buildPortResolutionSourceInternal        = "internal_default"
 )
 
 func (w *Worker) buildAndPush(
@@ -324,11 +325,12 @@ func (w *Worker) buildAndPush(
 			}
 
 			digest, _ := w.getImageDigest(ctx, imageName)
+			detectedServices := w.detectServices(serviceDir)
 			detectedFramework, suggestedHealthcheck := w.detectFrontendMetadata(serviceDir)
 			exposedPorts, _, _ := w.inspectImagePorts(ctx, imageName)
 			smokePorts, _ := w.smokeRunImagePorts(ctx, imageName)
 			detectedPorts, portDetectionSource := mergeDetectedPorts(exposedPorts, smokePorts)
-			resolution := resolveRepoServiceBuildPort(target, detectedPorts, suggestedHealthcheck, buildMeta)
+			resolution := resolveRepoServiceBuildPort(target, detectedServices, detectedFramework, detectedPorts, suggestedHealthcheck, buildMeta)
 			result.Services = append(result.Services, target.ServiceName)
 			result.ServiceArtifacts = append(result.ServiceArtifacts, BuildServiceArtifactMetadata{
 				ServiceName:             target.ServiceName,
@@ -1172,6 +1174,8 @@ func parseProcNetListeningPorts(payload string) []int {
 
 func resolveRepoServiceBuildPort(
 	target BuildTargetServiceMetadata,
+	services []string,
+	detectedFramework string,
 	detectedPorts []BuildDetectedPortMetadata,
 	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
 	buildMeta buildInvocationMetadata,
@@ -1193,7 +1197,13 @@ func resolveRepoServiceBuildPort(
 	}
 
 	if buildMeta.UsedNixpacks {
-		return resolveBuildPortFromNixpacksPlan(buildMeta.NixpacksPlanStart, buildMeta.NixpacksPlanError, suggestedHealthcheck)
+		resolution := resolveBuildPortFromNixpacksPlan(buildMeta.NixpacksPlanStart, buildMeta.NixpacksPlanError, suggestedHealthcheck)
+		if resolution.Status == buildPortResolutionStatusUnresolved {
+			if fallback := resolveBuildPortFromLanguageFallback(services, detectedFramework, suggestedHealthcheck, resolution.Reason); fallback.Status == buildPortResolutionStatusResolved {
+				return fallback
+			}
+		}
+		return resolution
 	}
 
 	return resolveBuildPortFromExpose(detectedPorts, suggestedHealthcheck)
@@ -1376,6 +1386,46 @@ func resolveBuildPortFromNixpacksPlan(
 	}
 }
 
+func resolveBuildPortFromLanguageFallback(
+	services []string,
+	detectedFramework string,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+	previousReason string,
+) buildPortResolution {
+	port, reason := selectLanguageFallbackPort(services, detectedFramework)
+	if port <= 0 {
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusUnresolved,
+			Source:         buildPortResolutionSourceLanguageDefault,
+			Reason:         strings.TrimSpace(previousReason),
+			CandidatePorts: nil,
+		}
+	}
+
+	var healthcheck *BuildSuggestedHealthcheckMetadata
+	if suggestedHealthcheck != nil && strings.TrimSpace(suggestedHealthcheck.Path) != "" {
+		healthcheck = cloneSuggestedHealthcheck(&BuildSuggestedHealthcheckMetadata{
+			Path: suggestedHealthcheck.Path,
+			Port: port,
+		})
+	}
+
+	fullReason := strings.TrimSpace(reason)
+	if prior := strings.TrimSpace(previousReason); prior != "" {
+		fullReason = prior + "; " + fullReason
+	}
+
+	return buildPortResolution{
+		Status:                  buildPortResolutionStatusResolved,
+		Source:                  buildPortResolutionSourceLanguageDefault,
+		Reason:                  fullReason,
+		CandidatePorts:          []int{port},
+		SuggestedTargetPort:     port,
+		SuggestedHealthcheck:    healthcheck,
+		PortDetectionConfidence: "low",
+	}
+}
+
 func resolveBuildPortFromExpose(
 	detectedPorts []BuildDetectedPortMetadata,
 	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
@@ -1502,6 +1552,45 @@ func selectInternalServicePort(services []string, detectedPorts []BuildDetectedP
 		}
 	}
 	return 0
+}
+
+func selectLanguageFallbackPort(services []string, detectedFramework string) (int, string) {
+	switch strings.ToLower(strings.TrimSpace(detectedFramework)) {
+	case "next", "vite", "react-scripts":
+		return 3000, fmt.Sprintf("falling back to default %s port 3000", strings.TrimSpace(detectedFramework))
+	}
+
+	switch {
+	case containsServiceType(services, "go"):
+		return 8080, "falling back to default go port 8080"
+	case containsServiceType(services, "java"):
+		return 8080, "falling back to default java port 8080"
+	case containsServiceType(services, "php"):
+		return 8080, "falling back to default php port 8080"
+	case containsServiceType(services, "python"):
+		return 8000, "falling back to default python port 8000"
+	case containsServiceType(services, "node"):
+		return 3000, "falling back to default node port 3000"
+	case containsServiceType(services, "ruby"):
+		return 3000, "falling back to default ruby port 3000"
+	case containsServiceType(services, "rust"):
+		return 3000, "falling back to default rust port 3000"
+	default:
+		return 0, ""
+	}
+}
+
+func containsServiceType(services []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		return false
+	}
+	for _, item := range services {
+		if strings.ToLower(strings.TrimSpace(item)) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func containsDetectedPort(detectedPorts []BuildDetectedPortMetadata, port int) bool {

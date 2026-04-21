@@ -576,12 +576,12 @@ func validateResolvedServicePorts(expectedTargets []BuildTargetServiceRecord, se
 		}
 		if hasExpectedTarget && !hasDeclaredBuildTargetPort(expectedTarget) && !isAcceptedResolvedServicePortSource(snapshot.Source) {
 			if strings.TrimSpace(snapshot.Reason) == "" {
-				snapshot.Reason = "distributed-k3s only accepts ports resolved from explicit config or nixpacks plan"
+				snapshot.Reason = "distributed-k3s only accepts ports resolved from explicit config, nixpacks plan, language default, or docker inspect"
 			}
 			return newPortResolutionError(
 				service,
 				snapshot,
-				"service requires a resolved target_port/service_port from explicit config or nixpacks plan before rollout",
+				"service requires a resolved target_port/service_port from explicit config, nixpacks plan, language default, or docker inspect before rollout",
 			)
 		}
 		if err := validateServiceHealthcheckConsistency(service); err != nil {
@@ -667,7 +667,7 @@ func hasDeclaredBuildTargetPort(expectedTarget BuildTargetServiceRecord) bool {
 
 func isAcceptedResolvedServicePortSource(raw string) bool {
 	switch normalizePortResolutionSource(raw) {
-	case BuildPortResolutionSourceExplicit, BuildPortResolutionSourceNixpacksPlan, BuildPortResolutionSourceDockerInspect:
+	case BuildPortResolutionSourceExplicit, BuildPortResolutionSourceNixpacksPlan, BuildPortResolutionSourceLanguageDefault, BuildPortResolutionSourceDockerInspect:
 		return true
 	default:
 		return false
@@ -998,6 +998,8 @@ func normalizePortResolutionSource(raw string) string {
 		return BuildPortResolutionSourceExplicit
 	case BuildPortResolutionSourceNixpacksPlan:
 		return BuildPortResolutionSourceNixpacksPlan
+	case BuildPortResolutionSourceLanguageDefault:
+		return BuildPortResolutionSourceLanguageDefault
 	case BuildPortResolutionSourceDockerInspect:
 		return BuildPortResolutionSourceDockerInspect
 	case BuildPortResolutionSourceFrameworkHint:

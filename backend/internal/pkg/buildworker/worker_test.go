@@ -142,6 +142,8 @@ func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
 				"port": 7000,
 			},
 		},
+		[]string{"go"},
+		"",
 		[]BuildDetectedPortMetadata{{Port: 3000, Protocol: "tcp", Exposed: true}},
 		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
 		buildInvocationMetadata{
@@ -172,6 +174,8 @@ func TestResolveRepoServiceBuildPortUsesNixpacksPlan(t *testing.T) {
 			RuntimeProfile: "service",
 			Public:         true,
 		},
+		[]string{"go"},
+		"",
 		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp", Exposed: true}},
 		nil,
 		buildInvocationMetadata{
@@ -202,6 +206,8 @@ func TestResolveRepoServiceBuildPortRewritesSuggestedHealthcheckPortToNixpacksPo
 			RuntimeProfile: "web",
 			Public:         true,
 		},
+		[]string{"node"},
+		"vite",
 		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp", Exposed: true}},
 		&BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000},
 		buildInvocationMetadata{
@@ -226,6 +232,8 @@ func TestResolveRepoServiceBuildPortRejectsNixpacksPlanWithoutNumericPort(t *tes
 			RuntimeProfile: "service",
 			Public:         true,
 		},
+		[]string{"unknown"},
+		"",
 		nil,
 		nil,
 		buildInvocationMetadata{
@@ -238,10 +246,10 @@ func TestResolveRepoServiceBuildPortRejectsNixpacksPlanWithoutNumericPort(t *tes
 		t.Fatalf("expected unresolved status, got %#v", resolution)
 	}
 	if resolution.Source != buildPortResolutionSourceNixpacksPlan {
-		t.Fatalf("expected nixpacks_plan source, got %#v", resolution)
+		t.Fatalf("expected nixpacks_plan source when no language fallback exists, got %#v", resolution)
 	}
 	if resolution.Reason != "nixpacks start command contains no numeric port" {
-		t.Fatalf("expected nixpacks-specific unresolved reason, got %#v", resolution)
+		t.Fatalf("expected unresolved reason to preserve nixpacks detail, got %#v", resolution)
 	}
 	if resolution.SuggestedTargetPort != 0 {
 		t.Fatalf("expected unresolved Nixpacks result to omit suggested port, got %#v", resolution)
@@ -256,6 +264,8 @@ func TestResolveRepoServiceBuildPortRejectsMissingNixpacksPlanPort(t *testing.T)
 			RuntimeProfile: "service",
 			Public:         true,
 		},
+		[]string{"unknown"},
+		"",
 		nil,
 		nil,
 		buildInvocationMetadata{
@@ -268,7 +278,7 @@ func TestResolveRepoServiceBuildPortRejectsMissingNixpacksPlanPort(t *testing.T)
 		t.Fatalf("expected unresolved status, got %#v", resolution)
 	}
 	if resolution.Source != "" {
-		t.Fatalf("expected empty source when plan has no usable start command, got %#v", resolution)
+		t.Fatalf("expected empty source when plan has no usable start command and no language fallback exists, got %#v", resolution)
 	}
 	if resolution.Reason != "nixpacks plan did not expose a single numeric start port; nixpacks plan did not define start.cmd" {
 		t.Fatalf("expected nixpacks-plan-specific unresolved reason, got %#v", resolution)
@@ -283,6 +293,8 @@ func TestResolveRepoServiceBuildPortRejectsNixpacksPlanWithMultiplePorts(t *test
 			RuntimeProfile: "service",
 			Public:         true,
 		},
+		[]string{"go"},
+		"",
 		nil,
 		nil,
 		buildInvocationMetadata{
@@ -302,6 +314,102 @@ func TestResolveRepoServiceBuildPortRejectsNixpacksPlanWithMultiplePorts(t *test
 	}
 	if resolution.SuggestedTargetPort != 0 {
 		t.Fatalf("expected ambiguous Nixpacks result to omit suggested port, got %#v", resolution)
+	}
+}
+
+func TestResolveRepoServiceBuildPortFallsBackToDefaultGoPort(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			RuntimeProfile: "service",
+			Public:         true,
+		},
+		[]string{"go"},
+		"",
+		nil,
+		nil,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "./out",
+		},
+	)
+
+	if resolution.Status != buildPortResolutionStatusResolved {
+		t.Fatalf("expected resolved status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceLanguageDefault {
+		t.Fatalf("expected language_default source, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 8080 {
+		t.Fatalf("expected go fallback port 8080, got %#v", resolution)
+	}
+	if got := resolution.CandidatePorts; len(got) != 1 || got[0] != 8080 {
+		t.Fatalf("expected candidate ports [8080], got %#v", got)
+	}
+	if resolution.Reason != "nixpacks start command contains no numeric port; falling back to default go port 8080" {
+		t.Fatalf("expected fallback reason to include nixpacks failure and go default, got %#v", resolution.Reason)
+	}
+}
+
+func TestResolveRepoServiceBuildPortFallsBackToFrameworkDefaultPort(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "web",
+			ServicePath:    "fe",
+			RuntimeProfile: "web",
+			Public:         true,
+		},
+		[]string{"node"},
+		"next",
+		nil,
+		&BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000},
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "npm run start",
+		},
+	)
+
+	if resolution.Status != buildPortResolutionStatusResolved {
+		t.Fatalf("expected resolved status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceLanguageDefault {
+		t.Fatalf("expected language_default source, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 3000 {
+		t.Fatalf("expected frontend fallback port 3000, got %#v", resolution)
+	}
+	if resolution.SuggestedHealthcheck == nil || resolution.SuggestedHealthcheck.Path != "/" || resolution.SuggestedHealthcheck.Port != 3000 {
+		t.Fatalf("expected frontend healthcheck /:3000, got %#v", resolution.SuggestedHealthcheck)
+	}
+}
+
+func TestResolveRepoServiceBuildPortDoesNotFallbackWhenNixpacksPlanIsAmbiguous(t *testing.T) {
+	resolution := resolveRepoServiceBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			RuntimeProfile: "service",
+			Public:         true,
+		},
+		[]string{"go"},
+		"",
+		nil,
+		nil,
+		buildInvocationMetadata{
+			UsedNixpacks:      true,
+			NixpacksPlanStart: "PORT=3000 ./out --port 9229",
+		},
+	)
+
+	if resolution.Status != buildPortResolutionStatusAmbiguous {
+		t.Fatalf("expected ambiguous status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceNixpacksPlan {
+		t.Fatalf("expected nixpacks_plan source, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 0 {
+		t.Fatalf("expected ambiguous result to omit suggested port, got %#v", resolution)
 	}
 }
 

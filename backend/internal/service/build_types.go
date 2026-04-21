@@ -19,14 +19,15 @@ const (
 	BuildPortResolutionStatusAmbiguous  = "ambiguous"
 	BuildPortResolutionStatusUnresolved = "unresolved"
 
-	BuildPortResolutionSourceExplicit      = "explicit"
-	BuildPortResolutionSourceNixpacksPlan  = "nixpacks_plan"
-	BuildPortResolutionSourceDockerInspect = "docker_inspect"
-	BuildPortResolutionSourceFrameworkHint = "framework_hint"
-	BuildPortResolutionSourceSmokeRun      = "smoke_run"
-	BuildPortResolutionSourceStartHint     = "start_hint"
-	BuildPortResolutionSourceMixed         = "mixed"
-	BuildPortResolutionSourceInternal      = "internal_default"
+	BuildPortResolutionSourceExplicit        = "explicit"
+	BuildPortResolutionSourceNixpacksPlan    = "nixpacks_plan"
+	BuildPortResolutionSourceLanguageDefault = "language_default"
+	BuildPortResolutionSourceDockerInspect   = "docker_inspect"
+	BuildPortResolutionSourceFrameworkHint   = "framework_hint"
+	BuildPortResolutionSourceSmokeRun        = "smoke_run"
+	BuildPortResolutionSourceStartHint       = "start_hint"
+	BuildPortResolutionSourceMixed           = "mixed"
+	BuildPortResolutionSourceInternal        = "internal_default"
 )
 
 type BuildRetryPolicyRecord struct {
