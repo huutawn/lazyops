@@ -74,6 +74,7 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 	}
 
 	domains := make([]PublicDomainRecord, 0, len(publicServices))
+	urlScheme := publicDomainURLScheme(runtimeMode)
 	for _, service := range publicServices {
 		publicIP := r.resolveTargetPublicIP(targetKind, strings.TrimSpace(input.TargetID), service.Name, input.PlacementAssignments)
 		if publicIP == "" || net.ParseIP(publicIP) == nil || isPrivateIP(publicIP) {
@@ -96,8 +97,8 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 			ServiceName:  service.Name,
 			PrimaryHost:  primaryHost,
 			FallbackHost: fallbackHost,
-			PrimaryURL:   "https://" + primaryHost,
-			FallbackURL:  "https://" + fallbackHost,
+			PrimaryURL:   urlScheme + "://" + primaryHost,
+			FallbackURL:  urlScheme + "://" + fallbackHost,
 		})
 	}
 
@@ -118,6 +119,14 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 		PublicURLs: []string{},
 		Reason:     "Target chưa có public IP hợp lệ để cấp magic domain.",
 	}
+}
+
+func publicDomainURLScheme(runtimeMode string) string {
+	if strings.TrimSpace(runtimeMode) == bootstrapModeDistributedK3s {
+		// The current k3s/Traefik path only renders plain HTTP Ingress rules.
+		return "http"
+	}
+	return "https"
 }
 
 func (r *PublicDomainResolver) resolveTargetPublicIP(targetKind, targetID, serviceName string, assignments []PlacementAssignmentRecord) string {

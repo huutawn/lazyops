@@ -45,7 +45,7 @@ export function Drawer({ open, onClose, title, children, side = 'right', size = 
         )}
       >
         <div className="flex h-12 items-center justify-between border-b border-lazyops-border px-5">
-          <h3 className="text-sm font-semibold text-lazyops-text">{title}</h3>
+          <h3 className="text-base font-semibold text-lazyops-text">{title}</h3>
           <button
             type="button"
             className="rounded-md p-1 text-lazyops-muted transition-colors hover:bg-lazyops-border/30 hover:text-lazyops-text"
@@ -58,7 +58,7 @@ export function Drawer({ open, onClose, title, children, side = 'right', size = 
             </svg>
           </button>
         </div>
-        <div className="overflow-y-auto p-5" style={{ maxHeight: 'calc(100vh - 48px)' }}>
+        <div className="overflow-y-auto p-6" style={{ maxHeight: 'calc(100vh - 48px)' }}>
           {children}
         </div>
       </div>

@@ -67,7 +67,7 @@ export function ProjectRepoLinkModal({
     <Modal open={open} onClose={onClose} title="Kết nối mã nguồn" size="lg">
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
         <div>
-          <label className="mb-2 block text-sm font-medium text-lazyops-text">Chọn repository</label>
+          <label className="mb-2 block text-base font-medium text-lazyops-text">Chọn repository</label>
           <div className="max-h-64 overflow-y-auto rounded-lg border border-lazyops-border">
             {repos.map((repo) => {
               const isSelected = selectedRepoId === repo.github_repo_id;
@@ -75,14 +75,14 @@ export function ProjectRepoLinkModal({
                 <button
                   key={repo.github_repo_id}
                   type="button"
-                  className={`flex w-full items-center justify-between border-b border-lazyops-border/50 px-4 py-3 text-left transition-colors last:border-b-0 ${
+                  className={`flex w-full items-center justify-between border-b border-lazyops-border/50 px-6 py-3 text-left transition-colors last:border-b-0 ${
                     isSelected ? 'bg-primary/10' : 'hover:bg-lazyops-border/10'
                   }`}
                   onClick={() => handleRepoSelect(repo)}
                 >
                   <div>
-                    <span className="text-sm font-medium text-lazyops-text">{repo.full_name}</span>
-                    <span className="ml-2 text-xs text-lazyops-muted">({repo.installation_account_login})</span>
+                    <span className="text-base font-medium text-lazyops-text">{repo.full_name}</span>
+                    <span className="ml-2 text-sm text-lazyops-muted">({repo.installation_account_login})</span>
                   </div>
                   <StatusBadge
                     label={repo.private ? 'Riêng tư' : 'Công khai'}
@@ -95,13 +95,13 @@ export function ProjectRepoLinkModal({
             })}
           </div>
           {errors.github_repo_id ? (
-            <p className="mt-1 text-xs text-health-unhealthy">{errors.github_repo_id.message}</p>
+            <p className="mt-1 text-sm text-health-unhealthy">{errors.github_repo_id.message}</p>
           ) : null}
         </div>
 
         {selectedRepo ? (
-          <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-4">
-            <h4 className="mb-3 text-sm font-medium text-lazyops-text">Thiết lập theo dõi</h4>
+          <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-6">
+            <h4 className="mb-3 text-base font-medium text-lazyops-text">Thiết lập theo dõi</h4>
             <div className="flex flex-col gap-4">
               <FormField label="Nhánh theo dõi" error={errors.tracked_branch?.message}>
                 <FormInput
@@ -115,7 +115,7 @@ export function ProjectRepoLinkModal({
                 </p>
               </FormField>
 
-              <label className="flex items-center gap-2 text-sm text-lazyops-text">
+              <label className="flex items-center gap-2 text-base text-lazyops-text">
                 <input type="checkbox" className="accent-primary" {...register('preview_enabled')} />
                 Bật preview deploy cho pull request
               </label>
@@ -124,7 +124,7 @@ export function ProjectRepoLinkModal({
         ) : null}
 
         {serverError ? (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
             {serverError}
           </div>
         ) : null}

@@ -33,7 +33,7 @@ export function FormField({ label, error, children, className }: FormFieldProps)
     <div className={cn('flex flex-col gap-2', className)}>
       <label htmlFor={id} className="text-[13px] font-bold text-[#94a3b8] uppercase tracking-wider ml-1">{label}</label>
       {addIdToFirstInput(children, id)}
-      {error && <p className="text-xs font-medium text-[#ef4444] animate-in fade-in slide-in-from-left-2 mt-1" role="alert">{error}</p>}
+      {error && <p className="text-sm font-medium text-[#ef4444] animate-in fade-in slide-in-from-left-2 mt-1" role="alert">{error}</p>}
     </div>
   );
 }
@@ -53,7 +53,7 @@ export function FormInput({ className, error, icon, ...props }: FormInputProps) 
       )}
       <input
         className={cn(
-          'h-12 w-full rounded-xl border bg-[#0B1120]/40 px-4 text-[15px] text-white outline-none transition-all placeholder:text-[#64748b]/50',
+          'h-12 w-full rounded-xl border bg-[#0B1120]/40 px-6 text-[15px] text-white outline-none transition-all placeholder:text-[#64748b]/50',
           icon ? 'pl-10' : 'pl-4',
           'border-[#1e293b] focus:border-[#0EA5E9]/50 focus:ring-4 focus:ring-[#0EA5E9]/10 focus:bg-[#0B1120]/60',
           error && 'border-[#ef4444]/50 focus:border-[#ef4444]/60 focus:ring-[#ef4444]/10',

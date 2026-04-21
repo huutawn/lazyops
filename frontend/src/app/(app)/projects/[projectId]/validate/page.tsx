@@ -95,7 +95,7 @@ export default function ValidateContractPage() {
         subtitle="Expert/debug route. Normal service-first deployments da tu validate deploy plan ngầm trước khi rollout."
       />
         <SectionCard title="No bindings available" description="Create a deployment binding first to validate a contract.">
-          <p className="text-sm text-lazyops-muted">
+          <p className="text-base text-lazyops-muted">
             You need at least one deployment binding before you can review the deploy contract.
           </p>
         </SectionCard>
@@ -119,12 +119,12 @@ export default function ValidateContractPage() {
         <div className="flex flex-col gap-3">
           {EXPLANATION.steps.map((step, i) => (
             <div key={step.title} className="flex items-start gap-3">
-              <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
+              <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-bold text-primary">
                 {i + 1}
               </div>
               <div>
-                <span className="text-sm font-medium text-lazyops-text">{step.title}</span>
-                <p className="text-xs text-lazyops-muted">{step.desc}</p>
+                <span className="text-base font-medium text-lazyops-text">{step.title}</span>
+                <p className="text-sm text-lazyops-muted">{step.desc}</p>
               </div>
             </div>
           ))}
@@ -137,7 +137,7 @@ export default function ValidateContractPage() {
             <button
               key={binding.id}
               type="button"
-              className={`flex items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors ${
+              className={`flex items-center justify-between rounded-lg border px-6 py-3 text-left transition-colors ${
                 i === selectedBindingIdx
                   ? 'border-primary/40 bg-primary/10'
                   : 'border-lazyops-border hover:bg-lazyops-border/10'
@@ -149,8 +149,8 @@ export default function ValidateContractPage() {
               }}
             >
               <div>
-                <span className="text-sm font-medium text-lazyops-text">{binding.name}</span>
-                <span className="ml-2 text-xs text-lazyops-muted">/{binding.target_ref}</span>
+                <span className="text-base font-medium text-lazyops-text">{binding.name}</span>
+                <span className="ml-2 text-sm text-lazyops-muted">/{binding.target_ref}</span>
               </div>
               <StatusBadge label={binding.runtime_mode} variant="info" size="sm" dot={false} />
             </button>
@@ -160,7 +160,7 @@ export default function ValidateContractPage() {
         <div className="mt-4">
           <button
             type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90 disabled:opacity-50"
             onClick={handleValidate}
             disabled={isValidating}
           >
@@ -193,7 +193,7 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
       >
         <div className="flex items-center gap-2">
           <StatusBadge label="Valid" variant="success" size="md" />
-          <span className="text-sm text-lazyops-muted">Ready for the internal deploy-plan compiler used by the service-first flow.</span>
+          <span className="text-base text-lazyops-muted">Ready for the internal deploy-plan compiler used by the service-first flow.</span>
         </div>
       </SectionCard>
 
@@ -222,7 +222,7 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
       <SectionCard title="Schema constraints" description="Rules enforced by the deploy contract.">
         <div className="flex flex-col gap-4">
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Allowed dependency protocols</h4>
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Allowed dependency protocols</h4>
             <div className="flex flex-wrap gap-2">
               {schema.allowed_dependency_protocols.map((p) => (
                 <StatusBadge key={p} label={p} variant="info" size="sm" dot={false} />
@@ -231,7 +231,7 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
           </div>
 
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Allowed magic domain providers</h4>
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Allowed magic domain providers</h4>
             <div className="flex flex-wrap gap-2">
               {schema.allowed_magic_domain_providers.map((p) => (
                 <StatusBadge key={p} label={p} variant="neutral" size="sm" dot={false} />
@@ -240,8 +240,8 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
           </div>
 
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Forbidden fields</h4>
-            <p className="mb-2 text-xs text-lazyops-muted">
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Forbidden fields</h4>
+            <p className="mb-2 text-sm text-lazyops-muted">
               These fields must not appear in your lazyops.yaml. LazyOps manages them automatically.
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -261,8 +261,8 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="text-sm text-lazyops-text">{value}</span>
+      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="text-base text-lazyops-text">{value}</span>
     </div>
   );
 }

@@ -9,7 +9,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-background to-background opacity-80" />
         <div className="absolute top-0 right-0 h-[500px] w-[500px] -translate-y-1/2 translate-x-1/3 rounded-full bg-primary/20 blur-[120px]" />
         
-        <div className="relative z-10 flex items-center gap-3 text-2xl font-bold tracking-tight text-foreground">
+        <div className="relative z-10 flex items-center gap-3 text-4xl font-bold tracking-tight text-foreground">
           <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20">
             <LayoutGrid className="size-5" />
           </div>

@@ -132,13 +132,13 @@ export function ProjectRuntimeWorkspace({ projectId }: ProjectRuntimeWorkspacePr
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/projects/${projectId}/services`}
-              className="rounded-xl border border-[#334155] bg-[#0B1120]/70 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#111827]"
+              className="rounded-xl border border-[#334155] bg-[#0B1120]/70 px-6 py-2 text-base font-semibold text-white transition-colors hover:bg-[#111827]"
             >
               Edit services
             </Link>
             <Link
               href={`/projects/${projectId}/deployments`}
-              className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90"
+              className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90"
             >
               Open deployments
             </Link>
@@ -252,10 +252,10 @@ function RuntimeHeroCard({
     <div className="rounded-[28px] border border-[#1e293b] bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.16),_transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(2,6,23,0.92))] p-6 shadow-[0_24px_80px_rgba(2,6,23,0.45)]">
       <div className="mb-4 flex items-center gap-3">
         <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/80 p-3">{icon}</div>
-        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#64748b]">{label}</div>
+        <div className="text-sm font-semibold uppercase tracking-[0.16em] text-[#64748b]">{label}</div>
       </div>
       <div className="text-4xl font-black tracking-tight text-white">{value}</div>
-      <div className="mt-2 text-sm text-[#94a3b8]">{hint}</div>
+      <div className="mt-2 text-base text-[#94a3b8]">{hint}</div>
     </div>
   );
 }
@@ -283,12 +283,12 @@ function RuntimeServiceCard({
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-2xl font-black tracking-tight text-white">{service.name}</h3>
+            <h3 className="text-4xl font-black tracking-tight text-white">{service.name}</h3>
             <StatusBadge label={service.runtime_status} variant={runtimeVariant} size="sm" />
             {service.public ? <StatusBadge label="public" variant="info" size="sm" dot={false} /> : <StatusBadge label="private" variant="neutral" size="sm" dot={false} />}
             {service.source_type ? <StatusBadge label={service.source_type} variant="default" size="sm" dot={false} /> : null}
           </div>
-          <p className="max-w-3xl text-sm leading-relaxed text-[#94a3b8]">
+          <p className="max-w-3xl text-base leading-relaxed text-[#94a3b8]">
             {service.runtime_reason || 'Runtime state will appear here after the first deployment.'}
           </p>
         </div>
@@ -296,14 +296,14 @@ function RuntimeServiceCard({
         <div className="flex flex-wrap gap-2">
           <Link
             href={`/projects/${projectId}/services`}
-            className="rounded-xl border border-[#334155] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#111827]"
+            className="rounded-xl border border-[#334155] px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#111827]"
           >
             Edit service
           </Link>
           {service.deployment_id ? (
             <Link
               href={`/projects/${projectId}/deployments/${service.deployment_id}`}
-              className="rounded-xl border border-[#0EA5E9] bg-[#0EA5E9]/10 px-3 py-2 text-xs font-semibold text-[#38bdf8] transition-colors hover:bg-[#0EA5E9]/20"
+              className="rounded-xl border border-[#0EA5E9] bg-[#0EA5E9]/10 px-3 py-2 text-sm font-semibold text-[#38bdf8] transition-colors hover:bg-[#0EA5E9]/20"
             >
               Open deployment
             </Link>
@@ -319,8 +319,8 @@ function RuntimeServiceCard({
       </div>
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/70 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/70 p-6">
+          <div className="mb-3 flex items-center gap-2 text-base font-semibold text-white">
             <Network className="size-4 text-[#38bdf8]" />
             Connectivity
           </div>
@@ -332,20 +332,20 @@ function RuntimeServiceCard({
           {service.dependencies.length > 0 ? (
             <div className="mt-4 grid gap-2">
               {service.dependencies.map((dependency) => (
-                <div key={dependency.service_name} className="rounded-xl border border-[#1e293b] bg-[#020617]/70 px-3 py-2 text-sm">
+                <div key={dependency.service_name} className="rounded-xl border border-[#1e293b] bg-[#020617]/70 px-3 py-2 text-base">
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-semibold text-white">{dependency.service_name}</span>
                     <StatusBadge label={dependency.status} variant={dependencyStatusVariant(dependency.status)} size="sm" dot={false} />
                   </div>
-                  <div className="mt-1 text-xs text-[#94a3b8]">{dependency.status_reason || dependency.internal_endpoint || 'No extra dependency detail.'}</div>
+                  <div className="mt-1 text-sm text-[#94a3b8]">{dependency.status_reason || dependency.internal_endpoint || 'No extra dependency detail.'}</div>
                 </div>
               ))}
             </div>
           ) : null}
         </div>
 
-        <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/70 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/70 p-6">
+          <div className="mb-3 flex items-center gap-2 text-base font-semibold text-white">
             <Terminal className="size-4 text-[#38bdf8]" />
             Recent logs
           </div>
@@ -357,7 +357,7 @@ function RuntimeServiceCard({
           ) : (
             <div className="grid gap-2">
               {service.recent_logs.map((line) => (
-                <div key={`${service.service_id}-${line.timestamp}-${line.message}`} className="rounded-xl border border-[#1e293b] bg-[#020617]/80 px-3 py-2 font-mono text-xs">
+                <div key={`${service.service_id}-${line.timestamp}-${line.message}`} className="rounded-xl border border-[#1e293b] bg-[#020617]/80 px-3 py-2 font-mono text-sm">
                   <div className="mb-1 flex flex-wrap items-center gap-2 text-[#64748b]">
                     <span>{new Date(line.timestamp).toLocaleTimeString()}</span>
                     <span className={logLevelClassName(line.level)}>[{line.level.toUpperCase()}]</span>
@@ -373,13 +373,13 @@ function RuntimeServiceCard({
       </div>
 
       {service.requested_node_id && !requestedNode ? (
-        <div className="mt-4 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fecaca]">
+        <div className="mt-4 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base text-[#fecaca]">
           Service pinning references node <code>{service.requested_node_id}</code>, but that node is currently unavailable in cluster inventory.
         </div>
       ) : null}
 
       {runtime.nodes.length === 0 && runtime.cluster_id ? (
-        <div className="mt-4 rounded-2xl border border-[#f59e0b]/30 bg-[#f59e0b]/10 px-4 py-3 text-sm text-[#fde68a]">
+        <div className="mt-4 rounded-2xl border border-[#f59e0b]/30 bg-[#f59e0b]/10 px-6 py-3 text-base text-[#fde68a]">
           The project is linked to a cluster, but runtime node inventory is still empty. This usually means the cluster has not reported any Ready node yet.
         </div>
       ) : null}
@@ -398,7 +398,7 @@ function RuntimeTopologyPanel({ runtime }: { runtime: ProjectRuntimeSummary }) {
       description="Topology stays embedded here for service-first triage. The old dedicated topology route can remain for debug-only exploration."
     >
       {topology.isLoading ? (
-        <div className="text-sm text-[#94a3b8]">Loading topology…</div>
+        <div className="text-base text-[#94a3b8]">Loading topology…</div>
       ) : topology.isError || !topology.data || topology.data.nodes.length === 0 ? (
         <RuntimeEmptyCopy
           title="No topology yet"
@@ -413,16 +413,16 @@ function RuntimeTopologyPanel({ runtime }: { runtime: ProjectRuntimeSummary }) {
           </div>
           <div className="grid gap-2">
             {serviceNodes.slice(0, 4).map((node) => (
-              <div key={node.id} className="rounded-xl border border-[#1e293b] bg-[#020617]/70 px-3 py-2 text-sm">
+              <div key={node.id} className="rounded-xl border border-[#1e293b] bg-[#020617]/70 px-3 py-2 text-base">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-semibold text-white">{node.label}</span>
                   <StatusBadge label={node.status} variant={topologyStatusVariant(node.status)} size="sm" dot={false} />
                 </div>
-                <div className="mt-1 text-xs text-[#94a3b8]">{node.kind} · {node.runtime_mode || 'service-first runtime'}</div>
+                <div className="mt-1 text-sm text-[#94a3b8]">{node.kind} · {node.runtime_mode || 'service-first runtime'}</div>
               </div>
             ))}
           </div>
-          <div className="rounded-xl border border-[#1e293b] bg-[#020617]/70 px-3 py-3 text-xs text-[#94a3b8]">
+          <div className="rounded-xl border border-[#1e293b] bg-[#020617]/70 px-3 py-3 text-sm text-[#94a3b8]">
             {clusterNodes.length} infrastructure node(s) and {serviceNodes.length} service node(s) are currently visible in topology sync.
           </div>
         </div>
@@ -446,7 +446,7 @@ function RuntimeNodePanel({ nodes }: { nodes: ProjectRuntimeNode[] }) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="font-semibold text-white">{node.name}</div>
-                  <div className="text-xs text-[#94a3b8]">{node.k8s_node_name || node.instance_id}</div>
+                  <div className="text-sm text-[#94a3b8]">{node.k8s_node_name || node.instance_id}</div>
                 </div>
                 <StatusBadge label={node.is_ready ? 'ready' : node.status} variant={node.is_ready ? 'success' : topologyStatusVariant(node.status)} size="sm" dot={false} />
               </div>
@@ -474,9 +474,9 @@ function RuntimeDeepLogPanel({
   return (
     <SectionCard title="Deep log drill-down" description="This panel still uses the existing logs API for deeper investigation once you move past the runtime preview.">
       {isLoading ? (
-        <div className="text-sm text-[#94a3b8]">Loading logs…</div>
+        <div className="text-base text-[#94a3b8]">Loading logs…</div>
       ) : isError ? (
-        <div className="rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fecaca]">{errorMessage}</div>
+        <div className="rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base text-[#fecaca]">{errorMessage}</div>
       ) : logs.length === 0 ? (
         <RuntimeEmptyCopy
           title={serviceFilter === 'all' ? 'No logs for current filters' : `No deep logs for ${serviceFilter}`}
@@ -485,7 +485,7 @@ function RuntimeDeepLogPanel({
       ) : (
         <div className="grid gap-2">
           {logs.slice(0, 12).map((line) => (
-            <div key={line.id} className="rounded-xl border border-[#1e293b] bg-[#020617]/80 px-3 py-2 font-mono text-xs">
+            <div key={line.id} className="rounded-xl border border-[#1e293b] bg-[#020617]/80 px-3 py-2 font-mono text-sm">
               <div className="mb-1 flex flex-wrap items-center gap-2 text-[#64748b]">
                 <span>{new Date(line.timestamp).toLocaleTimeString()}</span>
                 <span className={logLevelClassName(line.level)}>[{line.level.toUpperCase()}]</span>
@@ -505,7 +505,7 @@ function RuntimeDeepLogPanel({
 function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#64748b]">{label}</span>
+      <span className="text-sm font-semibold uppercase tracking-[0.14em] text-[#64748b]">{label}</span>
       {children}
     </label>
   );
@@ -523,10 +523,10 @@ function MetricTile({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/80 p-4">
+    <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#64748b]">{label}</div>
-      <div className={`mt-2 text-base font-bold text-white ${mono ? 'font-mono text-sm' : ''}`}>{value}</div>
-      <div className="mt-1 text-xs text-[#94a3b8]">{subvalue}</div>
+      <div className={`mt-2 text-base font-bold text-white ${mono ? 'font-mono text-base' : ''}`}>{value}</div>
+      <div className="mt-1 text-sm text-[#94a3b8]">{subvalue}</div>
     </div>
   );
 }
@@ -535,16 +535,16 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-1">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#64748b]">{label}</div>
-      <div className="break-all text-sm text-[#e2e8f0]">{value}</div>
+      <div className="break-all text-base text-[#e2e8f0]">{value}</div>
     </div>
   );
 }
 
 function RuntimeEmptyCopy({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-[#334155] bg-[#020617]/70 p-5">
-      <div className="text-sm font-semibold text-white">{title}</div>
-      <div className="mt-1 text-sm text-[#94a3b8]">{description}</div>
+    <div className="rounded-2xl border border-dashed border-[#334155] bg-[#020617]/70 p-6">
+      <div className="text-base font-semibold text-white">{title}</div>
+      <div className="mt-1 text-base text-[#94a3b8]">{description}</div>
     </div>
   );
 }
@@ -660,4 +660,4 @@ function logLevelClassName(level: string) {
 }
 
 const filterClassName =
-  'w-full rounded-2xl border border-[#1e293b] bg-[#020617]/80 px-4 py-3 text-sm font-medium text-white outline-none transition-colors focus:border-[#0EA5E9]';
+  'w-full rounded-2xl border border-[#1e293b] bg-[#020617]/80 px-6 py-3 text-base font-medium text-white outline-none transition-colors focus:border-[#0EA5E9]';

@@ -35,7 +35,7 @@ export default async function ProjectServicesPage({ params, searchParams }: Proj
             <Link
               key={filter.key}
               href={href}
-              className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${
+              className={`rounded-full border px-6 py-2 text-base font-semibold transition-colors ${
                 active
                   ? 'border-[#0EA5E9] bg-[#0EA5E9]/10 text-[#38bdf8]'
                   : 'border-[#334155] text-[#cbd5e1] hover:bg-[#0B1120]'

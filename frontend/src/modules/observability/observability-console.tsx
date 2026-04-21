@@ -136,7 +136,7 @@ export function ObservabilityConsole({
             <select
               value={activeProjectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/50 px-3 py-2 text-sm text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+              className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/50 px-3 py-2 text-base text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
             >
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
@@ -153,7 +153,7 @@ export function ObservabilityConsole({
           <button
             key={tab}
             type="button"
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+            className={`rounded-t-lg px-6 py-2 text-base font-medium transition-colors ${
               activeTab === tab
                 ? 'border-b-2 border-primary text-primary'
                 : 'text-lazyops-muted hover:text-lazyops-text'
@@ -216,20 +216,20 @@ function OverviewTab({ openIncidents, errorLogs, metrics }: {
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-3">
         <SectionCard title="Open incidents">
-          <div className="text-3xl font-bold text-health-unhealthy">{openIncidents.length}</div>
-          <p className="text-xs text-lazyops-muted">
+          <div className="text-4xl font-bold text-health-unhealthy">{openIncidents.length}</div>
+          <p className="text-sm text-lazyops-muted">
             {openIncidents.length > 0 ? 'Requires attention' : 'All clear'}
           </p>
         </SectionCard>
 
         <SectionCard title="Recent errors">
-          <div className="text-3xl font-bold text-health-unhealthy">{errorLogs.length}</div>
-          <p className="text-xs text-lazyops-muted">Error log entries</p>
+          <div className="text-4xl font-bold text-health-unhealthy">{errorLogs.length}</div>
+          <p className="text-sm text-lazyops-muted">Error log entries</p>
         </SectionCard>
 
         <SectionCard title="Services monitored">
-          <div className="text-3xl font-bold text-health-healthy">{metrics?.length ?? 0}</div>
-          <p className="text-xs text-lazyops-muted">With metric data</p>
+          <div className="text-4xl font-bold text-health-healthy">{metrics?.length ?? 0}</div>
+          <p className="text-sm text-lazyops-muted">With metric data</p>
         </SectionCard>
       </div>
 
@@ -237,14 +237,14 @@ function OverviewTab({ openIncidents, errorLogs, metrics }: {
         <SectionCard title="Active incidents" description="Incidents requiring attention.">
           <div className="flex flex-col gap-2">
             {openIncidents.map((inc) => (
-              <div key={inc.id} className="flex items-center justify-between rounded-lg bg-lazyops-bg-accent/50 px-4 py-3">
+              <div key={inc.id} className="flex items-center justify-between rounded-lg bg-lazyops-bg-accent/50 px-6 py-3">
                 <div className="flex items-center gap-3">
                   <StatusBadge
                     label={inc.severity}
                     variant={INCIDENT_SEVERITY_VARIANT[inc.severity] ?? 'neutral'}
                     size="sm"
                   />
-                  <span className="text-sm text-lazyops-text">{inc.summary}</span>
+                  <span className="text-base text-lazyops-text">{inc.summary}</span>
                 </div>
                 <StatusBadge
                   label={inc.status}
@@ -261,38 +261,38 @@ function OverviewTab({ openIncidents, errorLogs, metrics }: {
       <SectionCard title="Service metrics" description="Real rollup data from agent metrics and gateway access logs.">
         {metrics && metrics.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead>
                 <tr className="border-b border-lazyops-border">
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Service</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">CPU p95</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">RAM p95</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Disk p95</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Net RX</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Net TX</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Requests</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Service</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">CPU p95</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">RAM p95</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Disk p95</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Net RX</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Net TX</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Requests</th>
                 </tr>
               </thead>
               <tbody>
                 {metrics.map((m) => (
                   <tr key={m.service} className="border-b border-lazyops-border/50">
-                    <td className="px-4 py-2 font-medium text-lazyops-text">{m.service}</td>
-                    <td className="px-4 py-2 font-mono text-xs">
+                    <td className="px-6 py-2 font-medium text-lazyops-text">{m.service}</td>
+                    <td className="px-6 py-2 font-mono text-sm">
                       <MetricBar value={m.cpu_p95} max={100} unit="%" />
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs">
+                    <td className="px-6 py-2 font-mono text-sm">
                       <MetricBar value={m.ram_p95} max={2048} unit="MB" />
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-2 font-mono text-sm text-lazyops-muted">
                       {formatBytes(m.disk_p95_bytes)}
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-2 font-mono text-sm text-lazyops-muted">
                       {formatBytes(m.network_in_total_bytes)}
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-2 font-mono text-sm text-lazyops-muted">
                       {formatBytes(m.network_out_total_bytes)}
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-2 font-mono text-sm text-lazyops-muted">
                       {m.request_count.toLocaleString()}
                     </td>
                   </tr>
@@ -360,7 +360,7 @@ function LogsTab({ logs, logFilter, onFilterChange, serviceFilter, serviceOption
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+            className={`rounded-lg border px-2.5 py-1 text-sm transition-colors ${
               followMode ? 'border-primary/40 bg-primary/10 text-primary' : 'border-lazyops-border text-lazyops-muted'
             }`}
             onClick={onFollowToggle}
@@ -375,7 +375,7 @@ function LogsTab({ logs, logFilter, onFilterChange, serviceFilter, serviceOption
           <button
             key={level}
             type="button"
-            className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+            className={`rounded-md px-2.5 py-1 text-sm transition-colors ${
               logFilter === level
                 ? 'bg-primary/15 text-primary'
                 : 'text-lazyops-muted hover:bg-lazyops-border/20'
@@ -389,7 +389,7 @@ function LogsTab({ logs, logFilter, onFilterChange, serviceFilter, serviceOption
           <select
             value={serviceFilter}
             onChange={(event) => onServiceFilterChange(event.target.value)}
-            className="rounded-md border border-lazyops-border bg-lazyops-bg-accent/50 px-2.5 py-1 text-xs text-lazyops-text outline-none focus:border-primary/60"
+            className="rounded-md border border-lazyops-border bg-lazyops-bg-accent/50 px-2.5 py-1 text-sm text-lazyops-text outline-none focus:border-primary/60"
           >
             <option value="all">all services</option>
             {serviceOptions.map((service) => (
@@ -401,13 +401,13 @@ function LogsTab({ logs, logFilter, onFilterChange, serviceFilter, serviceOption
         )}
       </div>
 
-      <div className={`max-h-96 overflow-y-auto rounded-lg border border-lazyops-border bg-lazyops-bg font-mono text-xs ${followMode ? 'animate-pulse' : ''}`}>
+      <div className={`max-h-96 overflow-y-auto rounded-lg border border-lazyops-border bg-lazyops-bg font-mono text-sm ${followMode ? 'animate-pulse' : ''}`}>
         {logs?.length === 0 ? (
-          <div className="p-4 text-lazyops-muted">No logs match the current filter.</div>
+          <div className="p-6 text-lazyops-muted">No logs match the current filter.</div>
         ) : (
           <div className="flex flex-col">
             {logs?.map((log) => (
-              <div key={log.id} className="flex gap-3 border-b border-lazyops-border/30 px-4 py-2 last:border-b-0">
+              <div key={log.id} className="flex gap-3 border-b border-lazyops-border/30 px-6 py-2 last:border-b-0">
                 <span className="shrink-0 text-lazyops-muted/50">{new Date(log.timestamp).toLocaleTimeString()}</span>
                 <span className={`shrink-0 font-medium ${LOG_LEVEL_COLORS[log.level]}`}>
                   {log.level.toUpperCase().padEnd(5)}
@@ -436,14 +436,14 @@ function TracesTab({ traceQuery, onQueryChange, trace, isLoading }: {
       <div className="mb-4 flex gap-3">
         <input
           type="text"
-          className="flex-1 rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 px-3 py-2 text-sm text-lazyops-text outline-none placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+          className="flex-1 rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 px-3 py-2 text-base text-lazyops-text outline-none placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
           placeholder="Enter correlation ID (e.g. corr_abc123)"
           value={traceQuery}
           onChange={(e) => onQueryChange(e.target.value)}
         />
       </div>
 
-      {isLoading && <div className="py-8 text-center text-sm text-lazyops-muted">Loading trace…</div>}
+      {isLoading && <div className="py-8 text-center text-base text-lazyops-muted">Loading trace…</div>}
 
       {trace && (
         <div className="flex flex-col gap-4">
@@ -455,11 +455,11 @@ function TracesTab({ traceQuery, onQueryChange, trace, isLoading }: {
           </div>
 
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Service path</h4>
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Service path</h4>
             <div className="flex flex-wrap items-center gap-2">
               {trace.service_path.map((svc, index) => (
                 <span key={`${svc}-${index}`} className="flex items-center gap-2">
-                  <span className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                  <span className={`rounded-md px-2.5 py-1 text-sm font-medium ${
                     svc === trace.latency_hotspot
                       ? 'bg-health-unhealthy/15 text-health-unhealthy'
                       : 'bg-lazyops-border/20 text-lazyops-text'
@@ -475,10 +475,10 @@ function TracesTab({ traceQuery, onQueryChange, trace, isLoading }: {
           </div>
 
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Node hops</h4>
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Node hops</h4>
             <div className="flex flex-col gap-1">
               {trace.node_hops.map((hop) => (
-                <span key={hop} className="text-xs font-mono text-lazyops-muted">{hop}</span>
+                <span key={hop} className="text-sm font-mono text-lazyops-muted">{hop}</span>
               ))}
             </div>
           </div>
@@ -505,7 +505,7 @@ function IncidentsTab({ incidents }: { incidents?: { id: string; kind: string; s
     <SectionCard title="Incidents" description={`${incidents.length} incident${incidents.length > 1 ? 's' : ''} recorded.`}>
       <div className="flex flex-col gap-3">
         {incidents.map((inc) => (
-          <div key={inc.id} className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-4">
+          <div key={inc.id} className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-6">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <StatusBadge
@@ -520,12 +520,12 @@ function IncidentsTab({ incidents }: { incidents?: { id: string; kind: string; s
                   dot={false}
                 />
               </div>
-              <span className="text-xs text-lazyops-muted">
+              <span className="text-sm text-lazyops-muted">
                 {new Date(inc.created_at).toLocaleString()}
               </span>
             </div>
-            <p className="text-sm text-lazyops-text">{inc.summary}</p>
-            <div className="mt-1 text-xs text-lazyops-muted">
+            <p className="text-base text-lazyops-text">{inc.summary}</p>
+            <div className="mt-1 text-sm text-lazyops-muted">
               Type: {inc.kind}
               {inc.resolved_at && ` · Resolved: ${new Date(inc.resolved_at).toLocaleString()}`}
             </div>
@@ -539,8 +539,8 @@ function IncidentsTab({ incidents }: { incidents?: { id: string; kind: string; s
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="truncate text-sm text-lazyops-text" title={value}>{value}</span>
+      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="truncate text-base text-lazyops-text" title={value}>{value}</span>
     </div>
   );
 }

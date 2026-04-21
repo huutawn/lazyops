@@ -34,9 +34,9 @@ export default function ProjectIntegrationsPage() {
   const hasRepoLink = !!repoLink.data;
 
   return (
-    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
+    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-6">
       <div className="mb-2">
-        <h1 className="text-3xl font-bold tracking-tight mb-2">Cài đặt Tích hợp</h1>
+        <h1 className="text-4xl font-bold tracking-tight mb-2">Cài đặt Tích hợp</h1>
         <p className="text-muted-foreground text-lg">
           Expert route cho repo/reference integrations. Trong flow service-first thường ngày, phần repo link chỉ là nguon dau vao cho tung service.
         </p>
@@ -45,7 +45,7 @@ export default function ProjectIntegrationsPage() {
       <SectionCard
         title={
           <div className="flex items-center gap-3">
-            <span className="text-2xl">🐙</span>
+            <span className="text-4xl">🐙</span>
             <span>Kho mã nguồn GitHub</span>
           </div>
         }
@@ -63,13 +63,13 @@ export default function ProjectIntegrationsPage() {
           </div>
 
           {!hasGitHub ? (
-            <div className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-warning-foreground mt-2">
-              <p className="text-sm font-medium mb-3">
+            <div className="rounded-xl border border-warning/30 bg-warning/5 p-6 text-warning-foreground mt-2">
+              <p className="text-base font-medium mb-3">
                 Bạn chưa cài đặt GitHub App trên hệ thống gốc. Vui lòng vào <strong>Hệ thống & Tích hợp</strong> để cấu hình lần đầu.
               </p>
               <Link
                 href="/integrations/github"
-                className="rounded-lg bg-warning px-4 py-2 text-sm font-bold text-warning-foreground transition-all hover:bg-warning/80"
+                className="rounded-lg bg-warning px-6 py-2 text-base font-bold text-warning-foreground transition-all hover:bg-warning/80"
               >
                 Cài đặt GitHub ngay &rarr;
               </Link>
@@ -87,7 +87,7 @@ export default function ProjectIntegrationsPage() {
           </div>
 
           {hasRepoLink ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 bg-muted/30 p-4 rounded-xl">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 bg-muted/30 p-6 rounded-xl">
               <SummaryField label="Nhánh theo dõi (Branch)" value={repoLink.data!.tracked_branch} />
               <SummaryField
                 label="Bản nháp (Preview Deploys)"
@@ -117,19 +117,19 @@ export default function ProjectIntegrationsPage() {
       <SectionCard
         title={
           <div className="flex items-center gap-3">
-            <span className="text-2xl">📡</span>
+            <span className="text-4xl">📡</span>
             <span>Tín hiệu Webhook</span>
           </div>
         }
         className="shadow-sm rounded-2xl"
       >
-        <div className="flex items-center gap-4 mt-2 bg-health-healthy/5 p-4 rounded-xl border border-health-healthy/20">
+        <div className="flex items-center gap-4 mt-2 bg-health-healthy/5 p-6 rounded-xl border border-health-healthy/20">
           <HealthChip label="Hoạt động tốt" status="healthy" size="md" />
           <span className="text-base text-muted-foreground font-medium">
             Hệ thống đang sẵn sàng nhận lệnh từ GitHub.
           </span>
         </div>
-        <div className="mt-4 break-all bg-card border p-3 rounded-lg text-sm text-muted-foreground font-mono">
+        <div className="mt-4 break-all bg-card border p-3 rounded-lg text-base text-muted-foreground font-mono">
           <span className="font-bold text-foreground">Webhook URL:</span> {webhookURL}
         </div>
       </SectionCard>
@@ -140,7 +140,7 @@ export default function ProjectIntegrationsPage() {
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 p-2 rounded-lg bg-background border shadow-sm">
-      <span className="text-xs uppercase tracking-wider text-muted-foreground font-bold">{label}</span>
+      <span className="text-sm uppercase tracking-wider text-muted-foreground font-bold">{label}</span>
       <span className="text-base font-semibold text-foreground">{value}</span>
     </div>
   );

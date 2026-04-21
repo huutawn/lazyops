@@ -21,7 +21,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         className={cn(
@@ -29,7 +29,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
           sizeClasses[size],
         )}
       >
-        <div className="flex items-center justify-between border-b border-lazyops-border px-6 py-4">
+        <div className="flex items-center justify-between border-b border-lazyops-border px-6 py-6">
           <h2 className="text-lg font-semibold text-lazyops-text">{title}</h2>
           <button
             type="button"
@@ -43,7 +43,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
             </svg>
           </button>
         </div>
-        <div className="px-6 py-4">{children}</div>
+        <div className="px-6 py-6">{children}</div>
       </div>
     </div>
   );

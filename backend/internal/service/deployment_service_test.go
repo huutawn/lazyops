@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,9 +217,13 @@ func (f *fakeDeploymentStore) put(item *models.Deployment) {
 
 type fakePublicURLVerifier struct {
 	observations map[string]PublicURLTLSObservation
+	calls        int
 }
 
 func (f *fakePublicURLVerifier) Observe(_ context.Context, rawURL string) PublicURLTLSObservation {
+	if f != nil {
+		f.calls++
+	}
 	if f != nil && f.observations != nil {
 		if observation, ok := f.observations[rawURL]; ok {
 			return observation
@@ -746,6 +751,97 @@ func TestResolveStatusPublicURLsFromOverviewsPrefersReasonWhenTLSPending(t *test
 	}
 	if reason == "" {
 		t.Fatal("expected pending public url reason to be preserved")
+	}
+}
+
+func TestDeploymentServiceListSkipsTLSVerificationForDistributedK3sPublicURLs(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+
+	compiledJSON, err := json.Marshal(desiredStateRevisionCompiledRecord{
+		RevisionID:          "rev_123",
+		ProjectID:           "prj_123",
+		ProjectSlug:         "acme-api",
+		DeploymentBindingID: "bind_123",
+		RuntimeMode:         bootstrapModeDistributedK3s,
+		Services: []BlueprintServiceContractRecord{{
+			Name:   "api",
+			Public: true,
+		}},
+		PlacementAssignments: []PlacementAssignmentRecord{{
+			ServiceName: "api",
+			TargetID:    "cls_123",
+			TargetKind:  "cluster",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal compiled revision: %v", err)
+	}
+
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123",
+		TriggerKind:          "manual",
+		Status:               RevisionStatusPromoted,
+		CompiledRevisionJSON: string(compiledJSON),
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusPromoted,
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetKind: "cluster",
+		TargetID:   "cls_123",
+	})
+	clusterStore := newFakeClusterStore(&models.Cluster{
+		ID:       "cls_123",
+		UserID:   "usr_123",
+		Name:     "edge-k3s",
+		PublicIP: ptrString("203.0.113.10"),
+	})
+	verifier := &fakePublicURLVerifier{}
+
+	service := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
+		WithPublicDomainSupport(bindingStore, newFakeInstanceStore(), clusterStore).
+		WithPublicURLVerifier(verifier)
+
+	items, err := service.List("usr_123", RoleOperator, "prj_123")
+	if err != nil {
+		t.Fatalf("list deployments: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one deployment overview, got %d", len(items))
+	}
+	if verifier.calls != 0 {
+		t.Fatalf("expected distributed-k3s public urls to skip TLS verifier, got %d calls", verifier.calls)
+	}
+	if got := items[0].PublicURLs; len(got) != 2 {
+		t.Fatalf("expected both k3s public urls to remain visible, got %#v", got)
+	} else {
+		for _, url := range got {
+			if !strings.HasPrefix(url, "http://") {
+				t.Fatalf("expected distributed-k3s public url to use http scheme, got %#v", got)
+			}
+		}
+	}
+	if items[0].PublicURLStatus != "" || items[0].PublicURLReason != "" {
+		t.Fatalf("expected no TLS status for distributed-k3s http urls, got status=%q reason=%q", items[0].PublicURLStatus, items[0].PublicURLReason)
 	}
 }
 

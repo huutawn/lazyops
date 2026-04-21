@@ -87,7 +87,7 @@ export default function BlueprintReviewPage() {
         title={EXPLANATION.title}
         description={EXPLANATION.description}
       >
-        <p className="text-sm text-lazyops-muted">
+        <p className="text-base text-lazyops-muted">
           Blueprint nay chi con la deploy-plan artifact noi bo de debug. Trong flow service-first thong thuong, ban se thao tac qua Services, Env, Deployments, va Logs / Runtime.
         </p>
       </SectionCard>
@@ -144,7 +144,7 @@ export default function BlueprintReviewPage() {
           </div>
 
           {compileError && (
-            <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+            <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
               {compileError}
             </div>
           )}
@@ -168,7 +168,7 @@ export default function BlueprintReviewPage() {
               <button
                 key={tab}
                 type="button"
-                className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                className={`rounded-t-lg px-6 py-2 text-base font-medium transition-colors ${
                   activeTab === tab
                     ? 'border-b-2 border-primary text-primary'
                     : 'text-lazyops-muted hover:text-lazyops-text'
@@ -193,7 +193,7 @@ function ServicesTab({ services, blueprint }: { services: BlueprintService[]; bl
   if (services.length === 0) {
     return (
       <SectionCard title="Services" description="No services defined in this blueprint.">
-        <p className="text-sm text-lazyops-muted">Add services to your lazyops.yaml to see them here.</p>
+        <p className="text-base text-lazyops-muted">Add services to your lazyops.yaml to see them here.</p>
       </SectionCard>
     );
   }
@@ -206,15 +206,15 @@ function ServicesTab({ services, blueprint }: { services: BlueprintService[]; bl
       >
         <div className="flex flex-col gap-3">
           {services.map((svc) => (
-            <div key={svc.id} className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-4">
+            <div key={svc.id} className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-6">
               <div className="mb-2 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-lazyops-text">{svc.name}</h4>
+                <h4 className="text-base font-semibold text-lazyops-text">{svc.name}</h4>
                 <div className="flex items-center gap-2">
                   {svc.public && <StatusBadge label="Public" variant="info" size="sm" dot={false} />}
                   <HealthChip label={svc.runtime_profile || 'default'} status="healthy" size="sm" />
                 </div>
               </div>
-              <div className="grid gap-1 text-xs sm:grid-cols-2">
+              <div className="grid gap-1 text-sm sm:grid-cols-2">
                 <span className="text-lazyops-muted">Path: <code className="text-lazyops-text">{svc.path}</code></span>
                 {svc.healthcheck && (
                   <span className="text-lazyops-muted">Health: <code className="text-lazyops-text">{svc.healthcheck.path}:{svc.healthcheck.port}</code></span>
@@ -278,32 +278,32 @@ function RevisionTab({ draft }: { draft: { revision_id: string; commit_sha: stri
         description={`${draft.placement_assignments.length} service${draft.placement_assignments.length !== 1 ? 's' : ''} assigned to targets.`}
       >
         {draft.placement_assignments.length === 0 ? (
-          <p className="text-sm text-lazyops-muted">No placement assignments yet.</p>
+          <p className="text-base text-lazyops-muted">No placement assignments yet.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead>
                 <tr className="border-b border-lazyops-border">
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Service</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Target</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Kind</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-lazyops-muted">Labels</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Service</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Target</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Kind</th>
+                  <th className="px-6 py-2 text-left text-sm font-medium text-lazyops-muted">Labels</th>
                 </tr>
               </thead>
               <tbody>
                 {draft.placement_assignments.map((pa) => (
                   <tr key={pa.service_name} className="border-b border-lazyops-border/50">
-                    <td className="px-4 py-2 font-medium text-lazyops-text">{pa.service_name}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-lazyops-muted">{pa.target_id}</td>
-                    <td className="px-4 py-2 text-xs text-lazyops-muted">{pa.target_kind}</td>
-                    <td className="px-4 py-2">
+                    <td className="px-6 py-2 font-medium text-lazyops-text">{pa.service_name}</td>
+                    <td className="px-6 py-2 font-mono text-sm text-lazyops-muted">{pa.target_id}</td>
+                    <td className="px-6 py-2 text-sm text-lazyops-muted">{pa.target_kind}</td>
+                    <td className="px-6 py-2">
                       <div className="flex flex-wrap gap-1">
                         {Object.entries(pa.labels).map(([k, v]) => (
                           <span key={k} className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-[10px] text-lazyops-muted">
                             {k}: {v}
                           </span>
                         ))}
-                        {Object.keys(pa.labels).length === 0 && <span className="text-xs text-lazyops-muted/50">—</span>}
+                        {Object.keys(pa.labels).length === 0 && <span className="text-sm text-lazyops-muted/50">—</span>}
                       </div>
                     </td>
                   </tr>
@@ -320,8 +320,8 @@ function RevisionTab({ draft }: { draft: { revision_id: string; commit_sha: stri
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="truncate text-sm text-lazyops-text" title={value}>{value}</span>
+      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="truncate text-base text-lazyops-text" title={value}>{value}</span>
     </div>
   );
 }
@@ -329,14 +329,14 @@ function SummaryField({ label, value }: { label: string; value: string }) {
 function PolicyGrid({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data);
   if (entries.length === 0) {
-    return <p className="text-sm text-lazyops-muted">No policy rules configured.</p>;
+    return <p className="text-base text-lazyops-muted">No policy rules configured.</p>;
   }
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {entries.map(([key, value]) => (
         <div key={key} className="flex items-center justify-between rounded-md bg-lazyops-bg-accent/50 px-3 py-2">
-          <span className="text-xs text-lazyops-muted">{key}</span>
-          <span className="text-sm text-lazyops-text">
+          <span className="text-sm text-lazyops-muted">{key}</span>
+          <span className="text-base text-lazyops-text">
             {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
           </span>
         </div>

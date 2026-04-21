@@ -277,14 +277,14 @@ export function ProjectServiceInventory({
             <button
               type="button"
               onClick={openChooseDrawer}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#0EA5E9] bg-[#0EA5E9]/10 px-4 py-2 text-sm font-semibold text-[#38bdf8] transition-colors hover:bg-[#0EA5E9]/20"
+              className="inline-flex items-center gap-2 rounded-xl border border-[#0EA5E9] bg-[#0EA5E9]/10 px-6 py-2 text-base font-semibold text-[#38bdf8] transition-colors hover:bg-[#0EA5E9]/20"
             >
               <Plus className="size-4" />
               Them service
             </button>
             <Link
               href={`/projects/${projectId}/deployments`}
-              className="rounded-xl border border-[#334155] px-4 py-2 text-sm font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
+              className="rounded-xl border border-[#334155] px-6 py-2 text-base font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
             >
               Xem deploy
             </Link>
@@ -292,7 +292,7 @@ export function ProjectServiceInventory({
         }
       >
         {filteredItems.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[#334155] bg-[#0B1120]/30 p-8 text-sm text-[#94a3b8]">
+          <div className="rounded-2xl border border-dashed border-[#334155] bg-[#0B1120]/30 p-8 text-base text-[#94a3b8]">
             {sourceFilter === 'internal'
               ? 'Chưa có dịch vụ nội bộ nào trong project này.'
               : sourceFilter === 'repo'
@@ -319,7 +319,7 @@ export function ProjectServiceInventory({
               return (
                 <article
                   key={service.id}
-                  className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-5 shadow-[0_20px_60px_rgba(2,6,23,0.35)]"
+                  className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-6 shadow-[0_20px_60px_rgba(2,6,23,0.35)]"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-2">
@@ -329,7 +329,7 @@ export function ProjectServiceInventory({
                         </div>
                         <div>
                           <h3 className="text-xl font-bold tracking-tight text-white">{service.name}</h3>
-                          <p className="text-sm text-[#94a3b8]">{formatServiceKindLabel(service)}</p>
+                          <p className="text-base text-[#94a3b8]">{formatServiceKindLabel(service)}</p>
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -338,7 +338,7 @@ export function ProjectServiceInventory({
                         <StatusBadge label={service.public ? 'Công khai' : 'Nội bộ'} variant={service.public ? 'success' : 'neutral'} size="sm" />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 rounded-full border border-[#1e293b] bg-[#0B1120]/80 px-3 py-1.5 text-xs font-semibold text-[#cbd5e1]">
+                    <div className="flex items-center gap-2 rounded-full border border-[#1e293b] bg-[#0B1120]/80 px-3 py-1.5 text-sm font-semibold text-[#cbd5e1]">
                       {exposureIcon}
                       {service.public ? 'Public route' : 'Chỉ nội bộ'}
                     </div>
@@ -356,7 +356,7 @@ export function ProjectServiceInventory({
                   </div>
 
                   {runtimeRecord?.runtime_reason ? (
-                    <div className="mt-4 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-4 py-3 text-sm text-[#cbd5e1]">
+                    <div className="mt-4 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-6 py-3 text-base text-[#cbd5e1]">
                       Trạng thái chạy: <span className="font-semibold text-white">{runtimeRecord.runtime_reason}</span>
                     </div>
                   ) : null}
@@ -375,14 +375,14 @@ export function ProjectServiceInventory({
                     />
                     <Link
                       href={`/projects/${projectId}/observability?service=${encodeURIComponent(service.name)}`}
-                      className="rounded-xl border border-[#334155] px-3 py-2 text-xs font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
+                      className="rounded-xl border border-[#334155] px-3 py-2 text-sm font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
                     >
                       Nhật ký
                     </Link>
                   </div>
 
-                  <details className="mt-4 rounded-2xl border border-[#1e293b] bg-[#0B1120]/40 p-4">
-                    <summary className="cursor-pointer list-none text-sm font-semibold text-white">
+                  <details className="mt-4 rounded-2xl border border-[#1e293b] bg-[#0B1120]/40 p-6">
+                    <summary className="cursor-pointer list-none text-base font-semibold text-white">
                       Nâng cao
                     </summary>
                     <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -412,20 +412,20 @@ export function ProjectServiceInventory({
                       />
                     </div>
                     {placementNode ? (
-                      <div className="mt-4 rounded-2xl border border-[#1e293b] bg-[#020617]/80 px-4 py-3 text-sm text-[#cbd5e1]">
+                      <div className="mt-4 rounded-2xl border border-[#1e293b] bg-[#020617]/80 px-6 py-3 text-base text-[#cbd5e1]">
                         Máy chủ đã ghim: <span className="font-semibold text-white">{placementNode.name}</span> · {placementNode.is_ready ? 'Sẵn sàng' : formatPlacementNodeStatus(placementNode.status)}
                       </div>
                     ) : null}
                   </details>
 
                   {actionResult ? (
-                    <div className="mt-3 rounded-2xl border border-[#0EA5E9]/30 bg-[#0EA5E9]/10 px-4 py-3 text-sm text-[#bae6fd]">
+                    <div className="mt-3 rounded-2xl border border-[#0EA5E9]/30 bg-[#0EA5E9]/10 px-6 py-3 text-base text-[#bae6fd]">
                       {formatActionResult(actionResult)}
                     </div>
                   ) : null}
 
                   {actionError ? (
-                    <div className="mt-3 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fecaca]">
+                    <div className="mt-3 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base text-[#fecaca]">
                       {actionError}
                     </div>
                   ) : null}
@@ -473,7 +473,7 @@ export function ProjectServiceInventory({
               void submitRepoService();
             }}
           >
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
               <div className="font-semibold text-white">Service từ repository là gì?</div>
               <p className="mt-2 text-[#94a3b8]">
                 Đây là code nằm trong repo GitHub của bạn. Nếu repo chỉ có một app duy nhất ở root thì thư mục là <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">.</code>.
@@ -514,7 +514,7 @@ export function ProjectServiceInventory({
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-[#94a3b8]">
+                <p className="text-sm text-[#94a3b8]">
                   {REPO_SERVICE_KIND_OPTIONS.find((option) => option.value === repoForm.kind)?.description}
                 </p>
               </FieldLabel>
@@ -533,7 +533,7 @@ export function ProjectServiceInventory({
                 </select>
               </FieldLabel>
             </div>
-            <label className="flex items-center gap-3 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-4 py-3 text-sm text-[#cbd5e1]">
+            <label className="flex items-center gap-3 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-6 py-3 text-base text-[#cbd5e1]">
               <input
                 type="checkbox"
                 checked={repoForm.public}
@@ -542,16 +542,16 @@ export function ProjectServiceInventory({
               Cho phép truy cập từ Internet
             </label>
             {repoForm.public ? (
-              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
                 Subdomain công khai hiện được tạo theo <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">service name</code>, ví dụ <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">{repoForm.name.trim() || 'api'}.project-ip.sslip.io</code>.
                 <div className="mt-2 text-[#94a3b8]">`service.path` chỉ là thư mục build trong repo, không dùng làm host public.</div>
               </div>
             ) : null}
 
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/50 p-4">
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/50 p-6">
               <button
                 type="button"
-                className="text-sm font-semibold text-white"
+                className="text-base font-semibold text-white"
                 onClick={() => setShowRepoAdvanced((current) => !current)}
               >
                 {showRepoAdvanced ? 'Ẩn tùy chọn nâng cao' : 'Mở tùy chọn nâng cao'}
@@ -600,7 +600,7 @@ export function ProjectServiceInventory({
                           </option>
                         ))}
                       </select>
-                      <p className="text-xs text-[#94a3b8]">{placementHint}</p>
+                      <p className="text-sm text-[#94a3b8]">{placementHint}</p>
                     </FieldLabel>
                   ) : null}
                 </div>
@@ -608,13 +608,13 @@ export function ProjectServiceInventory({
             </div>
 
             {configureServices.isError ? (
-              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-6 py-3 text-base text-red-200">
                 {configureServices.error instanceof Error ? configureServices.error.message : 'Khong luu duoc service.'}
               </div>
             ) : null}
 
             {repoFormError ? (
-              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-6 py-3 text-base text-red-200">
                 {repoFormError}
               </div>
             ) : null}
@@ -635,7 +635,7 @@ export function ProjectServiceInventory({
               void submitInternalService();
             }}
           >
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
               <div className="font-semibold text-white">Internal service là gì?</div>
               <p className="mt-2 text-[#94a3b8]">
                 Đây là service hạ tầng do LazyOps quản lý cho project của bạn, ví dụ PostgreSQL, MySQL, Redis hoặc RabbitMQ. Bạn không cần có thư mục code cho loại này trong repo.
@@ -677,20 +677,20 @@ export function ProjectServiceInventory({
                 placeholder={defaultInternalServiceName(internalForm.kind)}
                 required
               />
-              <p className="text-xs text-[#94a3b8]">
+              <p className="text-sm text-[#94a3b8]">
                 Tên này sẽ trở thành DNS nội bộ trong cluster, ví dụ <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">{internalForm.service_name.trim() || defaultInternalServiceName(internalForm.kind)}</code>.
               </p>
             </FieldLabel>
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
-              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">Đường dẫn nội bộ</div>
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
+              <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">Đường dẫn nội bộ</div>
               <div className="mt-2 font-semibold text-white">
                 .lazyops/internal/{internalForm.kind}/{internalForm.service_name.trim() || defaultInternalServiceName(internalForm.kind)}
               </div>
             </div>
             {internalForm.kind === 'postgres' ? (
-              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
-                <div className="mb-3 text-sm font-semibold text-white">Biến môi trường sẽ được inject</div>
-                <p className="mb-3 text-sm text-[#94a3b8]">
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6">
+                <div className="mb-3 text-base font-semibold text-white">Biến môi trường sẽ được inject</div>
+                <p className="mb-3 text-base text-[#94a3b8]">
                   LazyOps sẽ tự điền các biến này vào service dùng database này. Bạn không cần tự nối thủ công bằng localhost.
                 </p>
                 <div className="grid gap-4">
@@ -714,24 +714,24 @@ export function ProjectServiceInventory({
                     </FieldLabel>
                   ))}
                 </div>
-                <div className="mb-3 mt-5 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">
+                <div className="mb-3 mt-5 text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">
                   Xem trước biến môi trường
                 </div>
-                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
+                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-6 text-base text-[#e2e8f0]">
                   {formatPostgresConnectionTemplatePreview(internalForm.connection_template)}
                 </pre>
               </div>
             ) : (
-              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4 text-sm text-[#cbd5e1]">
-                <div className="text-sm font-semibold text-white">{internalServiceLabel(internalForm.kind)}</div>
-                <p className="mt-2 text-sm text-[#94a3b8]">
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
+                <div className="text-base font-semibold text-white">{internalServiceLabel(internalForm.kind)}</div>
+                <p className="mt-2 text-base text-[#94a3b8]">
                   LazyOps sẽ provision service này theo catalog managed sẵn. Endpoint mặc định: {internalServiceEndpointHint(internalForm.kind)}.
                 </p>
               </div>
             )}
 
             {configureServices.isError ? (
-              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-6 py-3 text-base text-red-200">
                 {configureServices.error instanceof Error ? configureServices.error.message : 'Khong luu duoc internal service.'}
               </div>
             ) : null}
@@ -746,18 +746,18 @@ export function ProjectServiceInventory({
 
         {drawerMode === 'legacy-internal' ? (
           <div className="grid gap-5">
-            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-base text-amber-100">
               Internal service này đến từ compatibility lane cũ. Service này hiện ở chế độ read-only cho đến khi được đưa về unified service catalog.
             </div>
-            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">Service</div>
+            <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6">
+              <div className="mb-2 text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">Service</div>
               <div className="text-lg font-semibold text-white">{selectedService?.name || 'internal-postgres'}</div>
-              <div className="mt-3 text-sm text-[#94a3b8]">{selectedService?.path || '.lazyops/internal/postgres'}</div>
+              <div className="mt-3 text-base text-[#94a3b8]">{selectedService?.path || '.lazyops/internal/postgres'}</div>
             </div>
             {selectedService?.kind === 'postgres' ? (
-              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
-                <div className="mb-3 text-sm font-semibold text-white">Template inject theo service</div>
-                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-4 text-sm text-[#e2e8f0]">
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6">
+                <div className="mb-3 text-base font-semibold text-white">Template inject theo service</div>
+                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-6 text-base text-[#e2e8f0]">
                   {formatPostgresConnectionTemplatePreview(selectedService?.connection_template)}
                 </pre>
               </div>
@@ -1058,10 +1058,10 @@ function ServiceChoiceCard({
     <button
       type="button"
       onClick={onClick}
-      className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-5 text-left transition-colors hover:border-[#0EA5E9] hover:bg-[#0F172A]"
+      className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-left transition-colors hover:border-[#0EA5E9] hover:bg-[#0F172A]"
     >
       <div className="text-lg font-semibold text-white">{title}</div>
-      <p className="mt-2 text-sm leading-relaxed text-[#94a3b8]">{description}</p>
+      <p className="mt-2 text-base leading-relaxed text-[#94a3b8]">{description}</p>
     </button>
   );
 }
@@ -1082,7 +1082,7 @@ function DrawerActions({
       <button
         type="button"
         onClick={onCancel}
-        className="rounded-xl border border-[#334155] px-4 py-2 text-sm font-semibold text-[#cbd5e1] transition-colors hover:bg-[#111827]"
+        className="rounded-xl border border-[#334155] px-6 py-2 text-base font-semibold text-[#cbd5e1] transition-colors hover:bg-[#111827]"
       >
         Đóng
       </button>
@@ -1090,7 +1090,7 @@ function DrawerActions({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {pending ? 'Đang lưu...' : primaryLabel}
         </button>
@@ -1102,9 +1102,9 @@ function DrawerActions({
 function FieldLabel({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return (
     <label className="grid gap-2">
-      <span className="text-sm font-semibold text-[#e2e8f0]">{label}</span>
+      <span className="text-base font-semibold text-[#e2e8f0]">{label}</span>
       {children}
-      {help ? <span className="text-xs leading-relaxed text-[#94a3b8]">{help}</span> : null}
+      {help ? <span className="text-sm leading-relaxed text-[#94a3b8]">{help}</span> : null}
     </label>
   );
 }
@@ -1112,11 +1112,11 @@ function FieldLabel({ label, help, children }: { label: string; help?: string; c
 function MetricLine({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/50 p-3">
-      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">
         {icon}
         {label}
       </div>
-      <div className="break-all text-sm font-semibold text-[#e2e8f0]">{value}</div>
+      <div className="break-all text-base font-semibold text-[#e2e8f0]">{value}</div>
     </div>
   );
 }
@@ -1142,7 +1142,7 @@ function ActionButton({
       type="button"
       onClick={onClick}
       disabled={pending}
-      className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+      className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
       {pending ? 'Đang chạy...' : label}
     </button>
@@ -1222,4 +1222,4 @@ function runtimeStatusVariant(status: string): 'success' | 'warning' | 'danger' 
 }
 
 const fieldClassName =
-  'w-full rounded-xl border border-[#334155] bg-[#020617] px-4 py-3 text-sm text-[#e2e8f0] outline-none transition-colors placeholder:text-[#64748b] focus:border-[#0EA5E9]';
+  'w-full rounded-xl border border-[#334155] bg-[#020617] px-6 py-3 text-base text-[#e2e8f0] outline-none transition-colors placeholder:text-[#64748b] focus:border-[#0EA5E9]';

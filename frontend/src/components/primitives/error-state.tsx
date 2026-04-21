@@ -23,7 +23,7 @@ export function ErrorState({
       role="alert"
     >
       <h3 className="text-lg font-medium text-health-unhealthy">{title}</h3>
-      <p className="max-w-sm text-sm text-lazyops-muted">{message}</p>
+      <p className="max-w-sm text-base text-lazyops-muted">{message}</p>
       {action && <div className="mt-2">{action}</div>}
     </div>
   );

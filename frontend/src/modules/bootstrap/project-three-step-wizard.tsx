@@ -139,7 +139,7 @@ export function ProjectThreeStepWizard({
         action={(
           <button
             type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+            className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
             onClick={() => {
               void refetch();
             }}
@@ -211,7 +211,7 @@ export function ProjectThreeStepWizard({
             </div>
             <button
               type="button"
-              className="rounded-lg border border-[#334155] bg-[#0F172A] px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#1e293b] disabled:opacity-60"
+              className="rounded-lg border border-[#334155] bg-[#0F172A] px-6 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#1e293b] disabled:opacity-60"
               onClick={() => {
                 void autoBootstrap.mutateAsync({});
               }}
@@ -223,7 +223,7 @@ export function ProjectThreeStepWizard({
 
           <div className={cn('grid gap-4', compact ? 'grid-cols-1' : 'sm:grid-cols-3')}>
             {statusCards.map((item) => (
-              <div key={item.title} className="min-h-[100px] rounded-xl border border-[#1e293b] bg-[#0B1120] p-4 flex flex-col justify-between">
+              <div key={item.title} className="min-h-[100px] rounded-xl border border-[#1e293b] bg-[#0B1120] p-6 flex flex-col justify-between">
                 <div className="flex items-start justify-between">
                   <span className="text-[14px] font-semibold text-[#94a3b8]">{item.title}</span>
                   <span className={cn(
@@ -241,7 +241,7 @@ export function ProjectThreeStepWizard({
           </div>
 
           {data.latest_build ? (
-            <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
+            <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="text-[13px] font-semibold text-white">
@@ -283,13 +283,13 @@ export function ProjectThreeStepWizard({
 
             <Link
               href={`/projects/${projectId}/services`}
-              className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-4 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
+              className="ml-auto rounded-lg border border-[#334155] bg-[#1e293b] px-6 py-1.5 text-[13px] font-bold text-white transition-colors hover:bg-[#2d3a4f]"
             >
               Services
             </Link>
           </div>
 
-          <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
+          <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-6">
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[13px] font-semibold text-[#94a3b8]">Domain công khai</span>
@@ -429,7 +429,7 @@ export function ProjectThreeStepWizard({
             activeDeploymentId ? (
               <a
                 href={`/projects/${projectId}/deployments/${activeDeploymentId}`}
-                className="rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
+                className="rounded-lg border border-lazyops-border px-3 py-1.5 text-sm font-semibold text-lazyops-text transition-colors hover:bg-lazyops-border/10"
               >
                 Xem chi tiết
               </a>
@@ -444,7 +444,7 @@ export function ProjectThreeStepWizard({
                 size="sm"
               />
               {latestOneClick.rollout_reason ? (
-                <span className="text-xs text-lazyops-muted">{latestOneClick.rollout_reason}</span>
+                <span className="text-sm text-lazyops-muted">{latestOneClick.rollout_reason}</span>
               ) : null}
             </div>
           ) : null}
@@ -484,7 +484,7 @@ export function ProjectThreeStepWizard({
       ) : null}
 
       {actionError ? (
-        <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+        <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
           {actionError}
         </div>
       ) : null}
@@ -512,14 +512,14 @@ function TimelineRow({
   return (
     <div className="rounded-lg border border-lazyops-border/60 bg-lazyops-bg-accent/20 px-3 py-2">
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-medium text-lazyops-text">{label}</span>
+        <span className="text-sm font-medium text-lazyops-text">{label}</span>
         <StatusBadge
           label={formatBootstrapStateLabelVN(state)}
           variant={TIMELINE_BADGE[state] ?? 'neutral'}
           size="sm"
         />
       </div>
-      <p className="text-xs text-lazyops-muted">{description}</p>
+      <p className="text-sm text-lazyops-muted">{description}</p>
       <p className="mt-1 text-[11px] text-lazyops-muted/80">
         {new Date(timestamp).toLocaleString()}
       </p>

@@ -7,14 +7,14 @@ export default function DeploymentDetailsDemoPage() {
   const id = 'd1';
 
   return (
-    <div className="flex flex-col max-w-4xl mx-auto py-8 lg:px-4">
+    <div className="flex flex-col max-w-4xl mx-auto py-8 lg:px-6">
       <div className="flex items-start justify-between mb-8">
         <div className="flex items-start gap-4">
           <Link href="/projects" className="mt-1.5 text-white hover:text-[#0EA5E9] transition-colors">
             <ArrowLeft className="size-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-white mb-1">Chi tiết triển khai</h1>
+            <h1 className="text-4xl font-bold text-white mb-1">Chi tiết triển khai</h1>
             <p className="text-[#94a3b8] text-[15px]">my-saas-app • #{id}</p>
           </div>
         </div>
@@ -25,7 +25,7 @@ export default function DeploymentDetailsDemoPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="flex items-center gap-4 rounded-xl border border-[#1e293b] bg-[#0F172A] p-4">
+        <div className="flex items-center gap-4 rounded-xl border border-[#1e293b] bg-[#0F172A] p-6">
           <div className="text-[#64748b]">
             <GitCommit className="size-5" />
           </div>
@@ -35,7 +35,7 @@ export default function DeploymentDetailsDemoPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 rounded-xl border border-[#1e293b] bg-[#0F172A] p-4">
+        <div className="flex items-center gap-4 rounded-xl border border-[#1e293b] bg-[#0F172A] p-6">
           <div className="text-[#64748b]">
             <Server className="size-5" />
           </div>
@@ -45,7 +45,7 @@ export default function DeploymentDetailsDemoPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 rounded-xl border border-[#1e293b] bg-[#0F172A] p-4">
+        <div className="flex items-center gap-4 rounded-xl border border-[#1e293b] bg-[#0F172A] p-6">
           <div className="text-[#64748b]">
             <Clock className="size-5" />
           </div>
@@ -85,7 +85,7 @@ export default function DeploymentDetailsDemoPage() {
       <div>
         <h2 className="text-[17px] font-bold text-white mb-4">Nhật ký</h2>
         <div className="rounded-xl border border-[#1e293b] bg-[#0F172A] overflow-hidden p-1">
-          <div className="bg-[#090E17] rounded-lg p-5 font-mono text-[13px] leading-relaxed text-[#94a3b8] overflow-x-auto h-[250px] overflow-y-auto">
+          <div className="bg-[#090E17] rounded-lg p-6 font-mono text-[13px] leading-relaxed text-[#94a3b8] overflow-x-auto h-[250px] overflow-y-auto">
             <div>[14:32:01] Starting deployment...</div>
             <div>[14:32:03] Cloning repo user/my-saas-app@main</div>
             <div>[14:32:10] Installing dependencies...</div>

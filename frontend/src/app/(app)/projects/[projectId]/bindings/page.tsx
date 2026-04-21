@@ -99,7 +99,7 @@ export default function DeploymentBindingsPage() {
         actions={
           <button
             type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+            className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
             onClick={() => setShowCreateModal(true)}
           >
             Create binding
@@ -118,7 +118,7 @@ export default function DeploymentBindingsPage() {
             action={
               <button
                 type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                 onClick={() => setShowCreateModal(true)}
               >
                 Create binding
@@ -157,8 +157,8 @@ export default function DeploymentBindingsPage() {
 function PolicyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="text-sm text-lazyops-text">{value}</span>
+      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="text-base text-lazyops-text">{value}</span>
     </div>
   );
 }
@@ -278,7 +278,7 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
             error={!!errors.target_id}
             {...register('target_id')}
           />
-          <p className="mt-1 text-xs text-lazyops-muted">
+          <p className="mt-1 text-sm text-lazyops-muted">
             Auto-detected target type: <span className="text-lazyops-text">{TARGET_KIND_LABELS[selectedKind]}</span> · runtime mode:{' '}
             <span className="text-lazyops-text">{RUNTIME_MODE_LABELS[selectedMode]}</span>
           </p>
@@ -287,18 +287,18 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
         <div className="rounded-lg border border-lazyops-border/40 bg-lazyops-bg-accent/20 px-3 py-2">
           <button
             type="button"
-            className="flex w-full items-center justify-between text-left text-sm text-lazyops-text"
+            className="flex w-full items-center justify-between text-left text-base text-lazyops-text"
             onClick={() => setShowAdvanced((prev) => !prev)}
           >
             <span>Advanced options</span>
-            <span className="text-xs text-lazyops-muted">{showAdvanced ? 'Hide' : 'Show'}</span>
+            <span className="text-sm text-lazyops-muted">{showAdvanced ? 'Hide' : 'Show'}</span>
           </button>
         </div>
 
         {showAdvanced && (
           <>
             <div>
-              <label className="mb-2 block text-sm font-medium text-lazyops-text">Target type</label>
+              <label className="mb-2 block text-base font-medium text-lazyops-text">Target type</label>
               <div className="grid grid-cols-3 gap-3">
                 {TARGET_KINDS.map((kind) => {
                   const isSelected = selectedKind === kind;
@@ -306,7 +306,7 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
                     <button
                       key={kind}
                       type="button"
-                      className={`rounded-lg border px-3 py-3 text-sm transition-colors ${
+                      className={`rounded-lg border px-3 py-3 text-base transition-colors ${
                         isSelected
                           ? 'border-primary/40 bg-primary/10 text-primary'
                           : 'border-lazyops-border text-lazyops-muted hover:text-lazyops-text'
@@ -325,7 +325,7 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
 
             <FormField label="Runtime mode" error={errors.runtime_mode?.message}>
               <select
-                className="h-10 w-full rounded-lg border bg-lazyops-bg-accent/60 px-3 text-sm text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+                className="h-10 w-full rounded-lg border bg-lazyops-bg-accent/60 px-3 text-base text-lazyops-text outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
                 {...register('runtime_mode')}
               >
                 {allowedModes.map((mode) => (
@@ -336,8 +336,8 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
               </select>
             </FormField>
 
-            <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-4">
-              <h4 className="mb-3 text-sm font-medium text-lazyops-text">Policy configuration</h4>
+            <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-6">
+              <h4 className="mb-3 text-base font-medium text-lazyops-text">Policy configuration</h4>
               <div className="flex flex-col gap-3">
                 <FormField label="Placement policy (JSON)" error={errors.placement_policy?.message}>
                   <FormInput
@@ -366,7 +366,7 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
                   />
                 </FormField>
 
-                <label className="flex items-center gap-2 text-sm text-lazyops-text">
+                <label className="flex items-center gap-2 text-base text-lazyops-text">
                   <input
                     type="checkbox"
                     className="accent-primary"
@@ -380,7 +380,7 @@ function CreateBindingModal({ projectId, open, onClose }: CreateBindingModalProp
         )}
 
         {serverError && (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
             {serverError}
           </div>
         )}

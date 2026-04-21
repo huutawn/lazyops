@@ -52,7 +52,7 @@ export default function OnboardingPage() {
                   🚀
                 </div>
               </div>
-              <h2 className="text-3xl font-bold text-white mb-4">Chào mừng bạn đến với LazyOps</h2>
+              <h2 className="text-4xl font-bold text-white mb-4">Chào mừng bạn đến với LazyOps</h2>
               <p className="text-[#94a3b8] mb-10 text-lg max-w-lg mx-auto leading-relaxed">
                 Hệ thống chưa có project shell nào. Tạo project đầu tiên rồi thêm service theo đúng nhu cầu của bạn trong inventory.
               </p>
@@ -67,10 +67,10 @@ export default function OnboardingPage() {
           ) : (
             <div className="animate-in zoom-in-95 duration-500 shadow-2xl rounded-3xl border border-[#1e293b] bg-[#0F172A]/90 backdrop-blur-2xl p-10">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">Tạo project service-first</h2>
+                <h2 className="text-4xl font-extrabold text-white tracking-tight">Tạo project service-first</h2>
                 <button 
                   onClick={() => setShowCreateForm(false)}
-                  className="rounded-xl px-4 py-2 text-sm font-bold text-[#64748b] hover:text-white hover:bg-white/5 transition-all"
+                  className="rounded-xl px-6 py-2 text-base font-bold text-[#64748b] hover:text-white hover:bg-white/5 transition-all"
                 >
                   Hủy và quay lại
                 </button>
@@ -84,10 +84,10 @@ export default function OnboardingPage() {
           {showCreateForm ? (
             <div className="animate-in zoom-in-95 duration-500 shadow-2xl rounded-3xl border border-[#1e293b] bg-[#0F172A]/90 backdrop-blur-2xl p-10">
               <div className="flex items-center justify-between mb-8">
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">Tạo project service-first</h2>
+                <h2 className="text-4xl font-extrabold text-white tracking-tight">Tạo project service-first</h2>
                 <button 
                   onClick={() => setShowCreateForm(false)}
-                  className="rounded-xl px-4 py-2 text-sm font-bold text-[#64748b] hover:text-white hover:bg-white/5 transition-all"
+                  className="rounded-xl px-6 py-2 text-base font-bold text-[#64748b] hover:text-white hover:bg-white/5 transition-all"
                 >
                   Hủy và quay lại
                 </button>
@@ -98,7 +98,7 @@ export default function OnboardingPage() {
             <div className="rounded-3xl border border-[#1e293b] bg-[#0F172A]/60 backdrop-blur-xl p-10 shadow-2xl">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8 mb-10">
                 <div>
-                  <h2 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+                  <h2 className="text-4xl font-bold text-white tracking-tight flex items-center gap-3">
                     <span className="size-8 rounded-lg bg-[#0EA5E9]/20 flex items-center justify-center text-[#0EA5E9]">
                       <svg className="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -111,14 +111,14 @@ export default function OnboardingPage() {
                 <div className="flex items-center gap-4">
                   <button
                     onClick={() => setShowCreateForm(true)}
-                    className="rounded-2xl bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] text-white px-6 py-3.5 text-sm font-bold transition-all hover:scale-105 shadow-lg shadow-[#0ea5e9]/20 flex items-center gap-2"
+                    className="rounded-2xl bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] text-white px-6 py-3.5 text-base font-bold transition-all hover:scale-105 shadow-lg shadow-[#0ea5e9]/20 flex items-center gap-2"
                   >
                     <span>+</span> Tạo dự án mới
                   </button>
                   {selectedProject && (
                     <Link
                       href={`/projects/${selectedProject.id}`}
-                      className="rounded-2xl bg-white/5 text-white hover:bg-white/10 px-6 py-3.5 text-sm font-bold transition-all border border-white/10"
+                      className="rounded-2xl bg-white/5 text-white hover:bg-white/10 px-6 py-3.5 text-base font-bold transition-all border border-white/10"
                     >
                       Chi tiết &rarr;
                     </Link>

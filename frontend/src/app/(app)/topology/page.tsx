@@ -202,7 +202,7 @@ export default function TopologyPage() {
             {!isStandalone && (
               <button
                 type="button"
-                className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                   showComparison
                     ? 'border-primary/40 bg-primary/10 text-primary'
                     : 'border-lazyops-border text-lazyops-muted hover:text-lazyops-text'
@@ -215,7 +215,7 @@ export default function TopologyPage() {
             {!isStandalone && (
               <button
                 type="button"
-                className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                   planningMode
                     ? 'border-primary/40 bg-primary/10 text-primary'
                     : 'border-lazyops-border text-lazyops-muted hover:text-lazyops-text'
@@ -277,9 +277,9 @@ export default function TopologyPage() {
       {showComparison && !isStandalone && (
         <SectionCard title="Current vs Desired topology" description="Comparison between running and intended state.">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-health-healthy/30 bg-health-healthy/5 p-4">
-              <h4 className="mb-2 text-sm font-medium text-health-healthy">Current</h4>
-              <div className="flex flex-col gap-1 text-xs text-lazyops-muted">
+            <div className="rounded-lg border border-health-healthy/30 bg-health-healthy/5 p-6">
+              <h4 className="mb-2 text-base font-medium text-health-healthy">Current</h4>
+              <div className="flex flex-col gap-1 text-sm text-lazyops-muted">
                 <span>{topoNodes.length} nodes active</span>
                 <span>{topoEdges.length} connections</span>
                 <span>{topoNodes.filter((n) => n.status === 'healthy').length} healthy</span>
@@ -287,9 +287,9 @@ export default function TopologyPage() {
                 <span>{topoNodes.filter((n) => n.status === 'unhealthy' || n.status === 'offline').length} unhealthy</span>
               </div>
             </div>
-            <div className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-4">
-              <h4 className="mb-2 text-sm font-medium text-lazyops-text">Desired</h4>
-              <div className="flex flex-col gap-1 text-xs text-lazyops-muted">
+            <div className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-6">
+              <h4 className="mb-2 text-base font-medium text-lazyops-text">Desired</h4>
+              <div className="flex flex-col gap-1 text-sm text-lazyops-muted">
                 <span>{topoNodes.length} nodes expected</span>
                 <span>{topoEdges.length} connections expected</span>
                 <span>All nodes should be healthy</span>
@@ -303,12 +303,12 @@ export default function TopologyPage() {
       {planningMode && !isStandalone && (
         <SectionCard title="Planning mode" description="Drag nodes to adjust placement. Changes are local until saved.">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-lazyops-muted">
+            <p className="text-base text-lazyops-muted">
               Drag nodes to reposition them. This does not affect the actual deployment.
             </p>
             <button
               type="button"
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+              className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
               onClick={() => {
                 setPlanningMode(false);
                 setNodes(rfNodes);
@@ -323,18 +323,18 @@ export default function TopologyPage() {
       <SectionCard title="Legend" description="Node types and status meanings.">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Node Types</h4>
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Node Types</h4>
             <div className="flex flex-col gap-2">
               {Object.entries(NODE_KIND_COLORS).map(([kind, color]) => (
                 <div key={kind} className="flex items-center gap-2">
                   <div className="size-3 rounded-full" style={{ backgroundColor: color }} />
-                  <span className="text-xs text-lazyops-muted">{NODE_KIND_LABELS[kind] ?? kind}</span>
+                  <span className="text-sm text-lazyops-muted">{NODE_KIND_LABELS[kind] ?? kind}</span>
                 </div>
               ))}
             </div>
           </div>
           <div>
-            <h4 className="mb-2 text-sm font-medium text-lazyops-text">Status</h4>
+            <h4 className="mb-2 text-base font-medium text-lazyops-text">Status</h4>
             <div className="flex flex-col gap-2">
               {(Object.entries(STATUS_BORDER_COLORS) as [TopologyHealth, string][]).map(([status]) => (
                 <div key={status} className="flex items-center gap-2">
@@ -377,29 +377,29 @@ function NodeDetailDrawer({ node }: { node: TopologyDisplayNode }) {
         />
         <div>
           <h4 className="text-base font-semibold text-lazyops-text">{node.label}</h4>
-          <span className="text-xs text-lazyops-muted">{NODE_KIND_LABELS[node.kind] ?? node.kind}</span>
+          <span className="text-sm text-lazyops-muted">{NODE_KIND_LABELS[node.kind] ?? node.kind}</span>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-xs text-lazyops-muted">Status:</span>
+        <span className="text-sm text-lazyops-muted">Status:</span>
         <HealthChip label={node.status} status={node.status} size="sm" />
       </div>
 
       {node.runtime_mode && (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-lazyops-muted">Runtime:</span>
+          <span className="text-sm text-lazyops-muted">Runtime:</span>
           <StatusBadge label={node.runtime_mode} variant="info" size="sm" dot={false} />
         </div>
       )}
 
       {Object.keys(node.metadata).length > 0 && (
         <div>
-          <h5 className="mb-2 text-sm font-medium text-lazyops-text">Metadata</h5>
+          <h5 className="mb-2 text-base font-medium text-lazyops-text">Metadata</h5>
           <div className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-3">
             <div className="flex flex-col gap-1">
               {Object.entries(node.metadata).map(([k, v]) => (
-                <div key={k} className="flex items-center justify-between text-xs">
+                <div key={k} className="flex items-center justify-between text-sm">
                   <span className="text-lazyops-muted">{k}</span>
                   <span className="font-mono text-lazyops-text">{String(v)}</span>
                 </div>
@@ -409,7 +409,7 @@ function NodeDetailDrawer({ node }: { node: TopologyDisplayNode }) {
         </div>
       )}
 
-      <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-3 text-xs text-lazyops-muted">
+      <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-3 text-sm text-lazyops-muted">
         <p className="mb-1 font-medium text-lazyops-text">Node ID</p>
         <code className="font-mono">{node.id}</code>
       </div>
@@ -423,7 +423,7 @@ function EdgeDetailDrawer({ edge, nodes }: { edge: TopologyDisplayEdge; nodes: T
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 text-base">
         <span className="font-medium text-lazyops-text">{sourceNode?.label ?? edge.source}</span>
         <span className="text-lazyops-muted">→</span>
         <span className="font-medium text-lazyops-text">{targetNode?.label ?? edge.target}</span>
@@ -436,7 +436,7 @@ function EdgeDetailDrawer({ edge, nodes }: { edge: TopologyDisplayEdge; nodes: T
         <SummaryField label="Health" value={edge.health} />
       </div>
 
-      <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-3 text-xs text-lazyops-muted">
+      <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/30 p-3 text-sm text-lazyops-muted">
         <p className="mb-1 font-medium text-lazyops-text">Route detail</p>
         <p>
           {sourceNode?.label} communicates with {targetNode?.label} via {edge.protocol}.
@@ -445,7 +445,7 @@ function EdgeDetailDrawer({ edge, nodes }: { edge: TopologyDisplayEdge; nodes: T
       </div>
 
       {edge.health === 'degraded' && (
-        <div className="rounded-lg border border-health-degraded/30 bg-health-degraded/10 p-3 text-xs text-health-degraded">
+        <div className="rounded-lg border border-health-degraded/30 bg-health-degraded/10 p-3 text-sm text-health-degraded">
           <p className="font-medium">Degraded connection</p>
           <p className="mt-1 text-lazyops-muted">
             This connection is experiencing higher than normal latency or intermittent failures.
@@ -454,7 +454,7 @@ function EdgeDetailDrawer({ edge, nodes }: { edge: TopologyDisplayEdge; nodes: T
       )}
 
       {edge.health === 'unhealthy' && (
-        <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 p-3 text-xs text-health-unhealthy">
+        <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 p-3 text-sm text-health-unhealthy">
           <p className="font-medium">Unhealthy connection</p>
           <p className="mt-1 text-lazyops-muted">
             This connection is failing or experiencing significant errors.
@@ -468,8 +468,8 @@ function EdgeDetailDrawer({ edge, nodes }: { edge: TopologyDisplayEdge; nodes: T
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="text-sm text-lazyops-text">{value}</span>
+      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="text-base text-lazyops-text">{value}</span>
     </div>
   );
 }

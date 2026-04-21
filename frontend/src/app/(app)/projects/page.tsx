@@ -18,7 +18,7 @@ export default function ProjectsPage() {
 
   if (isError) {
     return (
-      <div className="flex flex-col gap-6 max-w-5xl mx-auto py-4">
+      <div className="flex flex-col gap-6 max-w-5xl mx-auto py-6">
         <PageHeader title="Dự án của bạn" subtitle="Quản lý các ứng dụng và dự án đã được kết nối." />
         <ErrorState title="Lỗi tải dữ liệu" message="Không thể lấy danh sách dự án từ máy chủ." />
       </div>
@@ -47,15 +47,15 @@ export default function ProjectsPage() {
           <div className="mb-6 flex justify-center">
             <span className="text-6xl text-muted-foreground">📂</span>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-3">Bạn chưa có dự án nào</h2>
+          <h2 className="text-4xl font-bold text-white mb-3">Bạn chưa có dự án nào</h2>
           <p className="text-[#94a3b8] mb-8 max-w-md mx-auto">
             Tạo dự án mới để kết nối mã nguồn và tự động triển khai hệ thống của bạn.
           </p>
           <Link
             href="/projects/new"
-            className="inline-block rounded-xl bg-[#0EA5E9] px-10 py-4 text-lg font-bold text-white transition-all hover:bg-[#0284c7] shadow-lg shadow-[#0ea5e9]/20"
+            className="inline-block rounded-xl bg-[#0EA5E9] px-8 py-4 text-lg font-bold text-white transition-all hover:bg-[#0284c7] shadow-lg shadow-[#0ea5e9]/20"
           >
-            Tạo dự án đầu tiên
+            Tạo Project đầu tiên
           </Link>
         </div>
       ) : (
@@ -64,15 +64,15 @@ export default function ProjectsPage() {
             <Link
               key={project.id}
               href={`/projects/${project.id}`}
-              className="group flex flex-col md:flex-row items-start md:items-center justify-between rounded-2xl border border-[#1e293b] bg-[#0F172A] p-8 transition-all hover:border-[#38BDF8]/40 hover:bg-[#131c31] hover:shadow-xl hover:scale-[1.01]"
+              className="group flex flex-col md:flex-row items-start md:items-center justify-between rounded-2xl border border-[#1e293b] bg-[#0F172A] p-6 transition-all hover:border-[#38BDF8]/40 hover:bg-[#131c31] hover:shadow-xl hover:scale-[1.01]"
             >
               <div className="flex flex-col gap-1 mb-4 md:mb-0">
                 <span className="text-2xl font-bold text-white group-hover:text-[#38BDF8] transition-colors">{project.name}</span>
-                <span className="text-[15px] text-[#64748b] font-mono tracking-tight">/{project.slug}</span>
+                <span className="text-base text-[#64748b] font-mono tracking-tight">/{project.slug}</span>
               </div>
               <div className="flex flex-wrap items-center gap-8">
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-[#64748b] uppercase tracking-wider">Nhánh:</span>
+                  <span className="text-base font-semibold text-[#64748b] uppercase tracking-wider">Nhánh:</span>
                   <div className="rounded-lg bg-[#1e293b] px-3 py-1.5 text-[13px] font-mono text-white border border-[#334155]">
                     {project.default_branch}
                   </div>

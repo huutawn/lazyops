@@ -203,7 +203,7 @@ export default function DeploymentDetailPage() {
       
       <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-[#94a3b8] text-sm font-medium mb-1">
+          <div className="flex items-center gap-2 text-[#94a3b8] text-base font-medium mb-1">
             <Link
               href={projectId ? `/projects/${projectId}/deployments` : '/deployments'}
               className="hover:text-white transition-colors"
@@ -227,7 +227,7 @@ export default function DeploymentDetailPage() {
             <button
               onClick={() => deploymentAction.mutate('cancel')}
               disabled={deploymentAction.isPending}
-              className="rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-sm font-bold text-[#ef4444] transition-all hover:bg-[#ef4444]/20 disabled:opacity-50"
+              className="rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base font-bold text-[#ef4444] transition-all hover:bg-[#ef4444]/20 disabled:opacity-50"
             >
               Hủy triển khai
             </button>
@@ -236,7 +236,7 @@ export default function DeploymentDetailPage() {
             <button
               onClick={() => deploymentAction.mutate('promote')}
               disabled={deploymentAction.isPending}
-              className="rounded-xl bg-[#0EA5E9] px-6 py-3 text-sm font-bold text-white transition-all hover:bg-[#0284c7] hover:scale-105 active:scale-95 shadow-lg shadow-[#0ea5e9]/20"
+              className="rounded-xl bg-[#0EA5E9] px-6 py-3 text-base font-bold text-white transition-all hover:bg-[#0284c7] hover:scale-105 active:scale-95 shadow-lg shadow-[#0ea5e9]/20"
             >
               Phát hành Production
             </button>
@@ -245,7 +245,7 @@ export default function DeploymentDetailPage() {
             <button
               onClick={() => deploymentAction.mutate('rollback')}
               disabled={deploymentAction.isPending}
-              className="rounded-xl border border-[#ef4444] bg-[#ef4444]/10 px-6 py-3 text-sm font-bold text-[#ef4444] transition-all hover:bg-[#ef4444]/20"
+              className="rounded-xl border border-[#ef4444] bg-[#ef4444]/10 px-6 py-3 text-base font-bold text-[#ef4444] transition-all hover:bg-[#ef4444]/20"
             >
               Rollback ngay
             </button>
@@ -261,7 +261,7 @@ export default function DeploymentDetailPage() {
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
               <div className="flex flex-col gap-3">
-                <span className="text-sm font-bold text-[#64748b] uppercase tracking-wider">Build</span>
+                <span className="text-base font-bold text-[#64748b] uppercase tracking-wider">Build</span>
                 <div className="flex items-center gap-3">
                   <StatusBadge 
                     label={formatState(dep.build_state)} 
@@ -271,7 +271,7 @@ export default function DeploymentDetailPage() {
                 </div>
               </div>
               <div className="flex flex-col gap-3">
-                <span className="text-sm font-bold text-[#64748b] uppercase tracking-wider">Rollout</span>
+                <span className="text-base font-bold text-[#64748b] uppercase tracking-wider">Rollout</span>
                 <div className="flex items-center gap-3">
                   <StatusBadge 
                     label={formatState(dep.rollout_state)} 
@@ -342,7 +342,7 @@ export default function DeploymentDetailPage() {
             title={<div className="flex items-center gap-2"><Terminal className="size-5 text-[#38BDF8]" /> Nhật ký vận hành</div>}
             description="Mặc định ưu tiên app runtime logs. Có thể chuyển sang gateway, sidecar hoặc internal service để điều tra sâu hơn."
           >
-            <div className="rounded-xl border border-[#1e293b] bg-[#0B1120] p-4 min-h-[200px] font-mono shadow-inner">
+            <div className="rounded-xl border border-[#1e293b] bg-[#0B1120] p-6 min-h-[200px] font-mono shadow-inner">
               <div className="mb-4 flex flex-wrap gap-2">
                 {LOG_VIEW_OPTIONS.map((option) => (
                   <button
@@ -350,7 +350,7 @@ export default function DeploymentDetailPage() {
                     type="button"
                     onClick={() => setLogView(option.id)}
                     className={cn(
-                      'rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors',
+                      'rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors',
                       logView === option.id
                         ? 'border-[#38BDF8] bg-[#0EA5E9]/10 text-[#38BDF8]'
                         : 'border-[#1e293b] bg-[#020617] text-[#94a3b8] hover:text-white',
@@ -362,7 +362,7 @@ export default function DeploymentDetailPage() {
               </div>
 
               {deploymentLogs.isLoading ? (
-                <p className="text-[#64748b] text-sm animate-pulse">Đang kết nối luồng log...</p>
+                <p className="text-[#64748b] text-base animate-pulse">Đang kết nối luồng log...</p>
               ) : filteredDeploymentLogs.length > 0 ? (
                 <div className="flex flex-col gap-2">
                   {filteredDeploymentLogs.map((line) => (
@@ -384,7 +384,7 @@ export default function DeploymentDetailPage() {
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 opacity-40">
                   <Terminal className="size-10 text-[#64748b] mb-4" />
-                  <p className="text-[#64748b] text-sm text-center">{emptyLogMessage(logView)}</p>
+                  <p className="text-[#64748b] text-base text-center">{emptyLogMessage(logView)}</p>
                 </div>
               )}
             </div>
@@ -394,7 +394,7 @@ export default function DeploymentDetailPage() {
             <SectionCard title={<div className="flex items-center gap-2"><Layers className="size-5 text-[#38BDF8]" /> Dịch vụ</div>}>
               <div className="flex flex-col gap-3">
                 {services.map((svc) => (
-                  <div key={svc.name} className="flex items-center justify-between rounded-xl bg-[#131c31] border border-[#1e293b] px-4 py-3">
+                  <div key={svc.name} className="flex items-center justify-between rounded-xl bg-[#131c31] border border-[#1e293b] px-6 py-3">
                     <div className="flex flex-col">
                       {projectId ? (
                         <Link
@@ -406,7 +406,7 @@ export default function DeploymentDetailPage() {
                       ) : (
                         <span className="text-[15px] font-bold text-white">{svc.name}</span>
                       )}
-                      <span className="text-xs text-[#64748b] font-mono">{svc.path}</span>
+                      <span className="text-sm text-[#64748b] font-mono">{svc.path}</span>
                     </div>
                     <StatusBadge label={svc.runtime_profile} variant="neutral" size="sm" dot={false} />
                   </div>
@@ -417,19 +417,19 @@ export default function DeploymentDetailPage() {
             <SectionCard title={<div className="flex items-center gap-2"><Cpu className="size-5 text-[#38BDF8]" /> Phân bổ</div>}>
               <div className="flex flex-col gap-3">
                 {placementAssignments.map((pa) => (
-                  <div key={pa.service_name} className="flex flex-col gap-1 rounded-xl bg-[#131c31] border border-[#1e293b] px-4 py-3">
+                  <div key={pa.service_name} className="flex flex-col gap-1 rounded-xl bg-[#131c31] border border-[#1e293b] px-6 py-3">
                     <div className="flex items-center justify-between">
                       {projectId ? (
                         <Link
                           href={`/projects/${projectId}/observability?service=${encodeURIComponent(pa.service_name)}`}
-                          className="text-sm font-bold text-white transition-colors hover:text-[#38BDF8]"
+                          className="text-base font-bold text-white transition-colors hover:text-[#38BDF8]"
                         >
                           {pa.service_name}
                         </Link>
                       ) : (
-                        <span className="text-sm font-bold text-white">{pa.service_name}</span>
+                        <span className="text-base font-bold text-white">{pa.service_name}</span>
                       )}
-                      <span className="text-xs text-[#38BDF8] font-mono">
+                      <span className="text-sm text-[#38BDF8] font-mono">
                         {formatPlacementTarget(pa.target_kind, pa.target_id, placementNodeMap)}
                       </span>
                     </div>
@@ -444,7 +444,7 @@ export default function DeploymentDetailPage() {
                       </div>
                     </div>
                     {pa.target_kind === 'instance' ? (
-                      <div className="text-xs text-[#94a3b8]">
+                      <div className="text-sm text-[#94a3b8]">
                         {describePlacementTarget(pa.target_id, placementNodeMap)}
                       </div>
                     ) : null}
@@ -462,7 +462,7 @@ export default function DeploymentDetailPage() {
           >
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-[#94a3b8]">Tự động Rollback</span>
+                <span className="text-base text-[#94a3b8]">Tự động Rollback</span>
                 <StatusBadge 
                   label={safetyPolicy.auto_rollback_enabled ? 'Bật' : 'Tắt'} 
                   variant={safetyPolicy.auto_rollback_enabled ? 'success' : 'warning'}
@@ -470,30 +470,30 @@ export default function DeploymentDetailPage() {
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <span className="text-sm text-[#94a3b8]">Trình kích hoạt Rollback:</span>
+                <span className="text-base text-[#94a3b8]">Trình kích hoạt Rollback:</span>
                 <div className="flex flex-wrap gap-2">
                   {safetyTriggers.map((trigger) => (
                     <span key={trigger} className="text-[11px] text-white bg-[#1e293b] px-2 py-1 rounded-lg border border-[#334155]">{formatState(trigger)}</span>
                   ))}
                 </div>
               </div>
-              <p className="text-xs text-[#64748b] leading-relaxed italic">{safetyPolicy.description}</p>
+              <p className="text-sm text-[#64748b] leading-relaxed italic">{safetyPolicy.description}</p>
             </div>
 
             {incident && (
               <div className={cn(
-                "mt-6 p-5 rounded-2xl border bg-opacity-10 backdrop-blur-sm",
+                "mt-6 p-6 rounded-2xl border bg-opacity-10 backdrop-blur-sm",
                 incident.state === 'healthy' ? 'border-[#10b981]/30 bg-[#10b981]' : 'border-[#ef4444]/30 bg-[#ef4444]'
               )}>
                 <div className="flex items-center gap-2 mb-3">
                   <AlertCircle className={cn("size-5", incident.state === 'healthy' ? 'text-[#10b981]' : 'text-[#ef4444]')} />
                   <span className="text-[15px] font-bold text-white">{incident.headline}</span>
                 </div>
-                <p className="text-sm text-[#94a3b8] mb-4 leading-relaxed">{incident.reason}</p>
+                <p className="text-base text-[#94a3b8] mb-4 leading-relaxed">{incident.reason}</p>
                 {incident.primary_action && (
                   <Link
                     href={incident.primary_action.href}
-                    className="flex items-center justify-center w-full rounded-xl bg-white/10 py-3 text-sm font-bold text-white transition-all hover:bg-white/20 border border-white/5"
+                    className="flex items-center justify-center w-full rounded-xl bg-white/10 py-3 text-base font-bold text-white transition-all hover:bg-white/20 border border-white/5"
                   >
                     {incident.primary_action.label}
                   </Link>
@@ -514,8 +514,8 @@ export default function DeploymentDetailPage() {
                       event.state === 'promoted' ? 'border-[#10b981]' : 'border-[#334155]'
                     )} />
                     <div className="flex flex-col gap-1">
-                      <span className="text-sm font-bold text-white">{event.label}</span>
-                      <p className="text-xs text-[#64748b] leading-relaxed">{event.description}</p>
+                      <span className="text-base font-bold text-white">{event.label}</span>
+                      <p className="text-sm text-[#64748b] leading-relaxed">{event.description}</p>
                       <span className="text-[10px] text-[#64748b] font-mono mt-1">
                         {new Date(event.timestamp).toLocaleTimeString()}
                       </span>
@@ -530,37 +530,37 @@ export default function DeploymentDetailPage() {
             {traceCorrelationID ? (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs text-[#64748b] uppercase font-bold">Correlation ID</span>
+                  <span className="text-sm text-[#64748b] uppercase font-bold">Correlation ID</span>
                   <code className="text-[11px] text-[#38BDF8] bg-[#0B1120] p-2 rounded-lg border border-[#334155]/30 break-all">{traceCorrelationID}</code>
                 </div>
                 {trace.isLoading ? (
-                  <div className="flex items-center gap-2 text-xs text-[#64748b]">
+                  <div className="flex items-center gap-2 text-sm text-[#64748b]">
                     <div className="size-3 border-2 border-[#38BDF8] border-t-transparent rounded-full animate-spin" />
                     Đang phân tích vết...
                   </div>
                 ) : trace.data ? (
                   <div className="space-y-4">
                     <div className="flex flex-col gap-1">
-                      <span className="text-xs text-[#64748b] font-bold">Điểm nóng (Hotspot):</span>
-                      <span className="text-sm font-bold text-[#ef4444]">{trace.data.latency_hotspot}</span>
+                      <span className="text-sm text-[#64748b] font-bold">Điểm nóng (Hotspot):</span>
+                      <span className="text-base font-bold text-[#ef4444]">{trace.data.latency_hotspot}</span>
                     </div>
                     <div className="flex flex-col gap-1">
-                      <span className="text-xs text-[#64748b] font-bold">Tổng độ trễ:</span>
-                      <span className="text-sm font-bold text-white">{trace.data.total_latency_ms} ms</span>
+                      <span className="text-sm text-[#64748b] font-bold">Tổng độ trễ:</span>
+                      <span className="text-base font-bold text-white">{trace.data.total_latency_ms} ms</span>
                     </div>
                     <Link
                       href={projectId ? `/projects/${projectId}/observability` : '/observability'}
-                      className="flex items-center justify-center w-full rounded-xl bg-[#1e293b] py-3 text-xs font-bold text-[#94a3b8] transition-all hover:text-white border border-[#334155]"
+                      className="flex items-center justify-center w-full rounded-xl bg-[#1e293b] py-3 text-sm font-bold text-[#94a3b8] transition-all hover:text-white border border-[#334155]"
                     >
                       Mở bảng giám sát &rarr;
                     </Link>
                   </div>
                 ) : (
-                  <p className="text-xs text-[#64748b]">Không có dữ liệu vết cho revision này.</p>
+                  <p className="text-sm text-[#64748b]">Không có dữ liệu vết cho revision này.</p>
                 )}
               </div>
             ) : (
-              <p className="text-xs text-[#64748b]">Không tìm thấy correlation ID trong nhật ký.</p>
+              <p className="text-sm text-[#64748b]">Không tìm thấy correlation ID trong nhật ký.</p>
             )}
           </SectionCard>
         </div>
@@ -576,7 +576,7 @@ function SummaryField({ label, value, icon }: { label: string; value: string; ic
         {icon}
         <span className="text-[11px] font-bold uppercase tracking-wider">{label}</span>
       </div>
-      <span className="truncate text-sm font-bold text-white" title={value}>{value}</span>
+      <span className="truncate text-base font-bold text-white" title={value}>{value}</span>
     </div>
   );
 }

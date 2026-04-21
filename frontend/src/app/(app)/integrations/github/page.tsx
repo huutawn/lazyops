@@ -40,7 +40,7 @@ export default function GitHubIntegrationsPage() {
 
   if (reposError) {
     return (
-      <div className="flex flex-col gap-6 max-w-5xl mx-auto py-4">
+      <div className="flex flex-col gap-6 max-w-5xl mx-auto py-6">
         <PageHeader title="Tích hợp GitHub" subtitle="Quản lý mã nguồn và ứng dụng GitHub của bạn." />
         <ErrorState
           title="Không thể tải dữ liệu"
@@ -77,10 +77,10 @@ export default function GitHubIntegrationsPage() {
   }, {});
 
   return (
-    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-4">
+    <div className="flex flex-col gap-8 max-w-5xl mx-auto py-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight mb-2">Tích hợp GitHub</h1>
+          <h1 className="text-4xl font-bold tracking-tight mb-2">Tích hợp GitHub</h1>
           <p className="text-muted-foreground text-lg">Cài đặt ứng dụng GitHub để tự động đồng bộ mã nguồn của bạn vào LazyOps.</p>
         </div>
         <div className="flex items-center gap-3">
@@ -97,11 +97,11 @@ export default function GitHubIntegrationsPage() {
         </div>
       </div>
 
-      <SectionCard className="p-4 shadow-sm rounded-xl bg-primary/5 border-primary/20">
+      <SectionCard className="p-6 shadow-sm rounded-xl bg-primary/5 border-primary/20">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold">Làm mới dữ liệu</h3>
-            <p className="text-sm text-muted-foreground mt-1">
+            <p className="text-base text-muted-foreground mt-1">
               Nếu bạn vừa mới cài đặt hoặc cấp quyền mới trên GitHub mà chưa thấy thay đổi, hãy nhấn ĐỒNG BỘ ngay.
             </p>
           </div>
@@ -116,7 +116,7 @@ export default function GitHubIntegrationsPage() {
             </button>
             <button
               type="button"
-              className="rounded-xl border-2 border-border px-4 py-3 text-sm font-semibold transition-colors hover:bg-muted"
+              className="rounded-xl border-2 border-border px-6 py-3 text-base font-semibold transition-colors hover:bg-muted"
               onClick={() => setShowSyncModal(true)}
             >
               Nâng cao
@@ -124,7 +124,7 @@ export default function GitHubIntegrationsPage() {
           </div>
         </div>
         {quickSync.error && (
-          <div className="mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive font-medium">
+          <div className="mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-base text-destructive font-medium">
             Có lỗi xảy ra: {(quickSync.error as Error).message}
           </div>
         )}
@@ -155,16 +155,16 @@ export default function GitHubIntegrationsPage() {
             return (
               <div key={key} className="flex flex-col gap-3">
                 <div className="flex items-center gap-3 border-b pb-2">
-                  <h2 className="text-2xl font-extrabold text-foreground">{accountLogin}</h2>
+                  <h2 className="text-4xl font-extrabold text-foreground">{accountLogin}</h2>
                   <StatusBadge label={accountType === 'Organization' ? 'Tổ chức' : 'Cá nhân'} variant="info" size="sm" dot={false} />
-                  <span className="text-muted-foreground ml-auto bg-muted px-3 py-1 rounded-full text-sm font-bold">
+                  <span className="text-muted-foreground ml-auto bg-muted px-3 py-1 rounded-full text-base font-bold">
                     {repos.length} Kho lưu trữ
                   </span>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 mt-2">
                   {repos.map((repo) => (
-                    <div key={repo.github_repo_id} className="rounded-xl border border-border bg-card p-4 shadow-sm hover:shadow-md hover:border-primary/40 transition-all group">
+                    <div key={repo.github_repo_id} className="rounded-xl border border-border bg-card p-6 shadow-sm hover:shadow-md hover:border-primary/40 transition-all group">
                       <div className="flex items-start justify-between mb-2">
                         <span className="font-bold text-lg text-foreground group-hover:text-primary transition-colors truncate block w-[80%]" title={repo.full_name}>
                           {repo.full_name.split('/')[1] || repo.full_name}
@@ -176,14 +176,14 @@ export default function GitHubIntegrationsPage() {
                           dot={false}
                         />
                       </div>
-                      <p className="text-xs text-muted-foreground uppercase font-semibold mb-2 tracking-wider">
+                      <p className="text-sm text-muted-foreground uppercase font-semibold mb-2 tracking-wider">
                         Quyền truy cập
                       </p>
                       <div className="flex flex-wrap gap-1.5">
                         {Object.entries(repo.permissions).map(([perm]) => (
                           <span
                             key={perm}
-                            className="rounded bg-accent px-2 py-1 text-xs font-medium text-foreground"
+                            className="rounded bg-accent px-2 py-1 text-sm font-medium text-foreground"
                           >
                             {perm === 'admin' ? 'Quản trị' : perm === 'maintain' ? 'Bảo trì' : perm === 'push' ? 'Ghi' : perm === 'pull' ? 'Đọc' : perm}
                           </span>
@@ -248,7 +248,7 @@ function SyncInstallationsModal({ open, onClose }: SyncInstallationsModalProps) 
         </FormField>
 
         {serverError && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-6 py-3 text-base font-semibold text-destructive">
             {serverError}
           </div>
         )}

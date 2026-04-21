@@ -12,7 +12,7 @@ export function RuntimeModeCard({ title, description, useCase, icon, selected, o
       type="button"
       onClick={onClick}
       className={cn(
-        'flex flex-col gap-3 rounded-xl border p-5 text-left transition-colors',
+        'flex flex-col gap-3 rounded-xl border p-6 text-left transition-colors',
         selected
           ? 'border-primary/40 bg-primary/10'
           : 'border-lazyops-border bg-lazyops-card hover:border-lazyops-border/80',
@@ -22,8 +22,8 @@ export function RuntimeModeCard({ title, description, useCase, icon, selected, o
         <span className="text-xl" aria-hidden="true">{icon}</span>
         <h3 className="text-base font-medium text-lazyops-text">{title}</h3>
       </div>
-      <p className="text-sm leading-relaxed text-lazyops-muted">{description}</p>
-      <p className="text-xs text-lazyops-muted/70">{useCase}</p>
+      <p className="text-base leading-relaxed text-lazyops-muted">{description}</p>
+      <p className="text-sm text-lazyops-muted/70">{useCase}</p>
     </button>
   );
 }

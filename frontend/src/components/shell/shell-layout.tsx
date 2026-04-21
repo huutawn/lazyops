@@ -21,7 +21,7 @@ export function ShellLayout({ children, breadcrumb, className }: ShellLayoutProp
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onMenuClick={toggle} breadcrumb={breadcrumb} />
-        <main className={cn('flex-1 p-4 lg:p-6', className)}>{children}</main>
+        <main className={cn('flex-1 p-6 lg:p-6', className)}>{children}</main>
       </div>
     </div>
   );

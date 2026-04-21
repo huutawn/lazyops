@@ -24,13 +24,13 @@ function TargetCard({
   return (
     <Link
       href={href}
-      className="rounded-xl border border-lazyops-border bg-lazyops-card p-4 transition-colors hover:bg-lazyops-border/10"
+      className="rounded-xl border border-lazyops-border bg-lazyops-card p-6 transition-colors hover:bg-lazyops-border/10"
     >
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-lazyops-text">{title}</h3>
+        <h3 className="text-base font-semibold text-lazyops-text">{title}</h3>
         <StatusBadge label={`${count}`} variant="neutral" size="sm" dot={false} />
       </div>
-      <p className="text-xs text-lazyops-muted">{description}</p>
+      <p className="text-sm text-lazyops-muted">{description}</p>
     </Link>
   );
 }

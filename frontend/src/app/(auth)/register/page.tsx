@@ -31,8 +31,8 @@ export default function RegisterPage() {
   return (
     <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
       <div className="space-y-2 text-center lg:text-left">
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Create account</h1>
-        <p className="text-sm text-muted-foreground">Get started with LazyOps</p>
+        <h1 className="text-4xl font-semibold tracking-tight text-foreground">Create account</h1>
+        <p className="text-base text-muted-foreground">Get started with LazyOps</p>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
@@ -67,7 +67,7 @@ export default function RegisterPage() {
         </FormField>
 
         {serverError && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive animate-in fade-in zoom-in-95">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-6 py-3 text-base font-medium text-destructive animate-in fade-in zoom-in-95">
             {serverError}
           </div>
         )}
@@ -77,7 +77,7 @@ export default function RegisterPage() {
         </FormButton>
       </form>
 
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="text-center text-base text-muted-foreground">
         Already have an account?{' '}
         <Link href="/login" className="font-semibold text-primary transition-colors hover:text-primary/80 hover:underline">
           Sign in

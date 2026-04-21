@@ -69,18 +69,18 @@ export default function FinOpsPage() {
 
       <div className="grid gap-4 sm:grid-cols-3">
         <SectionCard title="Current monthly cost">
-          <div className="text-3xl font-bold text-lazyops-text">${totalCurrentCost.toFixed(2)}</div>
-          <p className="text-xs text-lazyops-muted">Estimated across all services</p>
+          <div className="text-4xl font-bold text-lazyops-text">${totalCurrentCost.toFixed(2)}</div>
+          <p className="text-sm text-lazyops-muted">Estimated across all services</p>
         </SectionCard>
 
         <SectionCard title="Optimized monthly cost">
-          <div className="text-3xl font-bold text-health-healthy">${totalOptimizedCost.toFixed(2)}</div>
-          <p className="text-xs text-lazyops-muted">With recommendations applied</p>
+          <div className="text-4xl font-bold text-health-healthy">${totalOptimizedCost.toFixed(2)}</div>
+          <p className="text-sm text-lazyops-muted">With recommendations applied</p>
         </SectionCard>
 
         <SectionCard title="Potential savings">
-          <div className="text-3xl font-bold text-primary">${potentialSavings.toFixed(2)}</div>
-          <p className="text-xs text-lazyops-muted">
+          <div className="text-4xl font-bold text-primary">${potentialSavings.toFixed(2)}</div>
+          <p className="text-sm text-lazyops-muted">
             {potentialSavings > 0 ? `${((potentialSavings / totalCurrentCost) * 100).toFixed(0)}% reduction possible` : 'No savings identified'}
           </p>
         </SectionCard>
@@ -97,34 +97,34 @@ export default function FinOpsPage() {
       {aggregates && aggregates.length > 0 && (
         <SectionCard title="Metric aggregates" description="24-hour summary statistics per service.">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead>
                 <tr className="border-b border-lazyops-border">
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">Service</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">CPU p95</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">CPU max</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">CPU min</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">CPU avg</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">RAM p95</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">RAM max</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">RAM min</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">RAM avg</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-lazyops-muted">Count</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">Service</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">CPU p95</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">CPU max</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">CPU min</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">CPU avg</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">RAM p95</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">RAM max</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">RAM min</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">RAM avg</th>
+                  <th className="px-3 py-2 text-left text-sm font-medium text-lazyops-muted">Count</th>
                 </tr>
               </thead>
               <tbody>
                 {aggregates.map((a) => (
                   <tr key={a.service} className="border-b border-lazyops-border/50">
                     <td className="px-3 py-2 font-medium text-lazyops-text">{a.service}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.cpu_p95}%</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.cpu_max}%</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.cpu_min}%</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.cpu_avg}%</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.ram_p95}MB</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.ram_max}MB</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.ram_min}MB</td>
-                    <td className="px-3 py-2 font-mono text-xs">{a.ram_avg}MB</td>
-                    <td className="px-3 py-2 font-mono text-xs text-lazyops-muted">{a.cpu_count.toLocaleString()}</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.cpu_p95}%</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.cpu_max}%</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.cpu_min}%</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.cpu_avg}%</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.ram_p95}MB</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.ram_max}MB</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.ram_min}MB</td>
+                    <td className="px-3 py-2 font-mono text-sm">{a.ram_avg}MB</td>
+                    <td className="px-3 py-2 font-mono text-sm text-lazyops-muted">{a.cpu_count.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -140,10 +140,10 @@ export default function FinOpsPage() {
         >
           <div className="flex flex-col gap-3">
             {idleCandidates.map((c) => (
-              <div key={c.service} className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-4">
+              <div key={c.service} className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-6">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-lazyops-text">{c.service}</span>
+                    <span className="text-base font-medium text-lazyops-text">{c.service}</span>
                     <StatusBadge
                       label={RECOMMENDATION_LABELS[c.recommendation]}
                       variant={RECOMMENDATION_VARIANT[c.recommendation] ?? 'neutral'}
@@ -152,8 +152,8 @@ export default function FinOpsPage() {
                     />
                   </div>
                 </div>
-                <p className="mb-2 text-xs text-lazyops-muted">{c.reason}</p>
-                <div className="grid gap-2 sm:grid-cols-3 text-xs">
+                <p className="mb-2 text-sm text-lazyops-muted">{c.reason}</p>
+                <div className="grid gap-2 sm:grid-cols-3 text-sm">
                   <span className="text-lazyops-muted">CPU avg: <span className="text-lazyops-text">{c.cpu_avg}%</span></span>
                   <span className="text-lazyops-muted">RAM avg: <span className="text-lazyops-text">{c.ram_avg}MB</span></span>
                   <span className="text-lazyops-muted">Requests: <span className="text-lazyops-text">{c.request_count.toLocaleString()}</span></span>
@@ -168,12 +168,12 @@ export default function FinOpsPage() {
         <SectionCard title="Scale-to-zero candidates" description="Services that could be scaled down when idle.">
           <div className="flex flex-col gap-3">
             {scaleToZero.map((c) => (
-              <div key={c.service} className="rounded-lg border border-health-healthy/30 bg-health-healthy/5 p-4">
+              <div key={c.service} className="rounded-lg border border-health-healthy/30 bg-health-healthy/5 p-6">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-medium text-lazyops-text">{c.service}</span>
+                  <span className="text-base font-medium text-lazyops-text">{c.service}</span>
                   <HealthChip label={`Save ${c.estimated_savings_percent}%`} status="healthy" size="sm" />
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2 text-xs">
+                <div className="grid gap-2 sm:grid-cols-2 text-sm">
                   <span className="text-lazyops-muted">Current instances: <span className="text-lazyops-text">{c.current_instances}</span></span>
                   <span className="text-lazyops-muted">Min idle time: <span className="text-lazyops-text">{c.min_idle_seconds / 60} minutes</span></span>
                 </div>
@@ -190,14 +190,14 @@ export default function FinOpsPage() {
         >
           <div className="flex flex-col gap-4">
             {costEstimates.map((c) => (
-              <div key={c.service} className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-4">
+              <div key={c.service} className="rounded-lg border border-lazyops-border bg-lazyops-bg-accent/30 p-6">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-medium text-lazyops-text">{c.service}</span>
+                  <span className="text-base font-medium text-lazyops-text">{c.service}</span>
                   {c.optimized_cost < c.current_cost && (
                     <HealthChip label={`Save $${(c.current_cost - c.optimized_cost).toFixed(2)}/mo`} status="healthy" size="sm" />
                   )}
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2 text-xs">
+                <div className="grid gap-2 sm:grid-cols-2 text-sm">
                   <span className="text-lazyops-muted">Current: <span className="text-lazyops-text font-medium">${c.current_cost.toFixed(2)}/{c.period}</span></span>
                   <span className="text-lazyops-muted">Optimized: <span className="text-health-healthy font-medium">${c.optimized_cost.toFixed(2)}/{c.period}</span></span>
                 </div>
@@ -212,7 +212,7 @@ export default function FinOpsPage() {
               </div>
             ))}
 
-            <div className="rounded-lg border border-health-degraded/30 bg-health-degraded/5 p-3 text-xs text-health-degraded">
+            <div className="rounded-lg border border-health-degraded/30 bg-health-degraded/5 p-3 text-sm text-health-degraded">
               <p className="font-medium">Disclaimer</p>
               <p className="mt-1 text-lazyops-muted">
                 These are estimates based on current usage patterns and do not reflect actual billing.

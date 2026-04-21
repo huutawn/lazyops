@@ -2,7 +2,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const healthChipVariants = cva(
-  'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+  'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-base font-medium transition-colors',
   {
     variants: {
       status: {
@@ -13,9 +13,9 @@ const healthChipVariants = cva(
         unknown: 'border-health-unknown/30 bg-health-unknown/10 text-health-unknown',
       },
       size: {
-        sm: 'px-2 py-1 text-xs',
-        md: 'px-3 py-1.5 text-sm',
-        lg: 'px-4 py-2 text-base',
+        sm: 'px-2 py-1 text-sm',
+        md: 'px-3 py-1.5 text-base',
+        lg: 'px-6 py-2 text-base',
       },
     },
     defaultVariants: {

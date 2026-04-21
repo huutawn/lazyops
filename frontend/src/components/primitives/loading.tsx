@@ -13,7 +13,7 @@ export function LoadingBlock({ label = 'Loading…', className }: LoadingBlockPr
       aria-live="polite"
     >
       <div className="size-8 animate-spin rounded-full border-2 border-lazyops-border border-t-primary" />
-      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="text-base text-lazyops-muted">{label}</span>
     </div>
   );
 }

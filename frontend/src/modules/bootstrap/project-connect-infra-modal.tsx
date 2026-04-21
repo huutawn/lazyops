@@ -86,7 +86,7 @@ export function ProjectConnectInfraModal({
   return (
     <Modal open={open} onClose={handleClose} title="Kết nối máy chủ qua SSH" size="lg">
       <div className="flex flex-col gap-4">
-        <p className="text-sm text-lazyops-muted">
+        <p className="text-base text-lazyops-muted">
           Nhập thông tin SSH, LazyOps sẽ tự cài agent và tự gắn máy chủ vào project. Bạn không cần cấu hình cluster thủ công.
         </p>
 
@@ -120,7 +120,7 @@ export function ProjectConnectInfraModal({
 
         <button
           type="button"
-          className="w-fit rounded-lg border border-lazyops-border px-3 py-1.5 text-xs font-semibold text-lazyops-muted transition-colors hover:bg-lazyops-border/10"
+          className="w-fit rounded-lg border border-lazyops-border px-3 py-1.5 text-sm font-semibold text-lazyops-muted transition-colors hover:bg-lazyops-border/10"
           onClick={() => setShowInfraAdvanced((prev) => !prev)}
         >
           {showInfraAdvanced ? 'Ẩn cấu hình nâng cao' : 'Mở cấu hình nâng cao'}
@@ -167,7 +167,7 @@ export function ProjectConnectInfraModal({
 
         <FormField label="SSH private key (tuỳ chọn)">
           <textarea
-            className="min-h-24 w-full rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 px-3 py-2 text-sm text-lazyops-text outline-none transition-colors placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+            className="min-h-24 w-full rounded-lg border border-lazyops-border bg-lazyops-bg-accent/60 px-3 py-2 text-base text-lazyops-text outline-none transition-colors placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
             placeholder="-----BEGIN OPENSSH PRIVATE KEY----- ..."
             value={infraForm.ssh_private_key}
             onChange={(event) => setInfraForm((prev) => ({ ...prev, ssh_private_key: event.target.value }))}
@@ -175,7 +175,7 @@ export function ProjectConnectInfraModal({
         </FormField>
 
         {infraFormError ? (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
             {infraFormError}
           </div>
         ) : null}

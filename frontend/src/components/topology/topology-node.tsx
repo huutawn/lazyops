@@ -25,7 +25,7 @@ export const TopologyNode = memo(({ data }: NodeProps<TopologyNode>) => {
   return (
     <div
       className={cn(
-        'min-w-[180px] rounded-xl border-2 bg-lazyops-bg-accent/95 px-4 py-3 backdrop-blur-sm transition-shadow',
+        'min-w-[180px] rounded-xl border-2 bg-lazyops-bg-accent/95 px-6 py-3 backdrop-blur-sm transition-shadow',
         isDegraded && 'animate-pulse',
         isUnhealthy && 'animate-pulse',
         isOffline && 'opacity-60',
@@ -36,7 +36,7 @@ export const TopologyNode = memo(({ data }: NodeProps<TopologyNode>) => {
 
       <div className="flex items-center gap-2 mb-1">
         <div className="size-2.5 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-sm font-semibold text-lazyops-text">{label}</span>
+        <span className="text-base font-semibold text-lazyops-text">{label}</span>
       </div>
 
       <div className="flex items-center justify-between">

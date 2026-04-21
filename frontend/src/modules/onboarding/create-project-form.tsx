@@ -77,9 +77,9 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
               <FolderGit2 className="size-5" />
             </span>
             <div>
-              <h3 className="text-lg font-bold text-white">Project shell</h3>
-              <p className="text-sm text-[#94a3b8]">
-                Project chỉ đóng vai trò namespace logic. Sau khi tạo xong, bạn sẽ cấu hình service inventory ở bước tiếp theo.
+              <h3 className="text-xl font-bold text-white">Khởi tạo Project</h3>
+              <p className="text-base text-[#94a3b8]">
+                Đặt tên và định danh cho Project của bạn.
               </p>
             </div>
           </div>
@@ -109,7 +109,7 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
                   type="button"
                   onClick={handleToggleAutoSlug}
                   className={cn(
-                    'h-12 rounded-xl border px-4 text-xs font-bold transition-all',
+                    'h-12 rounded-xl border px-6 text-sm font-bold transition-all',
                     autoSlug
                       ? 'border-[#0EA5E9]/30 bg-[#0EA5E9]/10 text-[#38BDF8]'
                       : 'border-[#334155] bg-[#111827] text-[#94a3b8]',
@@ -138,41 +138,41 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
               <Layers className="size-5" />
             </span>
             <div>
-              <h3 className="text-lg font-bold text-white">Bước tiếp theo</h3>
-              <p className="text-sm text-[#94a3b8]">
-                Project mới sẽ bắt đầu rỗng. LazyOps sẽ mở thẳng màn hình Dịch vụ để bạn thêm repo service hoặc internal service theo nhu cầu.
+              <h3 className="text-xl font-bold text-white">Hướng dẫn kết nối tiếp theo</h3>
+              <p className="text-base text-[#94a3b8]">
+                Sau khi tạo xong Project, bạn sẽ cần thiết lập thêm các thành phần khác.
               </p>
             </div>
           </div>
 
           <div className="grid gap-3">
             <NextStepCard
-              title="1. Tạo user service"
-              description="Nhập tên, repo path và public/private cho web, API, worker hoặc bất kỳ service nào lấy code từ repository."
+              title="1. Thêm Service từ Repository"
+              description="Liên kết mã nguồn ứng dụng (Web, API...) từ Repository của bạn."
             />
             <NextStepCard
-              title="2. Tạo internal service"
-              description="Chọn từ catalog managed sẵn như PostgreSQL, MySQL, Redis hoặc RabbitMQ."
+              title="2. Thêm Database"
+              description="Khởi tạo cơ sở dữ liệu nếu Project của bạn yêu cầu."
             />
             <NextStepCard
-              title="3. Deploy từ inventory"
-              description="Sau khi có ít nhất một service, bootstrap/deploy sẽ regenerate manifest từ inventory hiện tại thay vì dựa vào scaffold mặc định."
+              title="3. Bắt đầu Deploy"
+              description="Sau khi cài đặt xong, bạn có thể thực hiện cấu hình khởi chạy dễ dàng."
             />
           </div>
         </div>
       </div>
 
       {serverError ? (
-        <div className="flex items-center gap-3 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fecaca]">
+        <div className="flex items-center gap-3 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base text-[#fecaca]">
           <AlertCircle className="size-5 shrink-0" />
           {serverError}
         </div>
       ) : null}
 
-      <div className="border-t border-[#1e293b] pt-4">
+      <div className="border-t border-[#1e293b] pt-6">
         <FormButton type="submit" loading={isSubmitting || createProject.isPending} className="h-14 text-lg">
           <Rocket className="mr-2 size-5" />
-          Tạo project rỗng
+          Tạo Project
         </FormButton>
       </div>
     </form>
@@ -181,9 +181,9 @@ export function CreateProjectForm({ onSuccess }: CreateProjectFormProps) {
 
 function NextStepCard({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] px-4 py-4">
-      <div className="text-sm font-semibold text-white">{title}</div>
-      <p className="mt-2 text-sm leading-relaxed text-[#94a3b8]">{description}</p>
+    <div className="rounded-2xl border border-[#1e293b] bg-[#0F172A] px-6 py-6">
+      <div className="text-base font-semibold text-white">{title}</div>
+      <p className="mt-2 text-base leading-relaxed text-[#94a3b8]">{description}</p>
     </div>
   );
 }

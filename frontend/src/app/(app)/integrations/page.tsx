@@ -14,15 +14,15 @@ export default function IntegrationsPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <Link
             href="/integrations/github"
-            className="rounded-xl border border-lazyops-border bg-lazyops-card p-4 transition-colors hover:bg-lazyops-border/10"
+            className="rounded-xl border border-lazyops-border bg-lazyops-card p-6 transition-colors hover:bg-lazyops-border/10"
           >
-            <h3 className="mb-1 text-sm font-semibold text-lazyops-text">GitHub</h3>
-            <p className="text-xs text-lazyops-muted">Install GitHub App, sync repos, and wire webhook delivery.</p>
+            <h3 className="mb-1 text-base font-semibold text-lazyops-text">GitHub</h3>
+            <p className="text-sm text-lazyops-muted">Install GitHub App, sync repos, and wire webhook delivery.</p>
           </Link>
 
-          <div className="rounded-xl border border-dashed border-lazyops-border bg-lazyops-card/50 p-4">
-            <h3 className="mb-1 text-sm font-semibold text-lazyops-text">More coming soon</h3>
-            <p className="text-xs text-lazyops-muted">
+          <div className="rounded-xl border border-dashed border-lazyops-border bg-lazyops-card/50 p-6">
+            <h3 className="mb-1 text-base font-semibold text-lazyops-text">More coming soon</h3>
+            <p className="text-sm text-lazyops-muted">
               Additional providers are not implemented yet in backend APIs.
             </p>
           </div>

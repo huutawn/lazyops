@@ -148,45 +148,45 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
       >
         <div className="grid gap-4 lg:grid-cols-3">
           {setupCards.map((card) => (
-            <div key={card.id} className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-5">
+            <div key={card.id} className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-6">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-white">{card.title}</div>
-                <div className={`text-xs font-semibold ${stateColorClass(card.state)}`}>
+                <div className="text-base font-semibold text-white">{card.title}</div>
+                <div className={`text-sm font-semibold ${stateColorClass(card.state)}`}>
                   {formatBootstrapStateLabelVN(card.state)}
                 </div>
               </div>
-              <p className="mt-3 text-sm leading-relaxed text-[#94a3b8]">{card.summary}</p>
+              <p className="mt-3 text-base leading-relaxed text-[#94a3b8]">{card.summary}</p>
             </div>
           ))}
         </div>
 
         {actionMessage ? (
-          <div className="mt-4 rounded-2xl border border-[#0EA5E9]/30 bg-[#0EA5E9]/10 px-4 py-3 text-sm text-[#bae6fd]">
+          <div className="mt-4 rounded-2xl border border-[#0EA5E9]/30 bg-[#0EA5E9]/10 px-6 py-3 text-base text-[#bae6fd]">
             {actionMessage}
           </div>
         ) : null}
 
         {actionError ? (
-          <div className="mt-4 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fecaca]">
+          <div className="mt-4 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base text-[#fecaca]">
             {actionError}
           </div>
         ) : null}
 
         {bootstrap.data.latest_build ? (
-          <div className="mt-4 rounded-2xl border border-[#38bdf8]/20 bg-[#0B1120]/80 px-4 py-3">
+          <div className="mt-4 rounded-2xl border border-[#38bdf8]/20 bg-[#0B1120]/80 px-6 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-white">
+                <div className="text-base font-semibold text-white">
                   Build gần nhất: {formatBootstrapStateLabelVN(bootstrap.data.latest_build.status)}
                 </div>
-                <div className="mt-1 text-sm text-[#94a3b8]">
+                <div className="mt-1 text-base text-[#94a3b8]">
                   {bootstrap.data.latest_build.summary || `Build job ${bootstrap.data.latest_build.build_job_id}`}
                 </div>
                 {bootstrap.data.latest_build.details ? (
-                  <div className="mt-1 text-xs text-[#cbd5e1]">{bootstrap.data.latest_build.details}</div>
+                  <div className="mt-1 text-sm text-[#cbd5e1]">{bootstrap.data.latest_build.details}</div>
                 ) : null}
               </div>
-              <div className="text-xs text-[#64748b]">{bootstrap.data.latest_build.build_job_id}</div>
+              <div className="text-sm text-[#64748b]">{bootstrap.data.latest_build.build_job_id}</div>
             </div>
           </div>
         ) : null}
@@ -236,8 +236,8 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
           Chi tiết thiết lập và thông tin nâng cao
         </summary>
         <div className="mt-5 grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-          <div className="rounded-2xl border border-[#1e293b] bg-[#020617]/60 p-5">
-            <div className="text-sm font-semibold text-white">Thông tin nâng cao</div>
+          <div className="rounded-2xl border border-[#1e293b] bg-[#020617]/60 p-6">
+            <div className="text-base font-semibold text-white">Thông tin nâng cao</div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <AdvancedField label="Repo đang nối" value={repoLink.data?.repo_full_name || 'Chưa kết nối'} />
               <AdvancedField label="Nhánh theo dõi" value={repoLink.data?.tracked_branch || 'Chưa có'} />
@@ -285,7 +285,7 @@ function PrimaryActionButton({
         href={action.href}
         target="_blank"
         rel="noreferrer"
-        className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90"
+        className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90"
       >
         {action.label}
       </a>
@@ -296,7 +296,7 @@ function PrimaryActionButton({
     return (
       <Link
         href={action.href}
-        className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90"
+        className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90"
       >
         {action.label}
       </Link>
@@ -307,7 +307,7 @@ function PrimaryActionButton({
     return (
       <Link
         href={action.href}
-        className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90"
+        className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90"
       >
         {action.label}
       </Link>
@@ -318,7 +318,7 @@ function PrimaryActionButton({
     return (
       <Link
         href="/integrations/github"
-        className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90"
+        className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90"
       >
         Mở GitHub App
       </Link>
@@ -330,7 +330,7 @@ function PrimaryActionButton({
       type="button"
       onClick={onClick}
       disabled={isPending}
-      className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-[#020617] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+      className="rounded-xl bg-[#0EA5E9] px-6 py-2 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
     >
       {isPending && action.kind === 'deploy' ? 'Đang triển khai...' : action.label}
     </button>
@@ -349,13 +349,13 @@ function QuickSummaryCard({
   hint: string;
 }) {
   return (
-    <div className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-5">
+    <div className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-6">
       <div className="mb-3 flex items-center gap-3">
         <div className="rounded-xl border border-[#1e293b] bg-[#0B1120]/80 p-2">{icon}</div>
-        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">{label}</div>
+        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">{label}</div>
       </div>
-      <div className="text-2xl font-bold tracking-tight text-white">{value}</div>
-      <div className="mt-2 break-all text-sm text-[#94a3b8]">{hint}</div>
+      <div className="text-4xl font-bold tracking-tight text-white">{value}</div>
+      <div className="mt-2 break-all text-base text-[#94a3b8]">{hint}</div>
     </div>
   );
 }
@@ -364,7 +364,7 @@ function QuickLink({ href, icon, label }: { href: string; icon: ReactNode; label
   return (
     <Link
       href={href}
-      className="flex items-center gap-2 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-4 py-3 text-sm font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
+      className="flex items-center gap-2 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-6 py-3 text-base font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
     >
       <span className="text-[#38bdf8]">{icon}</span>
       {label}
@@ -374,9 +374,9 @@ function QuickLink({ href, icon, label }: { href: string; icon: ReactNode; label
 
 function AdvancedField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/50 p-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#64748b]">{label}</div>
-      <div className="mt-2 break-all text-sm font-semibold text-[#e2e8f0]">{value}</div>
+    <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/50 p-6">
+      <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">{label}</div>
+      <div className="mt-2 break-all text-base font-semibold text-[#e2e8f0]">{value}</div>
     </div>
   );
 }

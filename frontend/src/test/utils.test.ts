@@ -7,7 +7,7 @@ describe('cn utility', () => {
   });
 
   it('merges tailwind classes with twMerge', () => {
-    expect(cn('px-2', 'px-4')).toBe('px-4');
+    expect(cn('px-2', 'px-6')).toBe('px-6');
   });
 
   it('filters out falsy values', () => {

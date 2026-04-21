@@ -75,7 +75,7 @@ export default function InstancesPage() {
         actions={
           <button
             type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+            className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
             onClick={() => setShowCreateModal(true)}
           >
             Add instance
@@ -91,7 +91,7 @@ export default function InstancesPage() {
             action={
               <button
                 type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                 onClick={() => setShowCreateModal(true)}
               >
                 Add instance
@@ -102,16 +102,16 @@ export default function InstancesPage() {
       ) : (
         <SectionCard>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead>
                 <tr className="border-b border-lazyops-border">
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Name</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Public IP</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Private IP</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Labels</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Agent</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Actions</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Name</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Status</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Public IP</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Private IP</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Labels</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Agent</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -120,21 +120,21 @@ export default function InstancesPage() {
                     key={instance.id}
                     className="border-b border-lazyops-border/50 transition-colors hover:bg-lazyops-border/10"
                   >
-                    <td className="px-4 py-3 font-medium text-lazyops-text">{instance.name}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3 font-medium text-lazyops-text">{instance.name}</td>
+                    <td className="px-6 py-3">
                       <StatusBadge
                         label={formatStatus(instance.status)}
                         variant={getStatusVariant(instance.status)}
                         size="sm"
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 font-mono text-sm text-lazyops-muted">
                       {instance.public_ip ?? '—'}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 font-mono text-sm text-lazyops-muted">
                       {instance.private_ip ?? '—'}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3">
                       <div className="flex flex-wrap gap-1">
                         {Object.entries(instance.labels).map(([key, value]) => (
                           <span
@@ -145,24 +145,24 @@ export default function InstancesPage() {
                           </span>
                         ))}
                         {Object.keys(instance.labels).length === 0 && (
-                          <span className="text-xs text-lazyops-muted/50">—</span>
+                          <span className="text-sm text-lazyops-muted/50">—</span>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 text-sm text-lazyops-muted">
                       {instance.agent_id ? (
                         <span className="font-mono">{instance.agent_id.slice(0, 12)}…</span>
                       ) : (
                         <span className="text-lazyops-muted/50">Not enrolled</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3">
                       {instance.status !== 'online' && (
                         <>
                           {bootstrapTokensByInstanceID[instance.id] ? (
                             <button
                               type="button"
-                              className="text-xs text-primary hover:underline"
+                              className="text-sm text-primary hover:underline"
                               onClick={() => {
                                 setBootstrapInstanceID(instance.id);
                                 setBootstrapToken(bootstrapTokensByInstanceID[instance.id]);
@@ -174,7 +174,7 @@ export default function InstancesPage() {
                           ) : (
                             <button
                               type="button"
-                              className="text-xs text-lazyops-muted/60 hover:text-lazyops-text hover:underline"
+                              className="text-sm text-lazyops-muted/60 hover:text-lazyops-text hover:underline"
                               onClick={() => {
                                 setBootstrapInstanceID(instance.id);
                                 setBootstrapToken(null);
@@ -327,7 +327,7 @@ function CreateInstanceModal({ open, onClose, onSuccess }: CreateInstanceModalPr
         </FormField>
 
         {serverError && (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
             {serverError}
           </div>
         )}
@@ -409,21 +409,21 @@ function BootstrapModal({
     <Modal open={open} onClose={onClose} title="Bootstrap command" size="lg">
       <div className="flex flex-col gap-4">
         {token ? (
-          <p className="text-sm text-lazyops-muted">
+          <p className="text-base text-lazyops-muted">
             Run this command from the <code>agent</code> directory on your target machine to enroll the LazyOps
             agent.
           </p>
         ) : (
-          <p className="text-sm text-lazyops-muted">
+          <p className="text-base text-lazyops-muted">
             No reusable bootstrap token is available for this instance in the current session.
           </p>
         )}
 
-        <div className="relative rounded-lg border border-lazyops-border bg-lazyops-bg p-4">
-          <code className="block break-all text-sm text-lazyops-text">{command}</code>
+        <div className="relative rounded-lg border border-lazyops-border bg-lazyops-bg p-6">
+          <code className="block break-all text-base text-lazyops-text">{command}</code>
           <button
             type="button"
-            className="absolute right-3 top-3 rounded-md border border-lazyops-border bg-lazyops-bg-accent px-2.5 py-1.5 text-xs text-lazyops-muted transition-colors hover:text-lazyops-text"
+            className="absolute right-3 top-3 rounded-md border border-lazyops-border bg-lazyops-bg-accent px-2.5 py-1.5 text-sm text-lazyops-muted transition-colors hover:text-lazyops-text"
             onClick={handleCopy}
           >
             {copied ? 'Copied!' : 'Copy'}
@@ -434,7 +434,7 @@ function BootstrapModal({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="rounded-md border border-lazyops-border bg-lazyops-bg-accent px-3 py-1.5 text-xs text-lazyops-text transition-colors hover:bg-lazyops-border/20 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-md border border-lazyops-border bg-lazyops-bg-accent px-3 py-1.5 text-sm text-lazyops-text transition-colors hover:bg-lazyops-border/20 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={() => {
                 void onRegenerate();
               }}
@@ -446,14 +446,14 @@ function BootstrapModal({
         ) : null}
 
         {regenerateError ? (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
             {regenerateError}
           </div>
         ) : null}
 
         {instanceID ? (
           <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/40 p-3">
-            <p className="mb-3 text-xs font-medium text-lazyops-text">Install Agent Via SSH</p>
+            <p className="mb-3 text-sm font-medium text-lazyops-text">Install Agent Via SSH</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormInput
                 type="text"
@@ -481,7 +481,7 @@ function BootstrapModal({
               />
             </div>
             <textarea
-              className="mt-3 min-h-24 w-full rounded-lg border border-lazyops-border bg-lazyops-bg px-3 py-2 text-xs text-lazyops-text outline-none transition-colors placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
+              className="mt-3 min-h-24 w-full rounded-lg border border-lazyops-border bg-lazyops-bg px-3 py-2 text-sm text-lazyops-text outline-none transition-colors placeholder:text-lazyops-muted/60 focus:border-primary/60 focus:ring-1 focus:ring-primary/30"
               placeholder="SSH private key (optional)"
               value={sshPrivateKey}
               onChange={(event) => setSSHPrivateKey(event.target.value)}
@@ -510,7 +510,7 @@ function BootstrapModal({
             <div className="mt-3 flex items-center gap-2">
               <button
                 type="button"
-                className="rounded-md border border-lazyops-border bg-lazyops-bg px-3 py-1.5 text-xs text-lazyops-text transition-colors hover:bg-lazyops-border/20 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-md border border-lazyops-border bg-lazyops-bg px-3 py-1.5 text-sm text-lazyops-text transition-colors hover:bg-lazyops-border/20 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => {
                   const portValue = Number.parseInt(sshPort, 10);
                   void onInstallViaSSH({
@@ -539,7 +539,7 @@ function BootstrapModal({
             ) : null}
 
             {installError ? (
-              <div className="mt-2 rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+              <div className="mt-2 rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
                 {installError}
               </div>
             ) : null}
@@ -547,12 +547,12 @@ function BootstrapModal({
         ) : null}
 
         {token ? (
-          <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/50 px-3 py-2 text-xs text-lazyops-muted">
+          <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/50 px-3 py-2 text-sm text-lazyops-muted">
             Token expires at: {new Date(token.expires_at).toLocaleString()}
           </div>
         ) : null}
 
-        <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/50 px-3 py-3 text-xs text-lazyops-muted">
+        <div className="rounded-lg border border-lazyops-border/50 bg-lazyops-bg-accent/50 px-3 py-3 text-sm text-lazyops-muted">
           <p className="mb-1 font-medium text-lazyops-text">What happens next?</p>
           <ol className="list-decimal space-y-1 pl-4">
             <li>The agent installs on the target machine</li>

@@ -51,7 +51,7 @@ export default function RepoLinkPage() {
             action={
               <Link
                 href="/integrations/github"
-                className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                className="inline-block rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
               >
                 Mở GitHub App
               </Link>
@@ -70,7 +70,7 @@ export default function RepoLinkPage() {
         actions={
           <button
             type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+            className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
             onClick={() => setShowLinkModal(true)}
           >
             {linkedRepo ? 'Đổi repository' : 'Kết nối repository'}
@@ -88,7 +88,7 @@ export default function RepoLinkPage() {
             action={
               <button
                 type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                 onClick={() => setShowLinkModal(true)}
               >
                 Kết nối repository
@@ -119,8 +119,8 @@ function LinkedRepoCard({ repo }: { repo: ProjectRepoLink }) {
       </div>
       <div className="mt-4 flex items-center gap-2">
         <StatusBadge label="Đã kết nối" variant="success" size="md" />
-        <span className="text-sm text-lazyops-muted">
-          Mỗi lần push vào nhánh <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-xs">{repo.tracked_branch}</code> sẽ sẵn sàng cho build/deploy.
+        <span className="text-base text-lazyops-muted">
+          Mỗi lần push vào nhánh <code className="rounded bg-lazyops-border/20 px-1.5 py-0.5 text-sm">{repo.tracked_branch}</code> sẽ sẵn sàng cho build/deploy.
         </span>
       </div>
     </SectionCard>
@@ -130,8 +130,8 @@ function LinkedRepoCard({ repo }: { repo: ProjectRepoLink }) {
 function SummaryField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-lazyops-muted">{label}</span>
-      <span className="text-sm text-lazyops-text">{value}</span>
+      <span className="text-sm text-lazyops-muted">{label}</span>
+      <span className="text-base text-lazyops-text">{value}</span>
     </div>
   );
 }

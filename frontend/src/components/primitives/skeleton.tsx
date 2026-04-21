@@ -37,7 +37,7 @@ export function SkeletonCard({ count = 3 }: SkeletonCardProps) {
   return (
     <div className="flex flex-col gap-4">
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-lazyops-border bg-lazyops-card p-5">
+        <div key={i} className="rounded-xl border border-lazyops-border bg-lazyops-card p-6">
           <Skeleton className="mb-3 h-5 w-1/3" />
           <SkeletonLine lines={2} />
         </div>

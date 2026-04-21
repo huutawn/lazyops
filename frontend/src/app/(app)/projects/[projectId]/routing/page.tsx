@@ -45,7 +45,7 @@ export default function RoutingPage() {
         action={
           <button
             onClick={() => window.location.reload()}
-            className="rounded-lg border border-[#1e293b] bg-[#0B1120]/40 px-4 py-2 text-sm font-medium text-[#94a3b8] hover:text-white"
+            className="rounded-lg border border-[#1e293b] bg-[#0B1120]/40 px-6 py-2 text-base font-medium text-[#94a3b8] hover:text-white"
           >
             Retry
           </button>
@@ -120,7 +120,7 @@ export default function RoutingPage() {
             }}
           />
         </FormField>
-        <p className="mt-3 text-sm text-[#94a3b8]">
+        <p className="mt-3 text-base text-[#94a3b8]">
           Example: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">app.project.sslip.io</code>.
           Routes like <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">/api</code> and <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">/</code> will be mapped to different services.
         </p>
@@ -133,7 +133,7 @@ export default function RoutingPage() {
           <button
             type="button"
             onClick={handleAddRoute}
-            className="rounded-lg border border-[#1e293b] bg-[#0B1120]/40 px-4 py-2 text-sm font-medium text-[#94a3b8] transition-colors hover:border-[#0EA5E9]/50 hover:text-white"
+            className="rounded-lg border border-[#1e293b] bg-[#0B1120]/40 px-6 py-2 text-base font-medium text-[#94a3b8] transition-colors hover:border-[#0EA5E9]/50 hover:text-white"
           >
             + Add Route
           </button>
@@ -141,14 +141,14 @@ export default function RoutingPage() {
       >
         {routes.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#1e293b] p-8 text-center">
-            <p className="text-sm text-[#94a3b8]">
+            <p className="text-base text-[#94a3b8]">
               No routes configured. Click &quot;Add Route&quot; to enable path-based routing.
             </p>
           </div>
         ) : (
           <div className="space-y-4">
             {hasOverlappingPaths && (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-6 py-3 text-base text-amber-400">
                 <strong>Warning:</strong> Some path prefixes overlap. This may cause routing conflicts.
               </div>
             )}
@@ -156,14 +156,14 @@ export default function RoutingPage() {
             {routes.map((route, index) => (
               <div
                 key={index}
-                className="rounded-xl border border-[#1e293b] bg-[#0B1120]/30 p-4 space-y-4"
+                className="rounded-xl border border-[#1e293b] bg-[#0B1120]/30 p-6 space-y-4"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-white">Route #{index + 1}</span>
+                  <span className="text-base font-semibold text-white">Route #{index + 1}</span>
                   <button
                     type="button"
                     onClick={() => handleRemoveRoute(index)}
-                    className="text-sm text-[#ef4444] hover:underline"
+                    className="text-base text-[#ef4444] hover:underline"
                   >
                     Remove
                   </button>
@@ -186,7 +186,7 @@ export default function RoutingPage() {
                       onChange={(e) =>
                         handleRouteChange(index, 'service', e.target.value)
                       }
-                      className="flex h-12 w-full rounded-xl border border-[#1e293b] bg-[#0B1120]/40 px-4 text-[15px] text-white outline-none transition-all focus:border-[#0EA5E9]/50 focus:ring-4 focus:ring-[#0EA5E9]/10"
+                      className="flex h-12 w-full rounded-xl border border-[#1e293b] bg-[#0B1120]/40 px-6 text-[15px] text-white outline-none transition-all focus:border-[#0EA5E9]/50 focus:ring-4 focus:ring-[#0EA5E9]/10"
                     >
                       <option value="">Select service...</option>
                       {availableServices.map((svc) => (
@@ -209,7 +209,7 @@ export default function RoutingPage() {
                   </FormField>
 
                   <div className="flex items-center gap-4 pt-8">
-                    <label className="flex items-center gap-2 text-sm text-[#94a3b8]">
+                    <label className="flex items-center gap-2 text-base text-[#94a3b8]">
                       <input
                         type="checkbox"
                         checked={route.websocket ?? false}
@@ -223,7 +223,7 @@ export default function RoutingPage() {
                   </div>
 
                   <div className="flex items-center gap-4 pt-8">
-                    <label className="flex items-center gap-2 text-sm text-[#94a3b8]">
+                    <label className="flex items-center gap-2 text-base text-[#94a3b8]">
                       <input
                         type="checkbox"
                         checked={route.strip_prefix ?? false}
@@ -243,7 +243,7 @@ export default function RoutingPage() {
       </SectionCard>
 
       <SectionCard title="Caddyfile Preview" description="Preview of the generated Caddy configuration">
-        <pre className="overflow-x-auto rounded-xl bg-[#0B1120]/60 p-4 text-xs font-mono text-[#94a3b8]">
+        <pre className="overflow-x-auto rounded-xl bg-[#0B1120]/60 p-6 text-sm font-mono text-[#94a3b8]">
           {generateCaddyfilePreview(sharedDomain, routes)}
         </pre>
       </SectionCard>

@@ -98,7 +98,7 @@ export default function DashboardPage() {
         </div>
         <Link
           href="/onboarding"
-          className="rounded-xl bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] px-7 py-4 text-base font-bold text-white shadow-[0_10px_30px_rgba(14,165,233,0.3)] transition-all hover:scale-105 hover:brightness-110 active:scale-95 flex items-center gap-3"
+          className="rounded-xl bg-gradient-to-r from-[#0EA5E9] to-[#38BDF8] px-7 py-6 text-base font-bold text-white shadow-[0_10px_30px_rgba(14,165,233,0.3)] transition-all hover:scale-105 hover:brightness-110 active:scale-95 flex items-center gap-3"
         >
           <span className="text-xl">+</span>
           Dự án mới
@@ -112,7 +112,7 @@ export default function DashboardPage() {
           </div>
           <div>
             <div className="text-4xl font-black text-white leading-tight mb-1 group-hover:scale-110 transition-transform origin-left">{projectsCount}</div>
-            <div className="text-sm text-[#64748b] font-bold tracking-[0.1em] uppercase opacity-80">Dự án</div>
+            <div className="text-base text-[#64748b] font-bold tracking-[0.1em] uppercase opacity-80">Dự án</div>
           </div>
           {/* Subtle Card Glow */}
           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#38BDF8]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
@@ -124,7 +124,7 @@ export default function DashboardPage() {
           </div>
           <div>
             <div className="text-4xl font-black text-white leading-tight mb-1 group-hover:scale-110 transition-transform origin-left">{serversCount}</div>
-            <div className="text-sm text-[#64748b] font-bold tracking-[0.1em] uppercase opacity-80">Máy chủ</div>
+            <div className="text-base text-[#64748b] font-bold tracking-[0.1em] uppercase opacity-80">Máy chủ</div>
           </div>
           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#38BDF8]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         </div>
@@ -135,7 +135,7 @@ export default function DashboardPage() {
           </div>
           <div>
             <div className="text-4xl font-black text-white leading-tight mb-1 group-hover:scale-110 transition-transform origin-left">{deploymentsCount}</div>
-            <div className="text-sm text-[#64748b] font-bold tracking-[0.1em] uppercase opacity-80">Triển khai</div>
+            <div className="text-base text-[#64748b] font-bold tracking-[0.1em] uppercase opacity-80">Triển khai</div>
           </div>
           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#38BDF8]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         </div>
@@ -168,13 +168,13 @@ export default function DashboardPage() {
                     <span className="text-xl font-bold text-white tracking-tight">
                       Revision: {dep.revision}
                     </span>
-                    <span className="text-sm text-[#64748b] font-mono opacity-80">
+                    <span className="text-base text-[#64748b] font-mono opacity-80">
                       {dep.commit_sha.slice(0, 7)}
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-12">
-                  <span className="text-sm text-[#64748b] font-bold italic opacity-70">{formatDistanceToNow(dep.created_at)}</span>
+                  <span className="text-base text-[#64748b] font-bold italic opacity-70">{formatDistanceToNow(dep.created_at)}</span>
                   {getStatusBadge(dep.rollout_state)}
                 </div>
               </Link>

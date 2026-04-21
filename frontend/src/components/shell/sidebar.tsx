@@ -50,12 +50,12 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
             </div>
           ) : (
             <div className="flex flex-col items-start leading-none tracking-tight">
-              <span className="text-2xl font-black text-primary">LazyOps</span>
+              <span className="text-4xl font-black text-primary">LazyOps</span>
             </div>
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-4 py-4 scrollbar-hide" aria-label="Main navigation">
+        <nav className="flex-1 overflow-y-auto px-6 py-6 scrollbar-hide" aria-label="Main navigation">
           <ul className="flex flex-col gap-2">
             {NAV_ITEMS.map((item) => {
               // Exact match or starting with the path, except for dashboard which usually matches /

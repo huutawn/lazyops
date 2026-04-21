@@ -54,7 +54,7 @@ export default function MeshNetworksPage() {
         actions={
           <button
             type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+            className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
             onClick={() => setShowCreateModal(true)}
           >
             Create mesh
@@ -68,7 +68,7 @@ export default function MeshNetworksPage() {
       >
         <ul className="grid gap-2 sm:grid-cols-2">
           {MESH_EXPLAINER.benefits.map((benefit) => (
-            <li key={benefit} className="flex items-start gap-2 text-sm text-lazyops-muted">
+            <li key={benefit} className="flex items-start gap-2 text-base text-lazyops-muted">
               <svg className="mt-0.5 shrink-0 size-4 text-health-healthy" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -86,7 +86,7 @@ export default function MeshNetworksPage() {
             action={
               <button
                 type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
+                className="rounded-lg bg-primary px-6 py-2 text-base font-semibold text-lazyops-bg transition-colors hover:bg-primary/90"
                 onClick={() => setShowCreateModal(true)}
               >
                 Create mesh
@@ -97,14 +97,14 @@ export default function MeshNetworksPage() {
       ) : (
         <SectionCard>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead>
                 <tr className="border-b border-lazyops-border">
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Name</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Provider</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">CIDR</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Created</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Name</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Provider</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">CIDR</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Status</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Created</th>
                 </tr>
               </thead>
               <tbody>
@@ -113,8 +113,8 @@ export default function MeshNetworksPage() {
                     key={network.id}
                     className="border-b border-lazyops-border/50 transition-colors hover:bg-lazyops-border/10"
                   >
-                    <td className="px-4 py-3 font-medium text-lazyops-text">{network.name}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3 font-medium text-lazyops-text">{network.name}</td>
+                    <td className="px-6 py-3">
                       <StatusBadge
                         label={getProviderLabel(network.provider)}
                         variant="info"
@@ -122,15 +122,15 @@ export default function MeshNetworksPage() {
                         dot={false}
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-lazyops-muted">{network.cidr}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3 font-mono text-sm text-lazyops-muted">{network.cidr}</td>
+                    <td className="px-6 py-3">
                       <StatusBadge
                         label={formatMeshStatus(network.status)}
                         variant={getMeshStatusVariant(network.status)}
                         size="sm"
                       />
                     </td>
-                    <td className="px-4 py-3 text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 text-sm text-lazyops-muted">
                       {new Date(network.created_at).toLocaleDateString()}
                     </td>
                   </tr>
@@ -191,7 +191,7 @@ function CreateMeshNetworkModal({ open, onClose }: CreateMeshNetworkModalProps) 
               <label
                 key={provider}
                 className={cn(
-                  'flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 text-sm transition-colors',
+                  'flex cursor-pointer items-center gap-3 rounded-lg border px-6 py-3 text-base transition-colors',
                   'hover:border-lazyops-border/80',
                 )}
               >
@@ -203,7 +203,7 @@ function CreateMeshNetworkModal({ open, onClose }: CreateMeshNetworkModalProps) 
                 />
                 <div className="flex flex-col">
                   <span className="font-medium text-lazyops-text">{getProviderLabel(provider)}</span>
-                  <span className="text-xs text-lazyops-muted">
+                  <span className="text-sm text-lazyops-muted">
                     {provider === 'tailscale'
                       ? 'Zero-config, managed control plane'
                       : 'Open-source, self-hosted'}
@@ -227,7 +227,7 @@ function CreateMeshNetworkModal({ open, onClose }: CreateMeshNetworkModalProps) 
         </FormField>
 
         {serverError && (
-          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-xs text-health-unhealthy">
+          <div className="rounded-lg border border-health-unhealthy/30 bg-health-unhealthy/10 px-3 py-2 text-sm text-health-unhealthy">
             {serverError}
           </div>
         )}

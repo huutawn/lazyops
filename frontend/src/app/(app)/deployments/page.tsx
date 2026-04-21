@@ -51,8 +51,8 @@ export default function DeploymentsPage() {
   if (isError) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Deployments" subtitle="Deployment history and status." />
-        <ErrorState title="Failed to load deployments" message="Could not fetch deployment data." />
+        <PageHeader title="Lịch sử Deploy" subtitle="Trạng thái và lịch sử Deploy." />
+        <ErrorState title="Lỗi tải danh sách" message="Không thể lấy dữ liệu Deploy từ máy chủ." />
       </div>
     );
   }
@@ -62,31 +62,31 @@ export default function DeploymentsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Deployments"
-        subtitle={projectId ? 'Deployment history for this project.' : 'Deployment history across all projects.'}
+        title="Lịch sử Deploy"
+        subtitle={projectId ? 'Lịch sử Deploy của Project này.' : 'Lịch sử Deploy trên toàn bộ các Project.'}
       />
 
       {deployments.length === 0 ? (
-        <SectionCard title="No deployments" description="No deployments have been created yet.">
+        <SectionCard title="Chưa có Deploy nào" description="Bạn chưa có bất kỳ lịch sử Deploy nào.">
           <EmptyState
-            title="No deployments yet"
-            description="Hãy vào dự án và chạy luồng 3 bước để triển khai lần đầu."
+            title="Trống"
+            description="Hãy vào Project và thiết lập các bước để bắt đầu Deploy lần đầu tiên."
           />
         </SectionCard>
       ) : (
         <SectionCard>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-base">
               <thead>
                 <tr className="border-b border-lazyops-border">
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Revision</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Commit</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Build</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Rollout</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Domain</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Trigger</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">By</th>
-                  <th className="px-4 py-3 text-left font-medium text-lazyops-muted">Completed</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Bản sửa đổi (Revision)</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Mã Commit</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Tiến trình Build</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Tiến trình Phân phối (Rollout)</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Tên miền (Domain)</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Kích hoạt (Trigger)</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Bởi</th>
+                  <th className="px-6 py-3 text-left font-medium text-lazyops-muted">Hoàn thành lúc</th>
                 </tr>
               </thead>
               <tbody>
@@ -99,7 +99,7 @@ export default function DeploymentsPage() {
                     key={dep.id}
                     className="border-b border-lazyops-border/50 transition-colors hover:bg-lazyops-border/10"
                   >
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3">
                       <Link
                         href={`/projects/${dep.project_id}/deployments/${dep.id}`}
                         className="font-medium text-primary hover:underline"
@@ -107,24 +107,24 @@ export default function DeploymentsPage() {
                         r{dep.revision}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 font-mono text-sm text-lazyops-muted">
                       {dep.commit_sha.slice(0, 7)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3">
                       <StatusBadge
                         label={formatState(dep.build_state)}
                         variant={BUILD_STATE_VARIANT[dep.build_state]}
                         size="sm"
                       />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-6 py-3">
                       <StatusBadge
                         label={formatState(dep.rollout_state)}
                         variant={ROLLOUT_STATE_VARIANT[dep.rollout_state]}
                         size="sm"
                       />
                     </td>
-                    <td className="px-4 py-3 text-xs">
+                    <td className="px-6 py-3 text-sm">
                       {primaryPublicURL ? (
                         <a
                           href={primaryPublicURL}
@@ -138,11 +138,11 @@ export default function DeploymentsPage() {
                         <span className="text-lazyops-muted">{publicURLDisplay.message}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 text-sm text-lazyops-muted">
                       <StatusBadge label={dep.trigger_kind} variant="neutral" size="sm" dot={false} />
                     </td>
-                    <td className="px-4 py-3 text-xs text-lazyops-muted">{dep.triggered_by}</td>
-                    <td className="px-4 py-3 text-xs text-lazyops-muted">
+                    <td className="px-6 py-3 text-sm text-lazyops-muted">{dep.triggered_by}</td>
+                    <td className="px-6 py-3 text-sm text-lazyops-muted">
                       {dep.completed_at ? new Date(dep.completed_at).toLocaleString() : '—'}
                     </td>
                   </tr>

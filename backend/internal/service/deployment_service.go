@@ -852,7 +852,22 @@ func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, rev
 		Services:             revision.Services,
 		PlacementAssignments: revision.PlacementAssignments,
 	})
+	if !requiresTrustedPublicURLVerification(revision.RuntimeMode, resolved.PublicURLs) {
+		return resolved
+	}
 	return s.applyTrustedPublicURLStatus(resolved, cache)
+}
+
+func requiresTrustedPublicURLVerification(runtimeMode string, urls []string) bool {
+	if strings.TrimSpace(runtimeMode) != bootstrapModeStandalone {
+		return false
+	}
+	for _, rawURL := range urls {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawURL)), "https://") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *DeploymentService) applyTrustedPublicURLStatus(publicDomain PublicDomainResult, cache map[string]PublicURLTLSObservation) PublicDomainResult {
