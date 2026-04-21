@@ -264,6 +264,14 @@ func (s *RolloutExecutionService) StartDeployment(ctx context.Context, projectID
 
 	plan, err := s.planner.PlanCandidate(ctx, projectID, revision.ID)
 	if err != nil {
+		logger.Error("rollout_planning_failed",
+			"project_id", projectID,
+			"deployment_id", deploymentID,
+			"revision_id", revision.ID,
+			"agent_id", agentID,
+			"target", targetLabel,
+			"error", err.Error(),
+		)
 		return nil, err
 	}
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lazyops-server/internal/models"
+	"lazyops-server/pkg/logger"
 	"lazyops-server/pkg/utils"
 )
 
@@ -416,6 +417,12 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		default:
 			rolloutStatus = "failed_to_start"
 			rolloutReason = rolloutErr.Error()
+			logger.Error("one_click_rollout_start_failed",
+				"project_id", project.ID,
+				"deployment_id", deployResult.Deployment.ID,
+				"revision_id", deployResult.Revision.ID,
+				"error", rolloutReason,
+			)
 			timeline[len(timeline)-1].State = "failed"
 			timeline[len(timeline)-1].Timestamp = time.Now().UTC()
 			timeline[len(timeline)-1].Message = rolloutReason
