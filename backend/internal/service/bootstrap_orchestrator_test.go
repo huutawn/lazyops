@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"lazyops-server/internal/config"
 	"lazyops-server/internal/models"
 )
 
@@ -242,8 +243,29 @@ func TestBootstrapOrchestratorGetStatusIncludesRuntimeInventory(t *testing.T) {
 		CreatedAt:  time.Date(2026, 4, 14, 8, 21, 0, 0, time.UTC),
 		UpdatedAt:  time.Date(2026, 4, 14, 8, 35, 0, 0, time.UTC),
 	})
+	projectDomainStore := newFakeProjectDomainStore(&models.ProjectDomain{
+		ID:        "dom_123",
+		ProjectID: "prj_123",
+		Hostname:  "acme-api-ab12.lazyops.cloud",
+		Label:     "acme-api-ab12",
+		Kind:      ProjectDomainKindManaged,
+		Status:    ProjectDomainStatusActive,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	projectDomainSvc := NewProjectDomainService(
+		projectStore,
+		projectDomainStore,
+		newFakeProjectServiceStore(),
+		bindingStore,
+		instanceStore,
+		newFakeClusterStore(),
+		config.PublicDomainConfig{BaseDomain: "lazyops.cloud", Provider: "cloudflare", CloudflareProxied: true},
+	).WithDNSClient(&NoopProjectDomainDNSClient{})
+	routingSvc := NewRoutingService(newFakeRoutingPolicyRepo(), newFakeServiceRepo(nil)).WithProjectDomains(projectDomainSvc)
+	publicDomainResolver := NewPublicDomainResolver(instanceStore, newFakeClusterStore(), projectDomainSvc, routingSvc)
 	deploymentSvc := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
-		WithPublicDomainSupport(bindingStore, instanceStore)
+		WithPublicDomainSupport(bindingStore, publicDomainResolver)
 	internalServices := newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{
 		"prj_123": {{
 			ID:            "isvc_123",
@@ -298,7 +320,7 @@ func TestBootstrapOrchestratorGetStatusIncludesRuntimeInventory(t *testing.T) {
 	if status.RuntimeInventory.InternalServices[0].ContainerName != "lazyops-int-prj-123-bind-123-postgres" {
 		t.Fatalf("unexpected internal service container %q", status.RuntimeInventory.InternalServices[0].ContainerName)
 	}
-	if len(status.PublicURLs) == 0 || status.PublicURLs[0] != "https://api.acme-api.47-129-226-224.sslip.io" {
+	if len(status.PublicURLs) == 0 || status.PublicURLs[0] != "https://acme-api-ab12.lazyops.cloud" {
 		t.Fatalf("unexpected public urls %#v", status.PublicURLs)
 	}
 }

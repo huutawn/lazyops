@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
+	"lazyops-server/internal/config"
 	"lazyops-server/internal/models"
 )
 
@@ -700,15 +700,34 @@ func TestDeploymentServiceListPublishesOnlyTLSReadyPublicURLs(t *testing.T) {
 		Name:     "api-host",
 		PublicIP: ptrString("203.0.113.10"),
 	})
+	projectDomainStore := newFakeProjectDomainStore(&models.ProjectDomain{
+		ID:        "dom_123",
+		ProjectID: "prj_123",
+		Hostname:  "acme-api-ab12.lazyops.cloud",
+		Label:     "acme-api-ab12",
+		Kind:      ProjectDomainKindManaged,
+		Status:    ProjectDomainStatusActive,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	projectDomainSvc := NewProjectDomainService(
+		projectStore,
+		projectDomainStore,
+		newFakeProjectServiceStore(),
+		bindingStore,
+		instanceStore,
+		newFakeClusterStore(),
+		config.PublicDomainConfig{BaseDomain: "lazyops.cloud", Provider: "cloudflare", CloudflareProxied: true},
+	).WithDNSClient(&NoopProjectDomainDNSClient{})
+	routingSvc := NewRoutingService(newFakeRoutingPolicyRepo(), newFakeServiceRepo(nil)).WithProjectDomains(projectDomainSvc)
+	publicDomainResolver := NewPublicDomainResolver(instanceStore, newFakeClusterStore(), projectDomainSvc, routingSvc)
 
-	readyURL := "https://api.acme-api.203-0-113-10.sslip.io"
-	fallbackURL := "https://api.acme-api.203.0.113.10.nip.io"
+	readyURL := "https://acme-api-ab12.lazyops.cloud"
 	service := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
-		WithPublicDomainSupport(bindingStore, instanceStore).
+		WithPublicDomainSupport(bindingStore, publicDomainResolver).
 		WithPublicURLVerifier(&fakePublicURLVerifier{
 			observations: map[string]PublicURLTLSObservation{
-				readyURL:    {URL: readyURL, Host: "api.acme-api.203-0-113-10.sslip.io", Status: publicURLStatusReady},
-				fallbackURL: {URL: fallbackURL, Host: "api.acme-api.203.0.113.10.nip.io", Status: publicURLStatusPending, Reason: "Đang chờ cấp chứng chỉ TLS công khai cho magic domain."},
+				readyURL: {URL: readyURL, Host: "acme-api-ab12.lazyops.cloud", Status: publicURLStatusReady},
 			},
 		})
 
@@ -754,7 +773,7 @@ func TestResolveStatusPublicURLsFromOverviewsPrefersReasonWhenTLSPending(t *test
 	}
 }
 
-func TestDeploymentServiceListSkipsTLSVerificationForDistributedK3sPublicURLs(t *testing.T) {
+func TestDeploymentServiceListVerifiesManagedHTTPSPublicURLsForDistributedK3s(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",
 		UserID:        "usr_123",
@@ -815,10 +834,36 @@ func TestDeploymentServiceListSkipsTLSVerificationForDistributedK3sPublicURLs(t 
 		Name:     "edge-k3s",
 		PublicIP: ptrString("203.0.113.10"),
 	})
-	verifier := &fakePublicURLVerifier{}
+	projectDomainStore := newFakeProjectDomainStore(&models.ProjectDomain{
+		ID:        "dom_123",
+		ProjectID: "prj_123",
+		Hostname:  "acme-api-ab12.lazyops.cloud",
+		Label:     "acme-api-ab12",
+		Kind:      ProjectDomainKindManaged,
+		Status:    ProjectDomainStatusActive,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	projectDomainSvc := NewProjectDomainService(
+		projectStore,
+		projectDomainStore,
+		newFakeProjectServiceStore(),
+		bindingStore,
+		newFakeInstanceStore(),
+		clusterStore,
+		config.PublicDomainConfig{BaseDomain: "lazyops.cloud", Provider: "cloudflare", CloudflareProxied: true},
+	).WithDNSClient(&NoopProjectDomainDNSClient{})
+	routingSvc := NewRoutingService(newFakeRoutingPolicyRepo(), newFakeServiceRepo(nil)).WithProjectDomains(projectDomainSvc)
+	publicDomainResolver := NewPublicDomainResolver(newFakeInstanceStore(), clusterStore, projectDomainSvc, routingSvc)
+	readyURL := "https://acme-api-ab12.lazyops.cloud"
+	verifier := &fakePublicURLVerifier{
+		observations: map[string]PublicURLTLSObservation{
+			readyURL: {URL: readyURL, Host: "acme-api-ab12.lazyops.cloud", Status: publicURLStatusReady},
+		},
+	}
 
 	service := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
-		WithPublicDomainSupport(bindingStore, newFakeInstanceStore(), clusterStore).
+		WithPublicDomainSupport(bindingStore, publicDomainResolver).
 		WithPublicURLVerifier(verifier)
 
 	items, err := service.List("usr_123", RoleOperator, "prj_123")
@@ -828,20 +873,14 @@ func TestDeploymentServiceListSkipsTLSVerificationForDistributedK3sPublicURLs(t 
 	if len(items) != 1 {
 		t.Fatalf("expected one deployment overview, got %d", len(items))
 	}
-	if verifier.calls != 0 {
-		t.Fatalf("expected distributed-k3s public urls to skip TLS verifier, got %d calls", verifier.calls)
+	if verifier.calls != 1 {
+		t.Fatalf("expected distributed-k3s managed https urls to use TLS verifier, got %d calls", verifier.calls)
 	}
-	if got := items[0].PublicURLs; len(got) != 2 {
-		t.Fatalf("expected both k3s public urls to remain visible, got %#v", got)
-	} else {
-		for _, url := range got {
-			if !strings.HasPrefix(url, "http://") {
-				t.Fatalf("expected distributed-k3s public url to use http scheme, got %#v", got)
-			}
-		}
+	if got := items[0].PublicURLs; len(got) != 1 || got[0] != readyURL {
+		t.Fatalf("expected verified managed public url to remain visible, got %#v", got)
 	}
-	if items[0].PublicURLStatus != "" || items[0].PublicURLReason != "" {
-		t.Fatalf("expected no TLS status for distributed-k3s http urls, got status=%q reason=%q", items[0].PublicURLStatus, items[0].PublicURLReason)
+	if items[0].PublicURLStatus != publicURLStatusReady || items[0].PublicURLReason != "" {
+		t.Fatalf("expected ready TLS status for managed public url, got status=%q reason=%q", items[0].PublicURLStatus, items[0].PublicURLReason)
 	}
 }
 

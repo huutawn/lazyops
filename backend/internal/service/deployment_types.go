@@ -33,6 +33,7 @@ type DesiredStateRevisionRecord struct {
 	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy
 	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy
 	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy
+	RoutingPolicy        LazyopsYAMLRoutingPolicy
 	ManifestBundle       K3sManifestBundleRecord
 	PublicDomains        []PublicDomainRecord
 	PlacementAssignments []PlacementAssignmentRecord

@@ -81,6 +81,7 @@ func TestGeneratorRendersNamespaceServiceIngressSecretAndPVC(t *testing.T) {
 		"startupProbe:",
 		"failureThreshold: 18",
 		"kind: Ingress",
+		"host: api.lazyops-prj-123.203-0-113-10.sslip.io",
 		"host: api.lazyops-prj-123.203.0.113.10.nip.io",
 		"kind: PersistentVolumeClaim",
 		"storage: 20Gi",
@@ -156,5 +157,63 @@ func TestGeneratorOmitsProbesForGenericServiceWithoutHealthcheck(t *testing.T) {
 	}
 	if strings.Contains(bundle.CombinedYAML, "startupProbe:") {
 		t.Fatalf("expected generic service without explicit healthcheck to omit probes, got:\n%s", bundle.CombinedYAML)
+	}
+}
+
+func TestGeneratorRendersSharedDomainIngressFromRoutingPolicy(t *testing.T) {
+	gen := NewGenerator()
+
+	bundle, err := gen.Generate(Input{
+		Namespace: "bbb",
+		Services: []ServiceSpec{
+			{
+				Name:        "fe",
+				Kind:        "web",
+				Public:      true,
+				ImageRef:    "ghcr.io/lazyops/fe:rev_123",
+				TargetPort:  3000,
+				ServicePort: 3000,
+			},
+			{
+				Name:        "be",
+				Kind:        "api",
+				Public:      true,
+				ImageRef:    "ghcr.io/lazyops/be:rev_123",
+				TargetPort:  8080,
+				ServicePort: 8080,
+			},
+		},
+		PublicDomains: []PublicDomain{
+			{ServiceName: "fe", PrimaryHost: "bbb-ab12.lazyops.cloud", FallbackHost: "bbb-ab12.lazyops.cloud"},
+			{ServiceName: "be", PrimaryHost: "bbb-ab12.lazyops.cloud", FallbackHost: "bbb-ab12.lazyops.cloud"},
+		},
+		RoutingPolicy: RoutingPolicy{
+			SharedDomain: "bbb-ab12.lazyops.cloud",
+			Routes: []RoutingRoute{
+				{Path: "/api", Service: "be"},
+				{Path: "/", Service: "fe"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate manifest bundle: %v", err)
+	}
+
+	if strings.Count(bundle.CombinedYAML, "kind: Ingress") != 1 {
+		t.Fatalf("expected exactly one shared ingress, got:\n%s", bundle.CombinedYAML)
+	}
+	for _, expected := range []string{
+		"name: public-shared",
+		"host: bbb-ab12.lazyops.cloud",
+		"path: /api",
+		"name: be",
+		"number: 8080",
+		"path: /",
+		"name: fe",
+		"number: 3000",
+	} {
+		if !strings.Contains(bundle.CombinedYAML, expected) {
+			t.Fatalf("expected shared ingress bundle to contain %q\nbundle:\n%s", expected, bundle.CombinedYAML)
+		}
 	}
 }

@@ -50,6 +50,7 @@ func Migrate(db *gorm.DB) error {
 		&models.PersonalAccessToken{},
 		&models.GitHubInstallation{},
 		&models.Project{},
+		&models.ProjectDomain{},
 		&models.ProjectRepoLink{},
 		&models.ProjectInternalService{},
 		&models.ProjectEnvBundle{},

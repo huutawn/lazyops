@@ -61,6 +61,7 @@ type desiredStateRevisionCompiledRecord struct {
 	CompatibilityPolicy  LazyopsYAMLCompatibilityPolicy   `json:"compatibility_policy"`
 	MagicDomainPolicy    LazyopsYAMLMagicDomainPolicy     `json:"magic_domain_policy"`
 	ScaleToZeroPolicy    LazyopsYAMLScaleToZeroPolicy     `json:"scale_to_zero_policy"`
+	RoutingPolicy        LazyopsYAMLRoutingPolicy         `json:"routing_policy,omitempty"`
 	ManifestBundle       K3sManifestBundleRecord          `json:"manifest_bundle,omitempty"`
 	PublicDomains        []PublicDomainRecord             `json:"public_domains,omitempty"`
 	PlacementAssignments []PlacementAssignmentRecord      `json:"placement_assignments,omitempty"`
@@ -100,16 +101,12 @@ func (s *DeploymentService) WithIncidentStore(incidents RuntimeIncidentStore) *D
 	return s
 }
 
-func (s *DeploymentService) WithPublicDomainSupport(bindings DeploymentBindingStore, instances InstanceStore, clusters ...ClusterStore) *DeploymentService {
+func (s *DeploymentService) WithPublicDomainSupport(bindings DeploymentBindingStore, resolver *PublicDomainResolver) *DeploymentService {
 	if s == nil {
 		return s
 	}
 	s.bindings = bindings
-	var clusterStore ClusterStore
-	if len(clusters) > 0 {
-		clusterStore = clusters[0]
-	}
-	s.publicDomains = NewPublicDomainResolver(instances, clusterStore)
+	s.publicDomains = resolver
 	return s
 }
 
@@ -465,6 +462,7 @@ func buildDesiredStateRevisionCompiledRecord(revisionID string, blueprint Bluepr
 		CompatibilityPolicy:  blueprint.Compiled.CompatibilityPolicy,
 		MagicDomainPolicy:    blueprint.Compiled.MagicDomainPolicy,
 		ScaleToZeroPolicy:    blueprint.Compiled.ScaleToZeroPolicy,
+		RoutingPolicy:        blueprint.Compiled.RoutingPolicy,
 		PlacementAssignments: buildPlacementAssignments(blueprint.Compiled.Services, blueprint.Compiled.Binding),
 	}
 }
@@ -502,6 +500,7 @@ func ToDesiredStateRevisionRecord(item models.DesiredStateRevision) (DesiredStat
 		CompatibilityPolicy:  compiled.CompatibilityPolicy,
 		MagicDomainPolicy:    compiled.MagicDomainPolicy,
 		ScaleToZeroPolicy:    compiled.ScaleToZeroPolicy,
+		RoutingPolicy:        compiled.RoutingPolicy,
 		ManifestBundle:       manifestBundle,
 		PublicDomains:        compiled.PublicDomains,
 		PlacementAssignments: compiled.PlacementAssignments,
@@ -845,6 +844,7 @@ func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, rev
 	}
 
 	resolved := s.publicDomains.Resolve(PublicDomainResolveInput{
+		ProjectID:            projectID,
 		ProjectSlug:          revision.ProjectSlug,
 		RuntimeMode:          revision.RuntimeMode,
 		TargetKind:           binding.TargetKind,
@@ -852,16 +852,13 @@ func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, rev
 		Services:             revision.Services,
 		PlacementAssignments: revision.PlacementAssignments,
 	})
-	if !requiresTrustedPublicURLVerification(revision.RuntimeMode, resolved.PublicURLs) {
+	if !requiresTrustedPublicURLVerification(resolved.PublicURLs) {
 		return resolved
 	}
 	return s.applyTrustedPublicURLStatus(resolved, cache)
 }
 
-func requiresTrustedPublicURLVerification(runtimeMode string, urls []string) bool {
-	if strings.TrimSpace(runtimeMode) != bootstrapModeStandalone {
-		return false
-	}
+func requiresTrustedPublicURLVerification(urls []string) bool {
 	for _, rawURL := range urls {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawURL)), "https://") {
 			return true

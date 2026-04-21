@@ -44,6 +44,7 @@ type RolloutPlanner struct {
 	operatorHub   OperatorEventBroadcaster
 	projectEnv    *ProjectEnvService
 	publicDomains *PublicDomainResolver
+	routing       *RoutingService
 	manifestGen   *k8sgen.Generator
 }
 
@@ -87,9 +88,18 @@ func (p *RolloutPlanner) WithPublicDomainResolver(resolver *PublicDomainResolver
 	return p
 }
 
+func (p *RolloutPlanner) WithRoutingService(service *RoutingService) *RolloutPlanner {
+	if p == nil {
+		return p
+	}
+	p.routing = service
+	return p
+}
+
 func (p *RolloutPlanner) materializeRuntimeSnapshot(ctx context.Context, projectID string, revision *models.DesiredStateRevision, binding *models.DeploymentBinding, compiled desiredStateRevisionCompiledRecord) (desiredStateRevisionCompiledRecord, map[string]any, error) {
 	if p.publicDomains != nil {
 		publicDomain := p.publicDomains.Resolve(PublicDomainResolveInput{
+			ProjectID:            projectID,
 			ProjectSlug:          compiled.ProjectSlug,
 			RuntimeMode:          binding.RuntimeMode,
 			TargetKind:           binding.TargetKind,
@@ -101,6 +111,12 @@ func (p *RolloutPlanner) materializeRuntimeSnapshot(ctx context.Context, project
 			compiled.PublicDomains = publicDomain.Domains
 		}
 	}
+	if p.routing != nil {
+		effectiveRouting, err := p.routing.ResolveEffectiveRouting(projectID, compiled.Services, firstPublicDomainHost(compiled.PublicDomains))
+		if err == nil {
+			compiled.RoutingPolicy = routingPolicyRecordToLazyops(effectiveRouting)
+		}
+	}
 
 	if shouldRenderK3sManifest(binding.RuntimeMode, binding.TargetKind) && p.manifestGen != nil {
 		bundle, err := p.manifestGen.Generate(k8sgen.Input{
@@ -109,6 +125,7 @@ func (p *RolloutPlanner) materializeRuntimeSnapshot(ctx context.Context, project
 			RevisionID:    revision.ID,
 			Services:      toManifestServiceSpecs(compiled.ServiceSpecs),
 			PublicDomains: toManifestDomains(compiled.PublicDomains),
+			RoutingPolicy: toManifestRoutingPolicy(compiled.RoutingPolicy),
 		})
 		if err != nil {
 			return desiredStateRevisionCompiledRecord{}, nil, fmt.Errorf("generate k3s manifest bundle: %w", err)
@@ -159,6 +176,7 @@ func (p *RolloutPlanner) buildPreparePayload(ctx context.Context, projectID stri
 		"compatibility_policy":  compiled.CompatibilityPolicy,
 		"magic_domain_policy":   compiled.MagicDomainPolicy,
 		"scale_to_zero_policy":  compiled.ScaleToZeroPolicy,
+		"routing_policy":        compiled.RoutingPolicy,
 		"placement_assignments": compiled.PlacementAssignments,
 	}
 	if len(compiled.PublicDomains) > 0 {
@@ -301,22 +319,22 @@ func toManifestServiceSpecs(items []K3sServiceSpecRecord) []k8sgen.ServiceSpec {
 			})
 		}
 		out = append(out, k8sgen.ServiceSpec{
-			Name:           item.Name,
-			Kind:           item.Kind,
-			Namespace:      item.Namespace,
-			Public:         item.Public,
-			PlacementMode:  item.PlacementMode,
+			Name:            item.Name,
+			Kind:            item.Kind,
+			Namespace:       item.Namespace,
+			Public:          item.Public,
+			PlacementMode:   item.PlacementMode,
 			PlacementNodeID: item.PlacementNodeID,
-			ImageRef:       item.ImageRef,
-			ImageDigest:    item.ImageDigest,
-			TargetPort:     item.TargetPort,
-			ServicePort:    item.ServicePort,
-			Replicas:       item.Replicas,
-			Healthcheck:    item.Healthcheck,
-			DetectedPorts:  detected,
-			EnvBundle:      item.EnvBundle,
-			PVCSpec:        item.PVCSpec,
-			DeployStrategy: item.DeployStrategy,
+			ImageRef:        item.ImageRef,
+			ImageDigest:     item.ImageDigest,
+			TargetPort:      item.TargetPort,
+			ServicePort:     item.ServicePort,
+			Replicas:        item.Replicas,
+			Healthcheck:     item.Healthcheck,
+			DetectedPorts:   detected,
+			EnvBundle:       item.EnvBundle,
+			PVCSpec:         item.PVCSpec,
+			DeployStrategy:  item.DeployStrategy,
 		})
 	}
 	return out
@@ -337,6 +355,52 @@ func toManifestDomains(items []PublicDomainRecord) []k8sgen.PublicDomain {
 		})
 	}
 	return out
+}
+
+func toManifestRoutingPolicy(policy LazyopsYAMLRoutingPolicy) k8sgen.RoutingPolicy {
+	out := k8sgen.RoutingPolicy{
+		SharedDomain: strings.TrimSpace(policy.SharedDomain),
+		Routes:       make([]k8sgen.RoutingRoute, 0, len(policy.Routes)),
+	}
+	for _, route := range policy.Routes {
+		out.Routes = append(out.Routes, k8sgen.RoutingRoute{
+			Path:        route.Path,
+			Service:     route.Service,
+			Port:        route.Port,
+			WebSocket:   route.WebSocket,
+			StripPrefix: route.StripPrefix,
+		})
+	}
+	return out
+}
+
+func routingPolicyRecordToLazyops(policy RoutingPolicyRecord) LazyopsYAMLRoutingPolicy {
+	out := LazyopsYAMLRoutingPolicy{
+		SharedDomain: strings.TrimSpace(policy.SharedDomain),
+		Routes:       make([]LazyopsYAMLRoute, 0, len(policy.Routes)),
+	}
+	for _, route := range policy.Routes {
+		out.Routes = append(out.Routes, LazyopsYAMLRoute{
+			Path:        route.Path,
+			Service:     route.Service,
+			Port:        route.Port,
+			WebSocket:   route.WebSocket,
+			StripPrefix: route.StripPrefix,
+		})
+	}
+	return out
+}
+
+func firstPublicDomainHost(items []PublicDomainRecord) string {
+	for _, item := range items {
+		if strings.TrimSpace(item.PrimaryHost) != "" {
+			return strings.TrimSpace(item.PrimaryHost)
+		}
+		if strings.TrimSpace(item.FallbackHost) != "" {
+			return strings.TrimSpace(item.FallbackHost)
+		}
+	}
+	return ""
 }
 
 func toManifestDocumentRecords(items []k8sgen.ManifestDocument) []ManifestDocumentRecord {

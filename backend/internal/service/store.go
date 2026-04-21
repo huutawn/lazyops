@@ -43,6 +43,13 @@ type ProjectStore interface {
 	GetByID(projectID string) (*models.Project, error)
 }
 
+type ProjectDomainStore interface {
+	Create(item *models.ProjectDomain) error
+	Save(item *models.ProjectDomain) error
+	GetByProjectIDAndKind(projectID, kind string) (*models.ProjectDomain, error)
+	GetByHostname(hostname string) (*models.ProjectDomain, error)
+}
+
 type ProjectRepoLinkStore interface {
 	Upsert(link *models.ProjectRepoLink) error
 	GetByProjectID(projectID string) (*models.ProjectRepoLink, error)

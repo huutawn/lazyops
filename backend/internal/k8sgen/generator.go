@@ -43,6 +43,19 @@ type PublicDomain struct {
 	FallbackURL  string
 }
 
+type RoutingRoute struct {
+	Path        string
+	Service     string
+	Port        int
+	WebSocket   bool
+	StripPrefix bool
+}
+
+type RoutingPolicy struct {
+	SharedDomain string
+	Routes       []RoutingRoute
+}
+
 type ManifestDocument struct {
 	Name    string
 	Kind    string
@@ -64,6 +77,7 @@ type Input struct {
 	RevisionID    string
 	Services      []ServiceSpec
 	PublicDomains []PublicDomain
+	RoutingPolicy RoutingPolicy
 }
 
 type Generator struct {
@@ -95,6 +109,7 @@ func (g *Generator) Generate(input Input) (ManifestBundle, error) {
 	}
 
 	domainIndex := make(map[string]PublicDomain, len(input.PublicDomains))
+	serviceIndex := make(map[string]normalizedServiceSpec, len(input.Services))
 	for _, item := range input.PublicDomains {
 		domainIndex[strings.TrimSpace(item.ServiceName)] = item
 	}
@@ -104,6 +119,7 @@ func (g *Generator) Generate(input Input) (ManifestBundle, error) {
 		if err != nil {
 			return ManifestBundle{}, err
 		}
+		serviceIndex[normalized.Name] = normalized
 		if len(normalized.EnvBundle) > 0 {
 			documents = append(documents, ManifestDocument{
 				Name:    normalized.Name + "-env",
@@ -137,7 +153,7 @@ func (g *Generator) Generate(input Input) (ManifestBundle, error) {
 			},
 		)
 
-		if normalized.Public {
+		if normalized.Public && !hasSharedRoutingPolicy(input.RoutingPolicy) {
 			if domain, ok := domainIndex[normalized.Name]; ok {
 				documents = append(documents, ManifestDocument{
 					Name: normalized.Name,
@@ -145,10 +161,20 @@ func (g *Generator) Generate(input Input) (ManifestBundle, error) {
 					Path: fmt.Sprintf("%s-ingress.yaml", normalized.Name),
 					Content: renderTemplate(ingressTemplate, map[string]any{
 						"Service": normalized,
-						"Domain":  domain,
+						"Hosts":   ingressHosts(domain),
 					}),
 				})
 			}
+		}
+	}
+
+	if hasSharedRoutingPolicy(input.RoutingPolicy) {
+		sharedIngress, err := renderSharedIngress(namespace, input.RoutingPolicy, serviceIndex)
+		if err != nil {
+			return ManifestBundle{}, err
+		}
+		if strings.TrimSpace(sharedIngress.Content) != "" {
+			documents = append(documents, sharedIngress)
 		}
 	}
 
@@ -288,6 +314,78 @@ func renderTemplate(source string, data any) string {
 	var buf bytes.Buffer
 	_ = tpl.Execute(&buf, data)
 	return strings.TrimSpace(buf.String()) + "\n"
+}
+
+func ingressHosts(domain PublicDomain) []string {
+	seen := make(map[string]struct{}, 2)
+	hosts := make([]string, 0, 2)
+	for _, raw := range []string{domain.PrimaryHost, domain.FallbackHost} {
+		host := strings.TrimSpace(raw)
+		if host == "" {
+			continue
+		}
+		if _, exists := seen[host]; exists {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+func hasSharedRoutingPolicy(policy RoutingPolicy) bool {
+	return strings.TrimSpace(policy.SharedDomain) != "" && len(policy.Routes) > 0
+}
+
+func renderSharedIngress(namespace string, policy RoutingPolicy, serviceIndex map[string]normalizedServiceSpec) (ManifestDocument, error) {
+	type sharedIngressRoute struct {
+		Path        string
+		ServiceName string
+		ServicePort int
+	}
+
+	routes := make([]sharedIngressRoute, 0, len(policy.Routes))
+	for _, route := range policy.Routes {
+		serviceName := strings.TrimSpace(route.Service)
+		if serviceName == "" {
+			continue
+		}
+		spec, ok := serviceIndex[serviceName]
+		if !ok {
+			return ManifestDocument{}, fmt.Errorf("routing policy references unknown service %q", serviceName)
+		}
+		path := normalizeIngressPath(route.Path)
+		routes = append(routes, sharedIngressRoute{
+			Path:        path,
+			ServiceName: spec.Name,
+			ServicePort: firstPositive(route.Port, spec.ServicePort, spec.TargetPort),
+		})
+	}
+	if len(routes) == 0 {
+		return ManifestDocument{}, nil
+	}
+
+	return ManifestDocument{
+		Name: "public-shared",
+		Kind: "Ingress",
+		Path: "public-shared-ingress.yaml",
+		Content: renderTemplate(sharedIngressTemplate, map[string]any{
+			"Namespace": namespace,
+			"Host":      strings.TrimSpace(policy.SharedDomain),
+			"Routes":    routes,
+		}),
+	}, nil
+}
+
+func normalizeIngressPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "/" + trimmed
+	}
+	return trimmed
 }
 
 func firstPositive(values ...int) int {
@@ -561,15 +659,43 @@ metadata:
     kubernetes.io/ingress.class: traefik
 spec:
   ingressClassName: traefik
+{{- $svc := .Service }}
   rules:
-    - host: {{ .Domain.FallbackHost }}
+{{- range .Hosts }}
+    - host: {{ . }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ .Service.Name }}
+                name: {{ $svc.Name }}
                 port:
-                  number: {{ .Service.ServicePort }}
+                  number: {{ $svc.ServicePort }}
+{{- end }}
+`
+
+const sharedIngressTemplate = `
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: public-shared
+  namespace: {{ .Namespace }}
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: {{ .Host }}
+      http:
+        paths:
+{{- range .Routes }}
+          - path: {{ .Path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .ServiceName }}
+                port:
+                  number: {{ .ServicePort }}
+{{- end }}
 `

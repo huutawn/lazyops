@@ -22,6 +22,7 @@ type Application struct {
 	OAuthIdentityRepo       *repository.OAuthIdentityRepository
 	GitHubInstallRepo       *repository.GitHubInstallationRepository
 	ProjectRepo             *repository.ProjectRepository
+	ProjectDomainRepo       *repository.ProjectDomainRepository
 	ProjectRepoLinkRepo     *repository.ProjectRepoLinkRepository
 	ProjectInternalSvcRepo  service.ProjectInternalServiceStore
 	ProjectEnvRepo          *repository.ProjectEnvBundleRepository
@@ -52,6 +53,7 @@ type Application struct {
 	GitHubWebhookSvc        *service.GitHubWebhookService
 	BuildCallbackSvc        *service.BuildCallbackService
 	ProjectService          *service.ProjectService
+	ProjectDomainSvc        *service.ProjectDomainService
 	ProjectInternalSvc      *service.ProjectInternalServiceService
 	ProjectEnvSvc           *service.ProjectEnvService
 	ProjectRepoLinkSvc      *service.ProjectRepoLinkService
@@ -103,6 +105,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	oauthIdentityRepo := repository.NewOAuthIdentityRepository(db)
 	githubInstallRepo := repository.NewGitHubInstallationRepository(db)
 	projectRepo := repository.NewProjectRepository(db)
+	projectDomainRepo := repository.NewProjectDomainRepository(db)
 	projectRepoLinkRepo := repository.NewProjectRepoLinkRepository(db)
 	legacyProjectInternalSvcRepo := repository.NewProjectInternalServiceRepository(db)
 	projectInternalSvcRepo := repository.NewManagedInternalServiceRepository(db, legacyProjectInternalSvcRepo)
@@ -129,6 +132,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	agentRepo := repository.NewAgentRepository(db)
 	incidentRepo := repository.NewRuntimeIncidentRepository(db)
 	previewRepo := repository.NewPreviewEnvironmentRepository(db)
+	routingPolicyRepo := repository.NewRoutingPolicyRepository(db)
 	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT).WithAgentTokens(agentTokenRepo)
 	googleProvider := oauth.NewGoogleProvider(cfg.GoogleOAuth, nil)
 	googleOAuthService := service.NewGoogleOAuthService(
@@ -162,6 +166,17 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
 	buildJobSvc := service.NewBuildJobService(projectRepoLinkRepo, buildJobRepo).WithServiceStore(serviceRepo)
 	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)
+	projectDomainSvc := service.NewProjectDomainService(
+		projectRepo,
+		projectDomainRepo,
+		serviceRepo,
+		deploymentBindingRepo,
+		instanceRepo,
+		clusterRepo,
+		cfg.PublicDomain,
+	)
+	routingSvc := service.NewRoutingService(routingPolicyRepo, serviceRepo).WithProjectDomains(projectDomainSvc)
+	publicDomainResolver := service.NewPublicDomainResolver(instanceRepo, clusterRepo, projectDomainSvc, routingSvc)
 	bootstrapOrchestrator := service.NewBootstrapOrchestrator(
 		projectRepo,
 		projectService,
@@ -182,7 +197,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		WithProjectEnvService(projectEnvSvc)
 	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo).
 		WithIncidentStore(incidentRepo).
-		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo, clusterRepo).
+		WithPublicDomainSupport(deploymentBindingRepo, publicDomainResolver).
 		WithPublicURLVerifier(service.NewSystemPublicURLVerifier()).
 		WithServiceInventoryCompiler(serviceInventoryCompiler)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
@@ -236,7 +251,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		operatorStreamHub,
 	)
 	rolloutPlanner.WithProjectEnvService(projectEnvSvc)
-	rolloutPlanner.WithPublicDomainResolver(service.NewPublicDomainResolver(instanceRepo, clusterRepo))
+	rolloutPlanner.WithPublicDomainResolver(publicDomainResolver)
+	rolloutPlanner.WithRoutingService(routingSvc)
 	rolloutExecutionSvc := service.NewRolloutExecutionService(
 		deploymentSvc,
 		rolloutPlanner,
@@ -283,9 +299,6 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		operatorStreamHub,
 	)
 
-	routingPolicyRepo := repository.NewRoutingPolicyRepository(db)
-	routingSvc := service.NewRoutingService(routingPolicyRepo, serviceRepo)
-
 	return &Application{
 		Config:                  cfg,
 		DB:                      db,
@@ -295,6 +308,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		OAuthIdentityRepo:       oauthIdentityRepo,
 		GitHubInstallRepo:       githubInstallRepo,
 		ProjectRepo:             projectRepo,
+		ProjectDomainRepo:       projectDomainRepo,
 		ProjectRepoLinkRepo:     projectRepoLinkRepo,
 		ProjectInternalSvcRepo:  projectInternalSvcRepo,
 		ProjectEnvRepo:          projectEnvRepo,
@@ -325,6 +339,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		GitHubWebhookSvc:        githubWebhookSvc,
 		BuildCallbackSvc:        buildCallbackSvc,
 		ProjectService:          projectService,
+		ProjectDomainSvc:        projectDomainSvc,
 		ProjectInternalSvc:      projectInternalSvc,
 		ProjectEnvSvc:           projectEnvSvc,
 		ProjectRepoLinkSvc:      projectRepoLinkSvc,

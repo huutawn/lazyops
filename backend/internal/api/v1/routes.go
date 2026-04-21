@@ -19,6 +19,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 		WithClusterNodeService(app.ClusterNodeService).
 		WithRuntimeService(app.ProjectRuntimeSvc).
 		WithServiceActionService(app.ProjectServiceActionSvc)
+	projectDomainController := controller.NewProjectDomainController(app.ProjectDomainSvc)
 	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc, app.ProjectService)
 	projectEnvController := controller.NewProjectEnvController(app.ProjectEnvSvc)
 	routingController := controller.NewRoutingController(app.RoutingSvc)
@@ -102,6 +103,15 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/projects/:id/runtime", projectController.GetRuntimeSummary)
 			userProtected.GET("/projects/:id/placement-nodes", projectController.ListPlacementNodes)
 			userProtected.GET("/projects/:id/repo-link", projectController.GetRepoLink)
+			userProtected.GET("/projects/:id/domain", projectDomainController.Get)
+			userProtected.POST("/projects/:id/domain",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectDomainController.Allocate,
+			)
+			userProtected.PATCH("/projects/:id/domain",
+				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
+				projectDomainController.Rename,
+			)
 			userProtected.PUT("/projects/:id/services",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator, service.RoleViewer),
 				projectController.ConfigureServices,

@@ -543,8 +543,8 @@ export function ProjectServiceInventory({
             </label>
             {repoForm.public ? (
               <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
-                Subdomain công khai hiện được tạo theo <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">service name</code>, ví dụ <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">{repoForm.name.trim() || 'api'}.project-ip.sslip.io</code>.
-                <div className="mt-2 text-[#94a3b8]">`service.path` chỉ là thư mục build trong repo, không dùng làm host public.</div>
+                Service public sẽ được đưa vào shared domain của project dưới <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">lazyops.cloud</code>, ví dụ <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">myapp-ab12.lazyops.cloud/api</code>.
+                <div className="mt-2 text-[#94a3b8]">`service.name` vẫn quan trọng để gợi ý route mặc định như <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">/</code>, <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">/api</code> hoặc <code className="rounded bg-[#020617] px-1.5 py-0.5 text-[#e2e8f0]">/ws</code>. `service.path` chỉ là thư mục build trong repo.</div>
               </div>
             ) : null}
 

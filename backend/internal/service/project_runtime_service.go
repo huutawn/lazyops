@@ -436,7 +436,48 @@ func filterServicePublicURLs(serviceName string, isPublic bool, publicURLs []str
 			filtered = append(filtered, raw)
 		}
 	}
+	if len(filtered) > 0 {
+		return uniqueNonEmptyStrings(filtered)
+	}
+	for _, raw := range publicURLs {
+		parsed, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		path := strings.TrimSpace(parsed.Path)
+		switch {
+		case (path == "" || path == "/") && isFrontendServiceName(serviceName):
+			filtered = append(filtered, raw)
+		case strings.HasPrefix(path, "/api") && isAPIServiceName(serviceName):
+			filtered = append(filtered, raw)
+		case strings.HasPrefix(path, "/ws") && isWebSocketServiceName(serviceName):
+			filtered = append(filtered, raw)
+		}
+	}
 	return uniqueNonEmptyStrings(filtered)
+}
+
+func isFrontendServiceName(serviceName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(serviceName))
+	return strings.Contains(lower, "front") ||
+		strings.Contains(lower, "fe") ||
+		strings.Contains(lower, "web") ||
+		strings.Contains(lower, "ui")
+}
+
+func isAPIServiceName(serviceName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(serviceName))
+	return strings.Contains(lower, "api") ||
+		strings.Contains(lower, "backend") ||
+		strings.Contains(lower, "server") ||
+		lower == "be"
+}
+
+func isWebSocketServiceName(serviceName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(serviceName))
+	return strings.Contains(lower, "ws") ||
+		strings.Contains(lower, "socket") ||
+		strings.Contains(lower, "realtime")
 }
 
 func uniqueNonEmptyStrings(items []string) []string {

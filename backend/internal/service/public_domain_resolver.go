@@ -8,6 +8,7 @@ import (
 )
 
 type PublicDomainResolveInput struct {
+	ProjectID            string
 	ProjectSlug          string
 	RuntimeMode          string
 	TargetKind           string
@@ -34,12 +35,21 @@ type PublicDomainResult struct {
 type PublicDomainResolver struct {
 	instances InstanceStore
 	clusters  ClusterStore
+	domains   *ProjectDomainService
+	routing   *RoutingService
 }
 
-func NewPublicDomainResolver(instances InstanceStore, clusters ClusterStore) *PublicDomainResolver {
+func NewPublicDomainResolver(
+	instances InstanceStore,
+	clusters ClusterStore,
+	domains *ProjectDomainService,
+	routing *RoutingService,
+) *PublicDomainResolver {
 	return &PublicDomainResolver{
 		instances: instances,
 		clusters:  clusters,
+		domains:   domains,
+		routing:   routing,
 	}
 }
 
@@ -48,15 +58,6 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 		return PublicDomainResult{
 			PublicURLs: []string{},
 			Reason:     "Không thể xác định domain công khai vì thiếu public domain resolver.",
-		}
-	}
-
-	runtimeMode := strings.TrimSpace(input.RuntimeMode)
-	targetKind := strings.TrimSpace(input.TargetKind)
-	if runtimeMode != bootstrapModeStandalone && runtimeMode != bootstrapModeDistributedK3s {
-		return PublicDomainResult{
-			PublicURLs: []string{},
-			Reason:     "Magic domain theo public IP hiện chỉ hỗ trợ cho standalone instance hoặc distributed-k3s.",
 		}
 	}
 
@@ -72,61 +73,82 @@ func (r *PublicDomainResolver) Resolve(input PublicDomainResolveInput) PublicDom
 			Reason:     "Revision này không có dịch vụ public.",
 		}
 	}
+	if strings.TrimSpace(input.ProjectID) == "" {
+		return PublicDomainResult{
+			PublicURLs: []string{},
+			Reason:     "Thiếu project_id nên không thể resolve managed domain.",
+		}
+	}
 
-	domains := make([]PublicDomainRecord, 0, len(publicServices))
-	urlScheme := publicDomainURLScheme(runtimeMode)
+	publicIPByService := make(map[string]string, len(publicServices))
 	for _, service := range publicServices {
-		publicIP := r.resolveTargetPublicIP(targetKind, strings.TrimSpace(input.TargetID), service.Name, input.PlacementAssignments)
+		publicIP := r.resolveTargetPublicIP(strings.TrimSpace(input.TargetKind), strings.TrimSpace(input.TargetID), service.Name, input.PlacementAssignments)
 		if publicIP == "" || net.ParseIP(publicIP) == nil || isPrivateIP(publicIP) {
 			continue
 		}
-
-		dashedIP := strings.ReplaceAll(publicIP, ".", "-")
-		projectToken := strings.TrimSpace(input.ProjectSlug)
-		if projectToken == "" {
-			projectToken = strings.TrimSpace(input.TargetID)
-		}
-		if strings.TrimSpace(projectToken) == "" {
-			projectToken = "cluster"
-		}
-		projectToken = sanitizeDomainLabel(projectToken)
-		primaryHost := fmt.Sprintf("%s.%s.%s.%s", service.Name, projectToken, dashedIP, MagicDomainProviderSSLIP)
-		fallbackHost := fmt.Sprintf("%s.%s.%s.%s", service.Name, projectToken, publicIP, MagicDomainProviderNipIO)
-
-		domains = append(domains, PublicDomainRecord{
-			ServiceName:  service.Name,
-			PrimaryHost:  primaryHost,
-			FallbackHost: fallbackHost,
-			PrimaryURL:   urlScheme + "://" + primaryHost,
-			FallbackURL:  urlScheme + "://" + fallbackHost,
-		})
+		publicIPByService[service.Name] = publicIP
 	}
-
-	sort.Slice(domains, func(i, j int) bool {
-		return domains[i].ServiceName < domains[j].ServiceName
-	})
-
-	publicURLs := collectPublicURLsFromDomains(domains)
-	if len(publicURLs) > 0 {
+	targetPublicIP := ""
+	for _, service := range publicServices {
+		if publicIP := strings.TrimSpace(publicIPByService[service.Name]); publicIP != "" {
+			targetPublicIP = publicIP
+			break
+		}
+	}
+	if targetPublicIP == "" {
 		return PublicDomainResult{
-			Domains:    domains,
-			PublicURLs: publicURLs,
+			Domains:    []PublicDomainRecord{},
+			PublicURLs: []string{},
+			Reason:     "Target chưa có public IP hợp lệ để cấp managed domain.",
+		}
+	}
+	if r.domains == nil {
+		return PublicDomainResult{
+			PublicURLs: []string{},
+			Reason:     "Không thể xác định managed domain vì thiếu project domain service.",
 		}
 	}
 
-	return PublicDomainResult{
-		Domains:    []PublicDomainRecord{},
-		PublicURLs: []string{},
-		Reason:     "Target chưa có public IP hợp lệ để cấp magic domain.",
+	managedDomain, err := r.domains.EnsureManagedDomain(
+		input.ProjectID,
+		input.ProjectSlug,
+		strings.TrimSpace(input.TargetKind),
+		strings.TrimSpace(input.TargetID),
+		targetPublicIP,
+	)
+	if err != nil {
+		return PublicDomainResult{
+			PublicURLs: []string{},
+			Reason:     fmt.Sprintf("Không thể cấp managed domain cho project: %v", err),
+		}
 	}
-}
+	sharedDomain := strings.TrimSpace(managedDomain.Hostname)
+	if sharedDomain == "" {
+		return PublicDomainResult{
+			PublicURLs: []string{},
+			Reason:     "Managed domain chưa có hostname hợp lệ.",
+		}
+	}
 
-func publicDomainURLScheme(runtimeMode string) string {
-	if strings.TrimSpace(runtimeMode) == bootstrapModeDistributedK3s {
-		// The current k3s/Traefik path only renders plain HTTP Ingress rules.
-		return "http"
+	routing := RoutingPolicyRecord{
+		SharedDomain: sharedDomain,
+		Routes:       []RoutingRouteRecord{},
 	}
-	return "https"
+	if r.routing != nil {
+		resolved, err := r.routing.ResolveEffectiveRouting(input.ProjectID, publicServices, sharedDomain)
+		if err == nil {
+			routing = resolved
+		}
+	}
+	domains := buildManagedPublicDomainRecords(routing, publicServices)
+	publicURLs := collectPublicURLsFromDomains(domains)
+	return PublicDomainResult{
+		Domains:    domains,
+		PublicURLs: publicURLs,
+		Status:     managedDomain.Status,
+		Reason:     strings.TrimSpace(managedDomain.StatusReason),
+	}
+
 }
 
 func (r *PublicDomainResolver) resolveTargetPublicIP(targetKind, targetID, serviceName string, assignments []PlacementAssignmentRecord) string {
@@ -192,6 +214,58 @@ func collectPublicURLsFromDomains(domains []PublicDomainRecord) []string {
 		}
 	}
 	return urls
+}
+
+func buildManagedPublicDomainRecords(routing RoutingPolicyRecord, services []BlueprintServiceContractRecord) []PublicDomainRecord {
+	sharedDomain := strings.TrimSpace(routing.SharedDomain)
+	if sharedDomain == "" {
+		return []PublicDomainRecord{}
+	}
+
+	serviceURLIndex := make(map[string]string, len(routing.Routes))
+	for _, route := range routing.Routes {
+		serviceName := strings.TrimSpace(route.Service)
+		if serviceName == "" {
+			continue
+		}
+		if _, exists := serviceURLIndex[serviceName]; exists {
+			continue
+		}
+		serviceURLIndex[serviceName] = managedProjectDomainURL(sharedDomain) + normalizePublicURLPath(route.Path)
+	}
+
+	out := make([]PublicDomainRecord, 0, len(services))
+	for _, service := range services {
+		url := strings.TrimSpace(serviceURLIndex[service.Name])
+		if url == "" {
+			url = managedProjectDomainURL(sharedDomain)
+		}
+		out = append(out, PublicDomainRecord{
+			ServiceName:  service.Name,
+			PrimaryHost:  sharedDomain,
+			FallbackHost: sharedDomain,
+			PrimaryURL:   url,
+			FallbackURL:  url,
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ServiceName < out[j].ServiceName
+	})
+	return out
+}
+
+func normalizePublicURLPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	switch trimmed {
+	case "", "/":
+		return ""
+	default:
+		if !strings.HasPrefix(trimmed, "/") {
+			trimmed = "/" + trimmed
+		}
+		return trimmed
+	}
 }
 
 func sanitizeDomainLabel(raw string) string {

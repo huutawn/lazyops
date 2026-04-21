@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Boxes, ExternalLink, FileCode2, Logs, Rocket, Server } from 'lucide-react';
 import { ErrorState } from '@/components/primitives/error-state';
 import { LoadingBlock } from '@/components/primitives/loading';
@@ -12,6 +12,7 @@ import { ProjectConnectInfraModal } from '@/modules/bootstrap/project-connect-in
 import { ProjectThreeStepWizard } from '@/modules/bootstrap/project-three-step-wizard';
 import { useDeployments } from '@/modules/deployments/deployment-hooks';
 import { useGitHubInstallations } from '@/modules/github-sync/github-hooks';
+import { useAllocateProjectDomain, useProjectDomain, useRenameProjectDomain } from '@/modules/project-domain/project-domain-hooks';
 import { useProjectRepoLink } from '@/modules/repo-link/repo-link-hooks';
 import { ProjectRepoLinkModal } from '@/modules/repo-link/repo-link-modal';
 import { useProjectRuntime } from '@/modules/project-runtime/project-runtime-hooks';
@@ -27,12 +28,18 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
   const runtime = useProjectRuntime(projectId);
   const bootstrap = useProjectBootstrapStatus(projectId);
   const repoLink = useProjectRepoLink(projectId);
+  const projectDomain = useProjectDomain(projectId);
+  const allocateProjectDomain = useAllocateProjectDomain(projectId);
+  const renameProjectDomain = useRenameProjectDomain(projectId);
   const repoOptions = useGitHubInstallations();
   const oneClickDeploy = useOneClickDeploy(projectId);
   const [showRepoModal, setShowRepoModal] = useState(false);
   const [showInfraModal, setShowInfraModal] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [domainLabelDraft, setDomainLabelDraft] = useState('');
+  const [domainMessage, setDomainMessage] = useState<string | null>(null);
+  const [domainError, setDomainError] = useState<string | null>(null);
 
   const latestDeployment = useMemo(() => {
     const items = [...(deployments.data?.items ?? [])];
@@ -40,12 +47,21 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
     return items[0] ?? null;
   }, [deployments.data?.items]);
 
+  useEffect(() => {
+    if (projectDomain.data?.label) {
+      setDomainLabelDraft(projectDomain.data.label);
+    } else {
+      setDomainLabelDraft('');
+    }
+  }, [projectDomain.data?.label]);
+
   if (
     deployments.isLoading ||
     services.isLoading ||
     runtime.isLoading ||
     bootstrap.isLoading ||
     repoLink.isLoading ||
+    projectDomain.isLoading ||
     repoOptions.isLoading
   ) {
     return (
@@ -55,7 +71,7 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
     );
   }
 
-  if (deployments.isError || services.isError || runtime.isError || bootstrap.isError || repoLink.isError || !bootstrap.data) {
+  if (deployments.isError || services.isError || runtime.isError || bootstrap.isError || repoLink.isError || projectDomain.isError || !bootstrap.data) {
     return (
       <ErrorState
         title="Không thể tải project workspace"
@@ -90,6 +106,9 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
   const latestDeploymentLabel = latestDeployment
     ? new Date(latestDeployment.created_at).toLocaleString()
     : 'Chưa có lần deploy nào';
+  const managedDomain = projectDomain.data;
+  const managedPublicURL = managedDomain?.public_url || (managedDomain?.hostname ? `https://${managedDomain.hostname}` : '');
+  const primaryPublicURLSource = primaryPublicURL || managedPublicURL;
   const runtimeSummary = primaryPublicURL
     ? 'HTTPS công khai đã sẵn sàng'
     : publicURLDisplay.state === 'pending' || publicURLDisplay.state === 'error'
@@ -127,6 +146,36 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
       } catch (error) {
         setActionError(error instanceof Error ? error.message : 'Không thể bắt đầu triển khai.');
       }
+    }
+  };
+
+  const runAllocateDomain = async (regenerate: boolean) => {
+    setDomainError(null);
+    setDomainMessage(null);
+    try {
+      const result = await allocateProjectDomain.mutateAsync({ regenerate });
+      setDomainMessage(
+        regenerate
+          ? `Đã đồng bộ lại domain ${result.hostname}.`
+          : `Đã cấp domain ${result.hostname} cho project.`,
+      );
+    } catch (error) {
+      setDomainError(error instanceof Error ? error.message : 'Không thể cấp domain cho project.');
+    }
+  };
+
+  const runRenameDomain = async () => {
+    const nextLabel = domainLabelDraft.trim();
+    if (!nextLabel || nextLabel === managedDomain?.label) {
+      return;
+    }
+    setDomainError(null);
+    setDomainMessage(null);
+    try {
+      const result = await renameProjectDomain.mutateAsync({ label: nextLabel });
+      setDomainMessage(`Đã đổi subdomain sang ${result.hostname}.`);
+    } catch (error) {
+      setDomainError(error instanceof Error ? error.message : 'Không thể đổi subdomain.');
     }
   };
 
@@ -200,8 +249,8 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
           <QuickSummaryCard
             icon={<ExternalLink className="size-5 text-[#38bdf8]" />}
             label="Website"
-            value={primaryPublicURL ? 'Đã có' : publicURLDisplay.label || 'Chưa có'}
-            hint={primaryPublicURL || publicURLDisplay.message}
+            value={primaryPublicURLSource ? 'Đã có' : publicURLDisplay.label || 'Chưa có'}
+            hint={primaryPublicURLSource || publicURLDisplay.message}
           />
           <QuickSummaryCard
             icon={<Rocket className="size-5 text-[#38bdf8]" />}
@@ -228,6 +277,77 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
           <QuickLink href={`/projects/${projectId}/services`} icon={<Boxes className="size-4" />} label="Mở dịch vụ" />
           <QuickLink href={`/projects/${projectId}/deployments`} icon={<Rocket className="size-4" />} label="Mở triển khai" />
           <QuickLink href={`/projects/${projectId}/observability`} icon={<Logs className="size-4" />} label="Mở nhật ký" />
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Domain công khai"
+        description="Managed subdomain dưới lazyops.cloud. Cloudflare sẽ terminate HTTPS, còn origin vẫn chạy HTTP ở node hoặc ingress."
+      >
+        <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-6">
+            <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">Hostname hiện tại</div>
+            <div className="mt-2 break-all text-2xl font-bold text-white">{managedDomain?.hostname || 'Chưa cấp domain'}</div>
+            <div className="mt-3 break-all text-base text-[#94a3b8]">{managedPublicURL || 'Project sẽ nhận một hostname ổn định sau khi cấp domain.'}</div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <DomainStatusPill status={managedDomain?.status || 'missing'} />
+              {managedDomain?.last_synced_ip ? (
+                <span className="text-sm text-[#94a3b8]">IP đang sync: {managedDomain.last_synced_ip}</span>
+              ) : null}
+            </div>
+            <div className="mt-3 text-sm text-[#94a3b8]">
+              {managedDomain?.status_reason || 'Nếu project có service public, LazyOps sẽ sync DNS record vào Cloudflare cho bạn.'}
+            </div>
+            {domainMessage ? (
+              <div className="mt-4 rounded-2xl border border-[#0EA5E9]/30 bg-[#0EA5E9]/10 px-6 py-3 text-base text-[#bae6fd]">
+                {domainMessage}
+              </div>
+            ) : null}
+            {domainError ? (
+              <div className="mt-4 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-6 py-3 text-base text-[#fecaca]">
+                {domainError}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-2xl border border-[#1e293b] bg-[#020617]/70 p-6">
+            <div className="text-base font-semibold text-white">Đổi subdomain</div>
+            <div className="mt-2 text-base text-[#94a3b8]">
+              Chỉnh phần label trước <code className="rounded bg-[#0B1120]/80 px-1.5 py-0.5 text-[#e2e8f0]">.lazyops.cloud</code>. Hostname vẫn là duy nhất trên toàn hệ thống.
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <input
+                type="text"
+                value={domainLabelDraft}
+                onChange={(event) => setDomainLabelDraft(event.target.value)}
+                placeholder="myapp-ab12"
+                className="min-w-0 flex-1 rounded-xl border border-[#1e293b] bg-[#0B1120]/80 px-4 py-3 text-base text-white outline-none transition-colors placeholder:text-[#475569] focus:border-[#0EA5E9]"
+              />
+              <span className="shrink-0 text-sm text-[#64748b]">.lazyops.cloud</span>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  void runRenameDomain();
+                }}
+                disabled={!managedDomain || !domainLabelDraft.trim() || domainLabelDraft.trim() === managedDomain.label || renameProjectDomain.isPending}
+                className="rounded-xl bg-[#0EA5E9] px-5 py-2.5 text-base font-semibold text-[#020617] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {renameProjectDomain.isPending ? 'Đang lưu...' : 'Lưu label'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void runAllocateDomain(!!managedDomain);
+                }}
+                disabled={allocateProjectDomain.isPending}
+                className="rounded-xl border border-[#1e293b] bg-[#0B1120]/60 px-5 py-2.5 text-base font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {allocateProjectDomain.isPending ? 'Đang đồng bộ...' : managedDomain ? 'Đồng bộ lại DNS' : 'Cấp domain'}
+              </button>
+            </div>
+          </div>
         </div>
       </SectionCard>
 
@@ -379,6 +499,27 @@ function AdvancedField({ label, value }: { label: string; value: string }) {
       <div className="mt-2 break-all text-base font-semibold text-[#e2e8f0]">{value}</div>
     </div>
   );
+}
+
+function DomainStatusPill({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  const palette =
+    normalized === 'active'
+      ? 'border-[#10B981]/30 bg-[#10B981]/10 text-[#6ee7b7]'
+      : normalized === 'pending'
+        ? 'border-[#38bdf8]/30 bg-[#0EA5E9]/10 text-[#bae6fd]'
+        : normalized === 'error'
+          ? 'border-[#ef4444]/30 bg-[#ef4444]/10 text-[#fecaca]'
+          : 'border-[#334155] bg-[#0B1120]/60 text-[#cbd5e1]';
+  const label =
+    normalized === 'active'
+      ? 'Đang hoạt động'
+      : normalized === 'pending'
+        ? 'Đang đồng bộ'
+        : normalized === 'error'
+          ? 'Lỗi DNS'
+          : 'Chưa cấp';
+  return <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${palette}`}>{label}</span>;
 }
 
 function stateColorClass(state: string) {

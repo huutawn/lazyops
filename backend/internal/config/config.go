@@ -10,20 +10,21 @@ import (
 )
 
 type Config struct {
-	App         AppConfig
-	Server      ServerConfig
-	Database    DatabaseConfig
-	Secrets     SecretConfig
-	JWT         JWTConfig
-	PAT         PATConfig
-	GoogleOAuth GoogleOAuthConfig
-	GitHubOAuth GitHubOAuthConfig
-	GitHubApp   GitHubAppConfig
-	Enrollment  EnrollmentConfig
-	Security    SecurityConfig
-	Seed        SeedConfig
-	WebSocket   WebSocketConfig
-	BuildWorker BuildWorkerConfig
+	App          AppConfig
+	Server       ServerConfig
+	Database     DatabaseConfig
+	PublicDomain PublicDomainConfig
+	Secrets      SecretConfig
+	JWT          JWTConfig
+	PAT          PATConfig
+	GoogleOAuth  GoogleOAuthConfig
+	GitHubOAuth  GitHubOAuthConfig
+	GitHubApp    GitHubAppConfig
+	Enrollment   EnrollmentConfig
+	Security     SecurityConfig
+	Seed         SeedConfig
+	WebSocket    WebSocketConfig
+	BuildWorker  BuildWorkerConfig
 }
 
 type AppConfig struct {
@@ -52,6 +53,14 @@ type DatabaseConfig struct {
 
 type SecretConfig struct {
 	EncryptionKey string
+}
+
+type PublicDomainConfig struct {
+	BaseDomain         string
+	Provider           string
+	CloudflareZoneID   string
+	CloudflareAPIToken string
+	CloudflareProxied  bool
 }
 
 type JWTConfig struct {
@@ -160,6 +169,13 @@ func Load() Config {
 			TimeZone:     getEnv("DB_TIMEZONE", "Asia/Bangkok"),
 			MaxIdleConns: getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
 			MaxOpenConns: getEnvAsInt("DB_MAX_OPEN_CONNS", 50),
+		},
+		PublicDomain: PublicDomainConfig{
+			BaseDomain:         strings.ToLower(getEnv("PUBLIC_BASE_DOMAIN", "lazyops.cloud")),
+			Provider:           strings.ToLower(getEnv("PUBLIC_DOMAIN_PROVIDER", "cloudflare")),
+			CloudflareZoneID:   getEnv("CLOUDFLARE_ZONE_ID", ""),
+			CloudflareAPIToken: getEnv("CLOUDFLARE_API_TOKEN", ""),
+			CloudflareProxied:  getEnvAsBool("CLOUDFLARE_PROXIED", true),
 		},
 		Secrets: SecretConfig{
 			EncryptionKey: getEnv("BACKEND_SECRET_ENCRYPTION_KEY", ""),

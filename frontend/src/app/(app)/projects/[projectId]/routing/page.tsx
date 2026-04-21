@@ -121,7 +121,7 @@ export default function RoutingPage() {
           />
         </FormField>
         <p className="mt-3 text-base text-[#94a3b8]">
-          Example: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">app.project.sslip.io</code>.
+          Example: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">myapp-ab12.lazyops.cloud</code>.
           Routes like <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">/api</code> and <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">/</code> will be mapped to different services.
         </p>
       </SectionCard>

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,14 +17,19 @@ type RoutingPolicyStore interface {
 	DeleteByProjectID(projectID string) error
 }
 
+type ProjectDomainReader interface {
+	GetPrimaryManagedByProjectID(projectID string) (*ProjectDomainRecord, error)
+}
+
 // ServiceStore defines the interface for service listing
 type ServiceStore interface {
 	ListByProject(projectID string) ([]models.Service, error)
 }
 
 type RoutingService struct {
-	store      RoutingPolicyStore
-	svcStore   ServiceStore
+	store    RoutingPolicyStore
+	svcStore ServiceStore
+	domains  ProjectDomainReader
 }
 
 func NewRoutingService(store RoutingPolicyStore, svcStore ServiceStore) *RoutingService {
@@ -33,23 +39,41 @@ func NewRoutingService(store RoutingPolicyStore, svcStore ServiceStore) *Routing
 	}
 }
 
+func (s *RoutingService) WithProjectDomains(domains ProjectDomainReader) *RoutingService {
+	if s == nil {
+		return s
+	}
+	s.domains = domains
+	return s
+}
+
 // GetRouting retrieves the routing configuration for a project
 func (s *RoutingService) GetRouting(userID, role, projectID string) (*ProjectRoutingResult, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return nil, ErrInvalidInput
 	}
 
-	// Get routing policy from DB
+	services, err := s.svcStore.ListByProject(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list services: %w", err)
+	}
+
+	availableServices := make([]string, 0, len(services))
+	for _, svc := range services {
+		availableServices = append(availableServices, svc.Name)
+	}
+	sort.Strings(availableServices)
+
 	policy, err := s.store.GetByProjectID(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load routing policy: %w", err)
 	}
+	sharedDomain := s.resolveManagedSharedDomain(projectID)
 
 	if policy == nil {
-		// No policy yet — return empty
 		return &ProjectRoutingResult{
-			RoutingPolicy:     RoutingPolicyRecord{Routes: []RoutingRouteRecord{}},
-			AvailableServices: []string{},
+			RoutingPolicy:     buildDefaultRoutingPolicy(sharedDomain, routingDescriptorsFromModels(services)),
+			AvailableServices: availableServices,
 		}, nil
 	}
 
@@ -70,20 +94,16 @@ func (s *RoutingService) GetRouting(userID, role, projectID string) (*ProjectRou
 		})
 	}
 
-	// Get available services
-	services, err := s.svcStore.ListByProject(projectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list services: %w", err)
+	resolvedSharedDomain := firstRuntimeNonEmpty(policy.SharedDomain, sharedDomain)
+	if len(routeRecords) == 0 {
+		return &ProjectRoutingResult{
+			RoutingPolicy:     buildDefaultRoutingPolicy(resolvedSharedDomain, routingDescriptorsFromModels(services)),
+			AvailableServices: availableServices,
+		}, nil
 	}
-
-	availableServices := make([]string, 0, len(services))
-	for _, svc := range services {
-		availableServices = append(availableServices, svc.Name)
-	}
-
 	return &ProjectRoutingResult{
 		RoutingPolicy: RoutingPolicyRecord{
-			SharedDomain: policy.SharedDomain,
+			SharedDomain: resolvedSharedDomain,
 			Routes:       routeRecords,
 		},
 		AvailableServices: availableServices,
@@ -182,6 +202,262 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 		},
 		AvailableServices: availableServices,
 	}, nil
+}
+
+func (s *RoutingService) ResolveEffectiveRouting(projectID string, services []BlueprintServiceContractRecord, sharedDomainHint string) (RoutingPolicyRecord, error) {
+	if strings.TrimSpace(projectID) == "" {
+		return RoutingPolicyRecord{}, ErrInvalidInput
+	}
+
+	policy, err := s.store.GetByProjectID(projectID)
+	if err != nil {
+		return RoutingPolicyRecord{}, fmt.Errorf("failed to load routing policy: %w", err)
+	}
+
+	sharedDomain := firstRuntimeNonEmpty(sharedDomainHint, s.resolveManagedSharedDomain(projectID))
+	descriptors := routingDescriptorsFromContracts(services)
+	if policy == nil {
+		return buildDefaultRoutingPolicy(sharedDomain, descriptors), nil
+	}
+
+	routes, err := parseRoutes(policy.RoutesJSON)
+	if err != nil {
+		return RoutingPolicyRecord{}, fmt.Errorf("failed to parse routes: %w", err)
+	}
+	if len(routes) == 0 {
+		return buildDefaultRoutingPolicy(firstRuntimeNonEmpty(policy.SharedDomain, sharedDomain), descriptors), nil
+	}
+
+	records := make([]RoutingRouteRecord, 0, len(routes))
+	for _, route := range routes {
+		records = append(records, RoutingRouteRecord{
+			Path:        route.Path,
+			Service:     route.Service,
+			Port:        route.Port,
+			WebSocket:   route.WebSocket,
+			StripPrefix: route.StripPrefix,
+		})
+	}
+	return RoutingPolicyRecord{
+		SharedDomain: firstRuntimeNonEmpty(policy.SharedDomain, sharedDomain),
+		Routes:       records,
+	}, nil
+}
+
+func (s *RoutingService) resolveManagedSharedDomain(projectID string) string {
+	if s == nil || s.domains == nil {
+		return ""
+	}
+	record, err := s.domains.GetPrimaryManagedByProjectID(projectID)
+	if err != nil || record == nil {
+		return ""
+	}
+	return strings.TrimSpace(record.Hostname)
+}
+
+type routingDescriptor struct {
+	Name           string
+	Kind           string
+	RuntimeProfile string
+	Public         bool
+}
+
+func routingDescriptorsFromModels(items []models.Service) []routingDescriptor {
+	out := make([]routingDescriptor, 0, len(items))
+	for _, item := range items {
+		runtimeProfile := ""
+		if item.RuntimeProfile != nil {
+			runtimeProfile = strings.TrimSpace(*item.RuntimeProfile)
+		}
+		out = append(out, routingDescriptor{
+			Name:           item.Name,
+			Kind:           item.Kind,
+			RuntimeProfile: runtimeProfile,
+			Public:         item.Public,
+		})
+	}
+	return out
+}
+
+func routingDescriptorsFromContracts(items []BlueprintServiceContractRecord) []routingDescriptor {
+	out := make([]routingDescriptor, 0, len(items))
+	for _, item := range items {
+		out = append(out, routingDescriptor{
+			Name:           item.Name,
+			Kind:           item.Kind,
+			RuntimeProfile: item.RuntimeProfile,
+			Public:         item.Public,
+		})
+	}
+	return out
+}
+
+func buildDefaultRoutingPolicy(sharedDomain string, services []routingDescriptor) RoutingPolicyRecord {
+	publicServices := make([]routingDescriptor, 0, len(services))
+	for _, svc := range services {
+		if svc.Public {
+			publicServices = append(publicServices, svc)
+		}
+	}
+	if len(publicServices) == 0 {
+		return RoutingPolicyRecord{
+			SharedDomain: strings.TrimSpace(sharedDomain),
+			Routes:       []RoutingRouteRecord{},
+		}
+	}
+	if len(publicServices) == 1 {
+		return RoutingPolicyRecord{
+			SharedDomain: strings.TrimSpace(sharedDomain),
+			Routes: []RoutingRouteRecord{
+				{Path: "/", Service: publicServices[0].Name},
+			},
+		}
+	}
+
+	websocketSvc := firstMatchingService(publicServices, isWebSocketDescriptor)
+	apiSvc := firstMatchingService(publicServices, isAPIDescriptor)
+	frontendSvc := firstMatchingService(publicServices, isFrontendDescriptor)
+
+	if apiSvc.Name == "" {
+		apiSvc = firstMatchingService(publicServices, isBackendDescriptor)
+	}
+	rootSvc := frontendSvc
+	if rootSvc.Name == "" {
+		rootSvc = firstNonMatchingPublicService(publicServices, websocketSvc.Name, apiSvc.Name)
+	}
+	if rootSvc.Name == "" {
+		rootSvc = publicServices[0]
+	}
+
+	routes := make([]RoutingRouteRecord, 0, len(publicServices))
+	seenPaths := make(map[string]struct{}, len(publicServices)+2)
+	seenServices := make(map[string]struct{}, len(publicServices))
+
+	if websocketSvc.Name != "" {
+		route := RoutingRouteRecord{
+			Path:      "/ws",
+			Service:   websocketSvc.Name,
+			WebSocket: true,
+		}
+		routes = append(routes, route)
+		seenPaths[route.Path] = struct{}{}
+		seenServices[route.Service] = struct{}{}
+	}
+	if apiSvc.Name != "" && apiSvc.Name != rootSvc.Name {
+		route := RoutingRouteRecord{
+			Path:    "/api",
+			Service: apiSvc.Name,
+		}
+		routes = append(routes, route)
+		seenPaths[route.Path] = struct{}{}
+		seenServices[route.Service] = struct{}{}
+	}
+	rootRoute := RoutingRouteRecord{
+		Path:    "/",
+		Service: rootSvc.Name,
+	}
+	routes = append(routes, rootRoute)
+	seenPaths[rootRoute.Path] = struct{}{}
+	seenServices[rootRoute.Service] = struct{}{}
+
+	for _, svc := range publicServices {
+		if _, exists := seenServices[svc.Name]; exists {
+			continue
+		}
+		path := "/" + sanitizeDomainLabel(svc.Name)
+		if path == "/" {
+			path = "/" + sanitizeDomainLabel(svc.Kind)
+		}
+		if path == "/" {
+			path = "/service"
+		}
+		for pathExists(path, seenPaths) {
+			path = path + "-alt"
+		}
+		route := RoutingRouteRecord{
+			Path:    path,
+			Service: svc.Name,
+		}
+		if isWebSocketDescriptor(svc) {
+			route.WebSocket = true
+		}
+		routes = append(routes, route)
+		seenPaths[path] = struct{}{}
+		seenServices[svc.Name] = struct{}{}
+	}
+
+	return RoutingPolicyRecord{
+		SharedDomain: strings.TrimSpace(sharedDomain),
+		Routes:       routes,
+	}
+}
+
+func pathExists(path string, seen map[string]struct{}) bool {
+	_, exists := seen[path]
+	return exists
+}
+
+func firstMatchingService(items []routingDescriptor, match func(routingDescriptor) bool) routingDescriptor {
+	for _, item := range items {
+		if match(item) {
+			return item
+		}
+	}
+	return routingDescriptor{}
+}
+
+func firstNonMatchingPublicService(items []routingDescriptor, disallowed ...string) routingDescriptor {
+	blocked := make(map[string]struct{}, len(disallowed))
+	for _, item := range disallowed {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			blocked[item] = struct{}{}
+		}
+	}
+	for _, item := range items {
+		if _, exists := blocked[item.Name]; exists {
+			continue
+		}
+		return item
+	}
+	return routingDescriptor{}
+}
+
+func isFrontendDescriptor(item routingDescriptor) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
+	lowerKind := strings.ToLower(strings.TrimSpace(item.Kind))
+	lowerProfile := strings.ToLower(strings.TrimSpace(item.RuntimeProfile))
+	return lowerKind == "web" ||
+		lowerKind == "frontend" ||
+		lowerProfile == "web" ||
+		strings.Contains(lowerName, "front") ||
+		strings.Contains(lowerName, "fe") ||
+		strings.Contains(lowerName, "web") ||
+		strings.Contains(lowerName, "ui")
+}
+
+func isBackendDescriptor(item routingDescriptor) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
+	lowerKind := strings.ToLower(strings.TrimSpace(item.Kind))
+	return lowerKind == "backend" ||
+		lowerKind == "server" ||
+		strings.Contains(lowerName, "backend") ||
+		strings.Contains(lowerName, "server") ||
+		lowerName == "be"
+}
+
+func isAPIDescriptor(item routingDescriptor) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
+	lowerKind := strings.ToLower(strings.TrimSpace(item.Kind))
+	return lowerKind == "api" ||
+		strings.Contains(lowerName, "api")
+}
+
+func isWebSocketDescriptor(item routingDescriptor) bool {
+	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
+	return strings.Contains(lowerName, "ws") ||
+		strings.Contains(lowerName, "socket") ||
+		strings.Contains(lowerName, "realtime")
 }
 
 // parseRoutes deserializes routes JSON
