@@ -672,7 +672,7 @@ func postgresConnectionString(host string, port int, env map[string]string) stri
 	user := firstNonEmptyCompiledValue(env["POSTGRES_USER"], env["DB_USER"], "postgres")
 	password := firstNonEmptyCompiledValue(env["POSTGRES_PASSWORD"], env["DB_PASSWORD"], "postgres")
 	dbName := firstNonEmptyCompiledValue(env["POSTGRES_DB"], env["DB_NAME"], "app")
-	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s", user, password, host, port, dbName)
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", user, password, host, port, dbName)
 }
 
 func mysqlConnectionString(host string, port int, env map[string]string) string {

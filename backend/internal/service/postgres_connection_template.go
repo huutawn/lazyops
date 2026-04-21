@@ -107,7 +107,7 @@ func buildPostgresConnectionRuntimeValues(target ProjectServiceRecord, projectEn
 	portString := fmt.Sprintf("%d", port)
 
 	return map[string]string{
-		"DB_URL":      fmt.Sprintf("postgres://%s:%s@%s:%s/%s", userName, password, host, portString, dbName),
+		"DB_URL":      fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", userName, password, host, portString, dbName),
 		"DB_NAME":     dbName,
 		"DB_HOST":     host,
 		"DB_PORT":     portString,

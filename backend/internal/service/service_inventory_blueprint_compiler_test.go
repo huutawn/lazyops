@@ -111,7 +111,7 @@ func TestServiceInventoryBlueprintCompilerInjectsPostgresTemplatePerService(t *t
 	if apiSvc.EnvBundle["PGUSER"] != "postgres" || apiSvc.EnvBundle["PGPASSWORD"] != "supersecret" {
 		t.Fatalf("expected postgres credentials to be injected, got %#v", apiSvc.EnvBundle)
 	}
-	if apiSvc.EnvBundle["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app" {
+	if apiSvc.EnvBundle["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app?sslmode=disable" {
 		t.Fatalf("expected DATABASE_URL to use internal dns host, got %#v", apiSvc.EnvBundle)
 	}
 }

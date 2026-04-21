@@ -177,7 +177,7 @@ func TestProjectEnvServiceBuildsPostgresHelpersFromUnifiedServiceInventory(t *te
 	if snippet.Env["PGHOST"] != "db" {
 		t.Fatalf("expected K3s internal dns host db, got %#v", snippet.Env)
 	}
-	if snippet.Env["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app" {
+	if snippet.Env["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app?sslmode=disable" {
 		t.Fatalf("expected postgres helper URL to use internal dns, got %#v", snippet.Env)
 	}
 }
