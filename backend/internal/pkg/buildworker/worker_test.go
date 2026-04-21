@@ -70,6 +70,7 @@ func TestResolveBuildPortUsesSmokeRunWhenImageDoesNotExposePort(t *testing.T) {
 		"",
 		nil,
 		"",
+		false,
 	)
 
 	if resolution.Status != buildPortResolutionStatusResolved {
@@ -95,6 +96,7 @@ func TestResolveBuildPortMarksAmbiguousWhenMultiplePortsCompete(t *testing.T) {
 		"next",
 		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
 		"",
+		false,
 	)
 
 	if resolution.Status != buildPortResolutionStatusAmbiguous {
@@ -117,6 +119,7 @@ func TestResolveBuildPortMarksUnresolvedWhenNoCandidateExists(t *testing.T) {
 		"",
 		nil,
 		"container exited before binding a port",
+		false,
 	)
 
 	if resolution.Status != buildPortResolutionStatusUnresolved {
@@ -145,6 +148,7 @@ func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
 		"next",
 		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
 		"",
+		true,
 	)
 
 	if resolution.Status != buildPortResolutionStatusResolved {
@@ -158,6 +162,124 @@ func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
 	}
 	if resolution.SuggestedHealthcheck == nil || resolution.SuggestedHealthcheck.Port != 7000 {
 		t.Fatalf("expected declared healthcheck to be preserved, got %#v", resolution.SuggestedHealthcheck)
+	}
+}
+
+func TestResolveBuildPortUsesDockerInspectExposeForRepoService(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			RuntimeProfile: "service",
+			Public:         true,
+		},
+		[]string{"api"},
+		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp", Exposed: true}},
+		[]int{4321},
+		"",
+		nil,
+		"timed out waiting for the container to expose a listening port",
+		true,
+	)
+
+	if resolution.Status != buildPortResolutionStatusResolved {
+		t.Fatalf("expected resolved status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceDockerInspect {
+		t.Fatalf("expected docker_inspect source, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 8080 {
+		t.Fatalf("expected EXPOSE port 8080, got %#v", resolution)
+	}
+	if got := resolution.CandidatePorts; len(got) != 1 || got[0] != 8080 {
+		t.Fatalf("expected candidate ports [8080], got %#v", got)
+	}
+}
+
+func TestResolveBuildPortRewritesSuggestedHealthcheckPortToExposePort(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "web",
+			ServicePath:    "fe",
+			RuntimeProfile: "web",
+			Public:         true,
+		},
+		[]string{"web"},
+		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp", Exposed: true}},
+		nil,
+		"next",
+		&BuildSuggestedHealthcheckMetadata{Path: "/", Port: 3000},
+		"",
+		true,
+	)
+
+	if resolution.SuggestedHealthcheck == nil {
+		t.Fatalf("expected suggested healthcheck to be preserved, got %#v", resolution)
+	}
+	if resolution.SuggestedHealthcheck.Path != "/" || resolution.SuggestedHealthcheck.Port != 8080 {
+		t.Fatalf("expected suggested healthcheck /:8080, got %#v", resolution.SuggestedHealthcheck)
+	}
+}
+
+func TestResolveBuildPortRejectsRepoServiceWithoutExpose(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			RuntimeProfile: "service",
+			Public:         true,
+		},
+		[]string{"api"},
+		nil,
+		[]int{4321},
+		"",
+		nil,
+		"timed out waiting for the container to expose a listening port",
+		true,
+	)
+
+	if resolution.Status != buildPortResolutionStatusUnresolved {
+		t.Fatalf("expected unresolved status, got %#v", resolution)
+	}
+	if resolution.Reason != "image exposes no TCP ports via EXPOSE" {
+		t.Fatalf("expected EXPOSE-specific unresolved reason, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 0 {
+		t.Fatalf("expected unresolved EXPOSE result to omit suggested port, got %#v", resolution)
+	}
+}
+
+func TestResolveBuildPortRejectsRepoServiceWithMultipleExposePorts(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			RuntimeProfile: "service",
+			Public:         true,
+		},
+		[]string{"api"},
+		[]BuildDetectedPortMetadata{
+			{Port: 3000, Protocol: "tcp", Exposed: true},
+			{Port: 9229, Protocol: "tcp", Exposed: true},
+		},
+		nil,
+		"",
+		nil,
+		"",
+		true,
+	)
+
+	if resolution.Status != buildPortResolutionStatusAmbiguous {
+		t.Fatalf("expected ambiguous status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceDockerInspect {
+		t.Fatalf("expected docker_inspect source, got %#v", resolution)
+	}
+	if resolution.Reason != "image exposes multiple TCP ports: 3000, 9229" {
+		t.Fatalf("expected EXPOSE-specific ambiguous reason, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 0 {
+		t.Fatalf("expected ambiguous EXPOSE result to omit suggested port, got %#v", resolution)
 	}
 }
 

@@ -319,7 +319,7 @@ func (w *Worker) buildAndPush(
 			exposedPorts, _, _ := w.inspectImagePorts(ctx, imageName)
 			smokePorts, smokeReason := w.smokeRunImagePorts(ctx, imageName)
 			detectedPorts, portDetectionSource := mergeDetectedPorts(exposedPorts, smokePorts)
-			resolution := resolveBuildPort(target, detectedServices, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason)
+			resolution := resolveBuildPort(target, detectedServices, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason, true)
 			result.Services = append(result.Services, target.ServiceName)
 			result.ServiceArtifacts = append(result.ServiceArtifacts, BuildServiceArtifactMetadata{
 				ServiceName:             target.ServiceName,
@@ -362,7 +362,7 @@ func (w *Worker) buildAndPush(
 	exposedPorts, _, _ := w.inspectImagePorts(ctx, imageName)
 	smokePorts, smokeReason := w.smokeRunImagePorts(ctx, imageName)
 	detectedPorts, portDetectionSource := mergeDetectedPorts(exposedPorts, smokePorts)
-	resolution := resolveBuildPort(BuildTargetServiceMetadata{}, services, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason)
+	resolution := resolveBuildPort(BuildTargetServiceMetadata{}, services, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason, false)
 
 	return buildResult{
 		CommitSHA:               input.CommitSHA,
@@ -1039,6 +1039,7 @@ func resolveBuildPort(
 	detectedFramework string,
 	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
 	smokeReason string,
+	exposeFirst bool,
 ) buildPortResolution {
 	if declaredPort, declaredReason, declaredHealthcheck := declaredPortHint(target); declaredPort > 0 {
 		reason := declaredReason
@@ -1054,6 +1055,10 @@ func resolveBuildPort(
 			SuggestedHealthcheck:    cloneSuggestedHealthcheck(declaredHealthcheck),
 			PortDetectionConfidence: "high",
 		}
+	}
+
+	if exposeFirst {
+		return resolveBuildPortFromExpose(detectedPorts, suggestedHealthcheck)
 	}
 
 	candidateSources := map[int]map[string]struct{}{}
@@ -1145,6 +1150,57 @@ func resolveBuildPort(
 		SuggestedTargetPort:     port,
 		SuggestedHealthcheck:    healthcheck,
 		PortDetectionConfidence: resolutionConfidenceForSources(portSources),
+	}
+}
+
+func resolveBuildPortFromExpose(
+	detectedPorts []BuildDetectedPortMetadata,
+	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+) buildPortResolution {
+	exposedTCPPorts := make([]int, 0, len(detectedPorts))
+	for _, item := range detectedPorts {
+		if item.Port <= 0 || !item.Exposed {
+			continue
+		}
+		if protocol := strings.ToLower(strings.TrimSpace(item.Protocol)); protocol != "" && protocol != "tcp" {
+			continue
+		}
+		exposedTCPPorts = append(exposedTCPPorts, item.Port)
+	}
+	exposedTCPPorts = normalizeCandidatePorts(exposedTCPPorts)
+
+	switch len(exposedTCPPorts) {
+	case 0:
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusUnresolved,
+			Reason:         "image exposes no TCP ports via EXPOSE",
+			CandidatePorts: nil,
+		}
+	case 1:
+		port := exposedTCPPorts[0]
+		var healthcheck *BuildSuggestedHealthcheckMetadata
+		if suggestedHealthcheck != nil && strings.TrimSpace(suggestedHealthcheck.Path) != "" {
+			healthcheck = cloneSuggestedHealthcheck(&BuildSuggestedHealthcheckMetadata{
+				Path: suggestedHealthcheck.Path,
+				Port: port,
+			})
+		}
+		return buildPortResolution{
+			Status:                  buildPortResolutionStatusResolved,
+			Source:                  buildPortResolutionSourceDockerInspect,
+			Reason:                  fmt.Sprintf("resolved port %d from docker inspect EXPOSE metadata", port),
+			CandidatePorts:          exposedTCPPorts,
+			SuggestedTargetPort:     port,
+			SuggestedHealthcheck:    healthcheck,
+			PortDetectionConfidence: "high",
+		}
+	default:
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusAmbiguous,
+			Source:         buildPortResolutionSourceDockerInspect,
+			Reason:         fmt.Sprintf("image exposes multiple TCP ports: %s", intsToCSV(exposedTCPPorts)),
+			CandidatePorts: exposedTCPPorts,
+		}
 	}
 }
 

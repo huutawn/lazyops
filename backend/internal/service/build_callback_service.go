@@ -562,9 +562,9 @@ func validateResolvedServicePorts(expectedTargets []BuildTargetServiceRecord, se
 			continue
 		}
 
+		snapshot, ok := resolutionByIndex[index]
 		resolvedPort := firstPositive(service.TargetPort, service.ServicePort)
 		if resolvedPort <= 0 {
-			snapshot, ok := resolutionByIndex[index]
 			if !ok {
 				snapshot = portResolutionSnapshot{
 					Status:         BuildPortResolutionStatusUnresolved,
@@ -573,6 +573,16 @@ func validateResolvedServicePorts(expectedTargets []BuildTargetServiceRecord, se
 				}
 			}
 			return newPortResolutionError(service, snapshot, "service requires a resolved target_port/service_port before rollout")
+		}
+		if hasExpectedTarget && !hasDeclaredBuildTargetPort(expectedTarget) && !isAcceptedResolvedServicePortSource(snapshot.Source) {
+			if strings.TrimSpace(snapshot.Reason) == "" {
+				snapshot.Reason = "distributed-k3s only accepts ports resolved from explicit config or image EXPOSE"
+			}
+			return newPortResolutionError(
+				service,
+				snapshot,
+				"service requires a resolved target_port/service_port from explicit config or a single TCP EXPOSE before rollout",
+			)
 		}
 		if err := validateServiceHealthcheckConsistency(service); err != nil {
 			return err
@@ -647,6 +657,21 @@ func declaredServicePort(expectedTarget BuildTargetServiceRecord, service Bluepr
 		return port
 	}
 	return firstPositive(service.TargetPort, service.ServicePort)
+}
+
+func hasDeclaredBuildTargetPort(expectedTarget BuildTargetServiceRecord) bool {
+	return expectedTarget.DeclaredTargetPort > 0 ||
+		expectedTarget.DeclaredServicePort > 0 ||
+		extractHealthcheckPort(expectedTarget.DeclaredHealthcheck) > 0
+}
+
+func isAcceptedResolvedServicePortSource(raw string) bool {
+	switch normalizePortResolutionSource(raw) {
+	case BuildPortResolutionSourceExplicit, BuildPortResolutionSourceDockerInspect:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateServiceHealthcheckConsistency(service BlueprintServiceContractRecord) error {
