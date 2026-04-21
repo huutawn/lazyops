@@ -134,6 +134,8 @@ func (ctl *BootstrapController) OneClickDeploy(c *gin.Context) {
 			response.Error(c, http.StatusUnprocessableEntity, "one-click deploy failed", "secret_bearing_config", err.Error())
 		case errors.Is(err, service.ErrHardCodedDeployAuthority):
 			response.Error(c, http.StatusUnprocessableEntity, "one-click deploy failed", "hard_coded_deploy_authority", err.Error())
+		case errors.Is(err, service.ErrOneClickRepoServicesNotReady):
+			response.Error(c, http.StatusUnprocessableEntity, "one-click deploy failed", "repo_services_not_ready", err.Error())
 		case errors.Is(err, service.ErrNoProjectServicesConfigured):
 			response.Error(c, http.StatusConflict, "one-click deploy failed", "service_inventory_empty", err.Error())
 		case errors.Is(err, service.ErrBlueprintNotFound):
@@ -144,6 +146,10 @@ func (ctl *BootstrapController) OneClickDeploy(c *gin.Context) {
 		return
 	}
 
+	if strings.TrimSpace(result.BuildJobID) != "" && strings.TrimSpace(result.DeploymentID) == "" {
+		response.JSON(c, http.StatusAccepted, "one-click build accepted", mapper.ToBootstrapOneClickDeployResponse(*result))
+		return
+	}
 	response.JSON(c, http.StatusCreated, "one-click deployment created", mapper.ToBootstrapOneClickDeployResponse(*result))
 }
 

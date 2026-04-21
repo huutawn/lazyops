@@ -193,6 +193,13 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) (normalizedService
 			strings.TrimSpace(spec.Name),
 		)
 	}
+	imageRef := strings.TrimSpace(spec.ImageRef)
+	if imageRef == "" && !isManagedInternalServiceKind(spec.Kind) {
+		return normalizedServiceSpec{}, fmt.Errorf(
+			"service %q requires an explicit resolved image_ref before manifest generation",
+			strings.TrimSpace(spec.Name),
+		)
+	}
 	servicePort := firstPositive(spec.ServicePort, targetPort)
 	replicas := spec.Replicas
 	if replicas <= 0 {
@@ -245,7 +252,7 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) (normalizedService
 		Public:          spec.Public,
 		PlacementMode:   strings.TrimSpace(spec.PlacementMode),
 		PlacementNodeID: strings.TrimSpace(spec.PlacementNodeID),
-		ImageRef:        firstNonEmpty(spec.ImageRef, defaultPlaceholderImageRef),
+		ImageRef:        firstNonEmpty(imageRef, defaultPlaceholderImageRef),
 		TargetPort:      targetPort,
 		ServicePort:     servicePort,
 		Replicas:        replicas,

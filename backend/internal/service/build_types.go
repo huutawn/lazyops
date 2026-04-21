@@ -136,6 +136,20 @@ type BuildJobRecord struct {
 	UpdatedAt            time.Time
 }
 
+type ManualBuildEnqueueCommand struct {
+	ProjectID            string
+	ProjectRepoLinkID    string
+	GitHubInstallationID int64
+	GitHubRepoID         int64
+	RepoOwner            string
+	RepoName             string
+	RepoFullName         string
+	TrackedBranch        string
+	CommitSHA            string
+	TriggerKind          string
+	PreviewEnabled       bool
+}
+
 type BuildCallbackCommand struct {
 	BuildJobID              string
 	ProjectID               string

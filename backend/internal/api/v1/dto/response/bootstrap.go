@@ -104,15 +104,17 @@ type BootstrapPipelineEventResponse struct {
 }
 
 type BootstrapOneClickDeployResponse struct {
-	ProjectID     string                           `json:"project_id"`
-	BlueprintID   string                           `json:"blueprint_id"`
-	RevisionID    string                           `json:"revision_id"`
-	DeploymentID  string                           `json:"deployment_id"`
-	RolloutStatus string                           `json:"rollout_status"`
-	RolloutReason string                           `json:"rollout_reason,omitempty"`
-	CorrelationID string                           `json:"correlation_id,omitempty"`
-	AgentID       string                           `json:"agent_id,omitempty"`
-	Timeline      []BootstrapPipelineEventResponse `json:"timeline"`
+	ProjectID      string                           `json:"project_id"`
+	BlueprintID    string                           `json:"blueprint_id"`
+	RevisionID     string                           `json:"revision_id"`
+	DeploymentID   string                           `json:"deployment_id"`
+	BuildJobID     string                           `json:"build_job_id,omitempty"`
+	BuildJobStatus string                           `json:"build_job_status,omitempty"`
+	RolloutStatus  string                           `json:"rollout_status"`
+	RolloutReason  string                           `json:"rollout_reason,omitempty"`
+	CorrelationID  string                           `json:"correlation_id,omitempty"`
+	AgentID        string                           `json:"agent_id,omitempty"`
+	Timeline       []BootstrapPipelineEventResponse `json:"timeline"`
 }
 
 type BootstrapConnectInfraSSHResponse struct {

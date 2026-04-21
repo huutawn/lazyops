@@ -59,15 +59,17 @@ func ToBootstrapOneClickDeployResponse(record service.BootstrapOneClickDeployRec
 	}
 
 	return responsedto.BootstrapOneClickDeployResponse{
-		ProjectID:     record.ProjectID,
-		BlueprintID:   record.BlueprintID,
-		RevisionID:    record.RevisionID,
-		DeploymentID:  record.DeploymentID,
-		RolloutStatus: record.RolloutStatus,
-		RolloutReason: record.RolloutReason,
-		CorrelationID: record.CorrelationID,
-		AgentID:       record.AgentID,
-		Timeline:      timeline,
+		ProjectID:      record.ProjectID,
+		BlueprintID:    record.BlueprintID,
+		RevisionID:     record.RevisionID,
+		DeploymentID:   record.DeploymentID,
+		BuildJobID:     record.BuildJobID,
+		BuildJobStatus: record.BuildJobStatus,
+		RolloutStatus:  record.RolloutStatus,
+		RolloutReason:  record.RolloutReason,
+		CorrelationID:  record.CorrelationID,
+		AgentID:        record.AgentID,
+		Timeline:       timeline,
 	}
 }
 

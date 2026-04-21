@@ -56,7 +56,7 @@ func TestValidateK3sManifestPreflightWarnsOnDependencyOrder(t *testing.T) {
 		Project: ProjectMetadata{Namespace: "lazyops-test"},
 		Revision: contracts.DesiredRevisionPayload{
 			ServiceSpecs: []contracts.K3sServiceSpecPayload{
-				{Name: "api"},
+				{Name: "api", ImageRef: "ghcr.io/lazyops/api:abc123", TargetPort: 8080, ServicePort: 8080},
 				{Name: "db", Kind: "postgres"},
 			},
 			InternalBindings: []contracts.InternalBindingPayload{
@@ -137,6 +137,29 @@ func TestValidateK3sManifestPreflightRejectsGenericServiceWithoutResolvedPort(t 
 	_, err := validateK3sManifestPreflight(runtimeCtx)
 	if err == nil || !strings.Contains(err.Error(), "requires a resolved target_port") {
 		t.Fatalf("expected unresolved target port validation error, got %v", err)
+	}
+}
+
+func TestValidateK3sManifestPreflightRejectsGenericServiceWithoutResolvedImage(t *testing.T) {
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{Namespace: "lazyops-test"},
+		Revision: contracts.DesiredRevisionPayload{
+			ServiceSpecs: []contracts.K3sServiceSpecPayload{
+				{
+					Name:           "api",
+					Kind:           "api",
+					RuntimeProfile: "service",
+					Public:         true,
+					TargetPort:     8080,
+					ServicePort:    8080,
+				},
+			},
+		},
+	}
+
+	_, err := validateK3sManifestPreflight(runtimeCtx)
+	if err == nil || !strings.Contains(err.Error(), "requires a resolved image_ref") {
+		t.Fatalf("expected unresolved image validation error, got %v", err)
 	}
 }
 

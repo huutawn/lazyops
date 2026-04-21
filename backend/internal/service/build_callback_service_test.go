@@ -87,6 +87,55 @@ func TestBuildCallbackServiceSuccessCreatesArtifactReadyRevision(t *testing.T) {
 	}
 }
 
+func TestBuildCallbackServiceAcceptsResolvedCommitForManualBuildJob(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModel(t, "bp_123", "prj_123"))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubDeliveryID:     "manual:bld_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoFullName:         "lazyops/backend",
+		TriggerKind:          "one_click_deploy",
+		Status:               BuildJobStatusQueued,
+		CommitSHA:            "",
+		TrackedBranch:        "main",
+		WorkerInputJSON:      `{"build_job_id":"bld_123","project_id":"prj_123","project_repo_link_id":"prl_123","github_delivery_id":"manual:bld_123","github_installation_id":100,"github_repo_id":42,"repo_owner":"lazyops","repo_name":"backend","repo_full_name":"lazyops/backend","tracked_branch":"main","commit_sha":"","trigger_kind":"one_click_deploy","preview_enabled":false,"artifact_metadata_stage":{"commit_sha":""},"retry_policy":{"max_attempts":3,"backoff":"linear"},"callback_expectation":{"path":"/api/v1/builds/callback","required_fields":["build_job_id","project_id","commit_sha","status","image_ref","image_digest","metadata.detected_services"]}}`,
+		ArtifactMetadataJSON: `{"commit_sha":""}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID:       "bld_123",
+		ProjectID:        "prj_123",
+		CommitSHA:        "abc123def456",
+		Status:           "succeeded",
+		ImageRef:         "ghcr.io/lazyops/backend:abc123",
+		ImageDigest:      "sha256:deadbeef",
+		DetectedServices: []string{"api"},
+	})
+	if err != nil {
+		t.Fatalf("build callback success for manual build: %v", err)
+	}
+	if result.BuildJob.CommitSHA != "abc123def456" {
+		t.Fatalf("expected resolved commit sha to persist on build job, got %#v", result.BuildJob)
+	}
+	storedJob := buildStore.byProjectID["prj_123"]["bld_123"]
+	if storedJob == nil || storedJob.CommitSHA != "abc123def456" {
+		t.Fatalf("expected stored build job commit sha to update, got %#v", storedJob)
+	}
+}
+
 func TestBuildCallbackServiceAutoCompilesHiddenBlueprintWithoutExistingBlueprint(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",

@@ -111,6 +111,26 @@ func TestGeneratorRejectsGenericServiceWithoutResolvedPort(t *testing.T) {
 	}
 }
 
+func TestGeneratorRejectsGenericServiceWithoutResolvedImage(t *testing.T) {
+	gen := NewGenerator()
+
+	_, err := gen.Generate(Input{
+		Namespace: "lazyops-prj-123",
+		Services: []ServiceSpec{
+			{
+				Name:        "api",
+				Kind:        "api",
+				Public:      true,
+				TargetPort:  8080,
+				ServicePort: 8080,
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires an explicit resolved image_ref") {
+		t.Fatalf("expected unresolved image error, got %v", err)
+	}
+}
+
 func TestGeneratorOmitsProbesForGenericServiceWithoutHealthcheck(t *testing.T) {
 	gen := NewGenerator()
 

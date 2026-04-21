@@ -200,6 +200,12 @@ func requiresPVCForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
 
 func validateK3sServicePorts(spec contracts.K3sServiceSpecPayload) error {
 	name := strings.TrimSpace(spec.Name)
+	if requiresResolvedImageForK3sSpec(spec) && strings.TrimSpace(spec.ImageRef) == "" {
+		return fmt.Errorf(
+			"service %q requires a resolved image_ref before k3s rollout",
+			name,
+		)
+	}
 	if requiresResolvedPortForK3sSpec(spec) && spec.TargetPort <= 0 {
 		return fmt.Errorf(
 			"service %q requires a resolved target_port before k3s rollout; declare target_port/service_port or a precise healthcheck.port",
@@ -220,6 +226,15 @@ func validateK3sServicePorts(spec contracts.K3sServiceSpecPayload) error {
 		)
 	}
 	return nil
+}
+
+func requiresResolvedImageForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
+	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
+	case "postgres", "mysql", "redis", "rabbitmq", "internal-db":
+		return false
+	default:
+		return true
+	}
 }
 
 func requiresResolvedPortForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"lazyops-server/internal/config"
 	"lazyops-server/internal/models"
 
+	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -165,6 +167,11 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 		status = "failed"
 		slog.Error("build job failed", "job_id", job.ID, "error", err)
 	}
+	if strings.TrimSpace(result.CommitSHA) != "" {
+		input.CommitSHA = strings.TrimSpace(result.CommitSHA)
+	} else if strings.TrimSpace(input.CommitSHA) == "" {
+		input.CommitSHA = fallbackBuildCallbackCommit(job, input)
+	}
 
 	// Callback
 	if err := w.callback(ctx, input, status, result); err != nil {
@@ -223,6 +230,7 @@ type BuildServiceArtifactMetadata struct {
 }
 
 type buildResult struct {
+	CommitSHA               string
 	ImageRef                string
 	ImageDigest             string
 	ServiceArtifacts        []BuildServiceArtifactMetadata
@@ -268,11 +276,14 @@ func (w *Worker) buildAndPush(
 	input BuildWorkerInput,
 ) (buildResult, error) {
 	// Clone repo
-	repoDir, err := w.cloneRepo(ctx, input)
+	repoDir, resolvedCommitSHA, err := w.cloneRepo(ctx, input)
 	if err != nil {
 		return buildResult{}, fmt.Errorf("clone repo: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
+	if strings.TrimSpace(resolvedCommitSHA) != "" {
+		input.CommitSHA = strings.TrimSpace(resolvedCommitSHA)
+	}
 
 	// Login to registry
 	if err := w.dockerLogin(ctx); err != nil {
@@ -282,6 +293,7 @@ func (w *Worker) buildAndPush(
 	repoServiceTargets := normalizeBuildTargets(input.ServiceTargets)
 	if len(repoServiceTargets) > 0 {
 		result := buildResult{
+			CommitSHA:        input.CommitSHA,
 			Services:         make([]string, 0, len(repoServiceTargets)),
 			ServiceArtifacts: make([]BuildServiceArtifactMetadata, 0, len(repoServiceTargets)),
 		}
@@ -353,6 +365,7 @@ func (w *Worker) buildAndPush(
 	resolution := resolveBuildPort(BuildTargetServiceMetadata{}, services, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason)
 
 	return buildResult{
+		CommitSHA:               input.CommitSHA,
 		ImageRef:                imageName,
 		ImageDigest:             digest,
 		Services:                services,
@@ -446,34 +459,154 @@ func (w *Worker) buildImage(ctx context.Context, repoDir, imageName string) erro
 	return fmt.Errorf("nixpacks not found and Dockerfile missing at repository root")
 }
 
-func (w *Worker) cloneRepo(ctx context.Context, input BuildWorkerInput) (string, error) {
+func (w *Worker) cloneRepo(ctx context.Context, input BuildWorkerInput) (string, string, error) {
 	dir, err := os.MkdirTemp(w.cfg.BuildWorker.WorkspaceDir, fmt.Sprintf("build-%s-*", input.BuildJobID))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	// Use public HTTPS clone (no auth needed for public repos)
-	// For private repos, we'd need a GitHub App installation token
-	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", input.RepoOwner, input.RepoName)
+	repoURL, err := w.repoCloneURL(ctx, input)
+	if err != nil {
+		return "", "", err
+	}
 
-	slog.Info("cloning repo", "url", repoURL, "commit", input.CommitSHA)
+	slog.Info("cloning repo",
+		"repo_full_name", strings.TrimSpace(input.RepoFullName),
+		"tracked_branch", strings.TrimSpace(input.TrackedBranch),
+		"commit", input.CommitSHA,
+	)
 
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", repoURL, dir)
+	cloneArgs := []string{"clone", "--depth", "1"}
+	if strings.TrimSpace(input.CommitSHA) == "" && strings.TrimSpace(input.TrackedBranch) != "" {
+		cloneArgs = append(cloneArgs, "--branch", strings.TrimSpace(input.TrackedBranch))
+	}
+	cloneArgs = append(cloneArgs, repoURL, dir)
+	cloneCmd := exec.CommandContext(ctx, "git", cloneArgs...)
 	if output, err := cloneCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git clone: %s: %w", string(output), err)
+		return "", "", fmt.Errorf("git clone: %s: %w", string(output), err)
 	}
 	if commitSHA := strings.TrimSpace(input.CommitSHA); commitSHA != "" {
 		fetchCmd := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--depth", "1", "origin", commitSHA)
 		if output, err := fetchCmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git fetch %s: %s: %w", commitSHA, string(output), err)
+			return "", "", fmt.Errorf("git fetch %s: %s: %w", commitSHA, string(output), err)
 		}
 		checkoutCmd := exec.CommandContext(ctx, "git", "-C", dir, "checkout", "--detach", "FETCH_HEAD")
 		if output, err := checkoutCmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git checkout %s: %s: %w", commitSHA, string(output), err)
+			return "", "", fmt.Errorf("git checkout %s: %s: %w", commitSHA, string(output), err)
 		}
 	}
 
-	return dir, nil
+	resolvedCommitSHA, err := resolveGitHeadCommit(ctx, dir)
+	if err != nil {
+		return "", "", err
+	}
+
+	return dir, resolvedCommitSHA, nil
+}
+
+func (w *Worker) repoCloneURL(ctx context.Context, input BuildWorkerInput) (string, error) {
+	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", input.RepoOwner, input.RepoName)
+	if input.GitHubInstallationID <= 0 {
+		return repoURL, nil
+	}
+	if strings.TrimSpace(w.cfg.GitHubApp.AppID) == "" || strings.TrimSpace(w.cfg.GitHubApp.PrivateKey) == "" {
+		return repoURL, nil
+	}
+
+	token, err := w.createGitHubInstallationAccessToken(ctx, input.GitHubInstallationID)
+	if err != nil {
+		return "", fmt.Errorf("github installation token: %w", err)
+	}
+
+	parsed, err := url.Parse(repoURL)
+	if err != nil {
+		return "", err
+	}
+	parsed.User = url.UserPassword("x-access-token", token)
+	return parsed.String(), nil
+}
+
+func (w *Worker) createGitHubInstallationAccessToken(ctx context.Context, installationID int64) (string, error) {
+	appID := strings.TrimSpace(w.cfg.GitHubApp.AppID)
+	privateKey := strings.TrimSpace(w.cfg.GitHubApp.PrivateKey)
+	if appID == "" || privateKey == "" || installationID <= 0 {
+		return "", fmt.Errorf("github app credentials unavailable")
+	}
+
+	privateKey = strings.ReplaceAll(privateKey, "\\n", "\n")
+	now := time.Now().UTC()
+	claims := jwt.RegisteredClaims{
+		Issuer:    appID,
+		IssuedAt:  jwt.NewNumericDate(now.Add(-1 * time.Minute)),
+		NotBefore: jwt.NewNumericDate(now.Add(-1 * time.Minute)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(9 * time.Minute)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKey))
+	if err != nil {
+		return "", err
+	}
+	signed, err := token.SignedString(key)
+	if err != nil {
+		return "", err
+	}
+
+	endpoint := fmt.Sprintf("https://api.github.com/app/installations/%d/access_tokens", installationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+signed)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("github api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Token) == "" {
+		return "", fmt.Errorf("github installation token missing from response")
+	}
+	return strings.TrimSpace(payload.Token), nil
+}
+
+func resolveGitHeadCommit(ctx context.Context, repoDir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD: %s: %w", string(output), err)
+	}
+	commitSHA := strings.TrimSpace(string(output))
+	if commitSHA == "" {
+		return "", fmt.Errorf("git rev-parse HEAD returned empty commit")
+	}
+	return commitSHA, nil
+}
+
+func fallbackBuildCallbackCommit(job models.BuildJob, input BuildWorkerInput) string {
+	if commitSHA := strings.TrimSpace(job.CommitSHA); commitSHA != "" {
+		return commitSHA
+	}
+	if commitSHA := strings.TrimSpace(input.CommitSHA); commitSHA != "" {
+		return commitSHA
+	}
+	if branch := strings.TrimSpace(input.TrackedBranch); branch != "" {
+		return branch
+	}
+	return "unknown"
 }
 
 func (w *Worker) dockerLogin(ctx context.Context) error {

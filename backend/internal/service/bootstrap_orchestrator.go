@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ const (
 	bootstrapModeDistributedK3s  = "distributed-k3s"
 	bootstrapDeployStuckTimeout  = 10 * time.Minute
 )
+
+var ErrOneClickRepoServicesNotReady = errors.New("one-click deploy requires deployment-ready repo services")
 
 type BootstrapOrchestrator struct {
 	projects         ProjectStore
@@ -38,6 +41,7 @@ type BootstrapOrchestrator struct {
 	blueprints       *BlueprintService
 	deploymentSvc    *DeploymentService
 	rolloutSvc       *RolloutExecutionService
+	buildJobs        *BuildJobService
 }
 
 type BootstrapAutoCommand struct {
@@ -83,15 +87,17 @@ type BootstrapPipelineEventRecord struct {
 }
 
 type BootstrapOneClickDeployRecord struct {
-	ProjectID     string
-	BlueprintID   string
-	RevisionID    string
-	DeploymentID  string
-	RolloutStatus string
-	RolloutReason string
-	CorrelationID string
-	AgentID       string
-	Timeline      []BootstrapPipelineEventRecord
+	ProjectID      string
+	BlueprintID    string
+	RevisionID     string
+	DeploymentID   string
+	BuildJobID     string
+	BuildJobStatus string
+	RolloutStatus  string
+	RolloutReason  string
+	CorrelationID  string
+	AgentID        string
+	Timeline       []BootstrapPipelineEventRecord
 }
 
 type BootstrapStepActionRecord struct {
@@ -238,6 +244,7 @@ func (s *BootstrapOrchestrator) WithOneClickPipeline(
 	blueprints *BlueprintService,
 	deploymentSvc *DeploymentService,
 	rolloutSvc *RolloutExecutionService,
+	buildJobs *BuildJobService,
 ) *BootstrapOrchestrator {
 	if s == nil {
 		return s
@@ -247,6 +254,7 @@ func (s *BootstrapOrchestrator) WithOneClickPipeline(
 	s.blueprints = blueprints
 	s.deploymentSvc = deploymentSvc
 	s.rolloutSvc = rolloutSvc
+	s.buildJobs = buildJobs
 	return s
 }
 
@@ -322,6 +330,12 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 	}
 	if binding == nil {
 		return nil, ErrUnknownTargetRef
+	}
+	if serviceInventory.RepoCount > 0 && strings.TrimSpace(cmd.ImageRef) == "" {
+		return s.enqueueOneClickRepoBuild(*project, repoLink, cmd)
+	}
+	if err := s.validateOneClickDeployReadiness(project.ID, binding, strings.TrimSpace(cmd.ImageRef)); err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -434,15 +448,17 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 	}
 
 	return &BootstrapOneClickDeployRecord{
-		ProjectID:     project.ID,
-		BlueprintID:   deployResult.Revision.BlueprintID,
-		RevisionID:    deployResult.Revision.ID,
-		DeploymentID:  deployResult.Deployment.ID,
-		RolloutStatus: rolloutStatus,
-		RolloutReason: rolloutReason,
-		CorrelationID: correlationID,
-		AgentID:       agentID,
-		Timeline:      timeline,
+		ProjectID:      project.ID,
+		BlueprintID:    deployResult.Revision.BlueprintID,
+		RevisionID:     deployResult.Revision.ID,
+		DeploymentID:   deployResult.Deployment.ID,
+		BuildJobID:     "",
+		BuildJobStatus: "",
+		RolloutStatus:  rolloutStatus,
+		RolloutReason:  rolloutReason,
+		CorrelationID:  correlationID,
+		AgentID:        agentID,
+		Timeline:       timeline,
 	}, nil
 }
 
@@ -459,6 +475,110 @@ func (s *BootstrapOrchestrator) markOneClickRolloutFailed(projectID, deploymentI
 		return err
 	}
 	return nil
+}
+
+func (s *BootstrapOrchestrator) enqueueOneClickRepoBuild(
+	project models.Project,
+	repoLink *models.ProjectRepoLink,
+	cmd BootstrapOneClickDeployCommand,
+) (*BootstrapOneClickDeployRecord, error) {
+	if repoLink == nil {
+		return nil, ErrRepoLinkNotFound
+	}
+	if s == nil || s.buildJobs == nil {
+		return nil, fmt.Errorf("%w: repo build pipeline is not enabled", ErrOneClickRepoServicesNotReady)
+	}
+
+	githubInstallationID, err := s.resolveRepoLinkGitHubInstallationID(project.UserID, repoLink.GitHubInstallationID)
+	if err != nil {
+		return nil, err
+	}
+	if githubInstallationID <= 0 {
+		return nil, fmt.Errorf("%w: linked GitHub installation is unavailable for one-click build", ErrOneClickRepoServicesNotReady)
+	}
+
+	trackedBranch, err := normalizeTrackedBranch(repoLink.TrackedBranch, project.DefaultBranch)
+	if err != nil {
+		return nil, err
+	}
+
+	triggerKind := strings.TrimSpace(cmd.TriggerKind)
+	if triggerKind == "" {
+		triggerKind = "one_click_deploy"
+	}
+
+	buildJob, err := s.buildJobs.EnqueueManual(ManualBuildEnqueueCommand{
+		ProjectID:            project.ID,
+		ProjectRepoLinkID:    repoLink.ID,
+		GitHubInstallationID: githubInstallationID,
+		GitHubRepoID:         repoLink.GitHubRepoID,
+		RepoOwner:            strings.TrimSpace(repoLink.RepoOwner),
+		RepoName:             strings.TrimSpace(repoLink.RepoName),
+		RepoFullName:         strings.TrimSpace(repoLink.RepoOwner + "/" + repoLink.RepoName),
+		TrackedBranch:        trackedBranch,
+		CommitSHA:            strings.TrimSpace(cmd.CommitSHA),
+		TriggerKind:          triggerKind,
+		PreviewEnabled:       repoLink.PreviewEnabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	sourceRef := resolveOneClickSourceRef(cmd.SourceRef, *repoLink)
+	return &BootstrapOneClickDeployRecord{
+		ProjectID:      project.ID,
+		BuildJobID:     buildJob.ID,
+		BuildJobStatus: buildJob.Status,
+		RolloutStatus:  "build_queued",
+		RolloutReason:  fmt.Sprintf("waiting for build job %s to finish", buildJob.ID),
+		Timeline: []BootstrapPipelineEventRecord{
+			{
+				ID:        "queue_build",
+				State:     "completed",
+				Label:     "Queue build",
+				Message:   fmt.Sprintf("Queued build job %s for %s", buildJob.ID, sourceRef),
+				Timestamp: now,
+			},
+			{
+				ID:        "build_images",
+				State:     "running",
+				Label:     "Build repo services",
+				Message:   "Build worker will clone the linked repository and build deployable images",
+				Timestamp: now,
+			},
+			{
+				ID:        "create_deployment",
+				State:     "pending",
+				Label:     "Create deployment",
+				Message:   "Deployment will be created automatically after the build callback succeeds",
+				Timestamp: now,
+			},
+			{
+				ID:        "rollout",
+				State:     "pending",
+				Label:     "Start rollout",
+				Message:   "Rollout will start automatically after deployment creation",
+				Timestamp: now,
+			},
+		},
+	}, nil
+}
+
+func (s *BootstrapOrchestrator) resolveRepoLinkGitHubInstallationID(ownerUserID, installationRecordID string) (int64, error) {
+	if s == nil || s.installations == nil || strings.TrimSpace(ownerUserID) == "" || strings.TrimSpace(installationRecordID) == "" {
+		return 0, nil
+	}
+	items, err := s.installations.ListByUser(strings.TrimSpace(ownerUserID))
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		if item.ID == installationRecordID && item.RevokedAt == nil {
+			return item.GitHubInstallationID, nil
+		}
+	}
+	return 0, nil
 }
 
 func (s *BootstrapOrchestrator) OnInventoryChanged(userID string) error {
@@ -1044,6 +1164,85 @@ func (s *BootstrapOrchestrator) summarizeConfiguredServices(projectID string) (b
 		summary.InternalCount += len(items)
 	}
 	return summary, nil
+}
+
+func (s *BootstrapOrchestrator) validateOneClickDeployReadiness(projectID string, binding *models.DeploymentBinding, globalImageRef string) error {
+	if s == nil || s.projectServices == nil || binding == nil {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(binding.RuntimeMode), bootstrapModeDistributedK3s) {
+		return nil
+	}
+
+	items, err := s.projectServices.ListByProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	repoServices := make([]ProjectServiceRecord, 0, len(items))
+	for _, item := range items {
+		record, err := ToProjectServiceRecord(item)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(record.SourceType) != serviceSourceTypeRepo {
+			continue
+		}
+		repoServices = append(repoServices, record)
+	}
+	if len(repoServices) == 0 {
+		return nil
+	}
+
+	allowGlobalImageRef := strings.TrimSpace(globalImageRef) != "" && len(repoServices) == 1
+	issues := make([]string, 0, len(repoServices)*2)
+	for _, record := range repoServices {
+		service := BlueprintServiceContractRecord{
+			Name:           record.Name,
+			Path:           record.Path,
+			Kind:           record.Kind,
+			SourceType:     record.SourceType,
+			Public:         record.Public,
+			RuntimeProfile: record.RuntimeProfile,
+			ImageRef:       record.ImageRef,
+			TargetPort:     record.TargetPort,
+			ServicePort:    record.ServicePort,
+			Healthcheck:    cloneAnyMap(record.Healthcheck),
+		}
+		expected := BuildTargetServiceRecord{
+			ServiceName:         record.Name,
+			ServicePath:         record.Path,
+			RuntimeProfile:      record.RuntimeProfile,
+			Public:              record.Public,
+			DeclaredTargetPort:  record.TargetPort,
+			DeclaredServicePort: record.ServicePort,
+			DeclaredHealthcheck: cloneAnyMap(record.Healthcheck),
+		}
+
+		if err := validateServiceHealthcheckConsistency(service); err != nil {
+			issues = append(issues, err.Error())
+			continue
+		}
+		if strings.TrimSpace(service.ImageRef) == "" && !allowGlobalImageRef {
+			issues = append(issues, fmt.Sprintf(
+				"service %q requires image_ref before one-click k3s deploy; repo builds are not attached automatically in this flow",
+				record.Name,
+			))
+		}
+		if requiresResolvedServicePort(service, expected) &&
+			firstPositive(service.TargetPort, service.ServicePort, extractHealthcheckPort(service.Healthcheck)) <= 0 {
+			issues = append(issues, fmt.Sprintf(
+				"service %q requires target_port/service_port or healthcheck.port before one-click k3s deploy",
+				record.Name,
+			))
+		}
+	}
+
+	if len(issues) == 0 {
+		return nil
+	}
+	sort.Strings(issues)
+	return fmt.Errorf("%w: %s", ErrOneClickRepoServicesNotReady, strings.Join(issues, "; "))
 }
 
 func (s *BootstrapOrchestrator) listProjectInternalServices(projectID string) ([]models.ProjectInternalService, error) {

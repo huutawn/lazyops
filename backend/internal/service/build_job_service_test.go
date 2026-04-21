@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,13 +93,14 @@ func (f *fakeBuildJobStore) UpdateStatus(buildJobID, status string, startedAt, c
 	return nil
 }
 
-func (f *fakeBuildJobStore) UpdateResult(buildJobID, status, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
+func (f *fakeBuildJobStore) UpdateResult(buildJobID, status, commitSHA, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
 	if f.updateErr != nil {
 		return f.updateErr
 	}
 	for _, projectItems := range f.byProjectID {
 		if item, ok := projectItems[buildJobID]; ok {
 			item.Status = status
+			item.CommitSHA = commitSHA
 			item.ArtifactMetadataJSON = artifactMetadataJSON
 			item.UpdatedAt = updatedAt
 			if startedAt != nil {
@@ -200,6 +202,51 @@ func TestBuildJobServiceRejectsBranchPolicyMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, ErrBuildBranchRejected) {
 		t.Fatalf("expected ErrBuildBranchRejected, got %v", err)
+	}
+}
+
+func TestBuildJobServiceEnqueueManualBuildSuccess(t *testing.T) {
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
+		{Name: "api", Path: "backend", Kind: "api", Public: true},
+		{Name: "db", Path: ".lazyops/internal/postgres/db", Kind: "postgres", SourceType: "internal", Public: false},
+	})
+	if err != nil {
+		t.Fatalf("build configured services: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+
+	buildStore := newFakeBuildJobStore()
+	service := NewBuildJobService(newFakeProjectRepoLinkStore(), buildStore).WithServiceStore(serviceStore)
+
+	record, err := service.EnqueueManual(ManualBuildEnqueueCommand{
+		ProjectID:            "prj_123",
+		ProjectRepoLinkID:    "prl_123",
+		GitHubInstallationID: 100,
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		RepoFullName:         "lazyops/backend",
+		TrackedBranch:        "main",
+		TriggerKind:          "one_click_deploy",
+	})
+	if err != nil {
+		t.Fatalf("enqueue manual build job: %v", err)
+	}
+
+	if record.Status != BuildJobStatusQueued {
+		t.Fatalf("expected queued build job, got %#v", record)
+	}
+	if record.GitHubDeliveryID == "" || !strings.HasPrefix(record.GitHubDeliveryID, "manual:") {
+		t.Fatalf("expected synthetic manual delivery id, got %#v", record)
+	}
+	if record.CommitSHA != "" || record.TrackedBranch != "main" {
+		t.Fatalf("expected unresolved commit and tracked branch main, got %#v", record)
+	}
+	if len(record.WorkerInput.ServiceTargets) != 1 || record.WorkerInput.ServiceTargets[0].ServiceName != "api" {
+		t.Fatalf("expected staged repo service target api, got %#v", record.WorkerInput.ServiceTargets)
 	}
 }
 

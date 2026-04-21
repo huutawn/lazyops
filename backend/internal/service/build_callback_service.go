@@ -79,8 +79,7 @@ func (s *BuildCallbackService) WithServiceInventoryCompiler(compiler *ServiceInv
 func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackResult, error) {
 	projectID := strings.TrimSpace(cmd.ProjectID)
 	buildJobID := strings.TrimSpace(cmd.BuildJobID)
-	commitSHA := strings.TrimSpace(cmd.CommitSHA)
-	if projectID == "" || buildJobID == "" || commitSHA == "" {
+	if projectID == "" || buildJobID == "" {
 		return nil, ErrInvalidInput
 	}
 
@@ -96,7 +95,15 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 	if job == nil {
 		return nil, ErrBuildJobNotFound
 	}
-	if strings.TrimSpace(job.CommitSHA) != commitSHA {
+	commitSHA := strings.TrimSpace(cmd.CommitSHA)
+	storedCommitSHA := strings.TrimSpace(job.CommitSHA)
+	if commitSHA == "" {
+		commitSHA = storedCommitSHA
+	}
+	if commitSHA == "" {
+		return nil, ErrInvalidInput
+	}
+	if storedCommitSHA != "" && storedCommitSHA != commitSHA {
 		return nil, ErrBuildArtifactMismatch
 	}
 	buildJobRecord, err := ToBuildJobRecord(*job)
@@ -139,11 +146,12 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 		startedAt = &now
 	}
 	completedAt := &now
-	if err := s.buildJobs.UpdateResult(job.ID, status, string(artifactMetadataJSON), startedAt, completedAt, now); err != nil {
+	if err := s.buildJobs.UpdateResult(job.ID, status, commitSHA, string(artifactMetadataJSON), startedAt, completedAt, now); err != nil {
 		return nil, err
 	}
 
 	job.Status = status
+	job.CommitSHA = commitSHA
 	job.ArtifactMetadataJSON = string(artifactMetadataJSON)
 	job.StartedAt = startedAt
 	job.CompletedAt = completedAt
@@ -166,9 +174,10 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 			if err != nil {
 				return nil, err
 			}
-			if err := s.buildJobs.UpdateResult(job.ID, status, string(artifactMetadataJSON), startedAt, completedAt, now); err != nil {
+			if err := s.buildJobs.UpdateResult(job.ID, status, commitSHA, string(artifactMetadataJSON), startedAt, completedAt, now); err != nil {
 				return nil, err
 			}
+			job.CommitSHA = commitSHA
 			job.ArtifactMetadataJSON = string(artifactMetadataJSON)
 			buildJobRecord, err = ToBuildJobRecord(*job)
 			if err != nil {

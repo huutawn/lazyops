@@ -268,6 +268,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		blueprintSvc,
 		deploymentSvc,
 		rolloutExecutionSvc,
+		buildJobSvc,
 	)
 
 	previewService := service.NewPreviewEnvironmentService(

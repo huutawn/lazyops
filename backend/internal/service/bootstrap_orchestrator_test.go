@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func TestBootstrapOrchestratorGetStatusReadyToDeploy(t *testing.T) {
 		newFakeMeshNetworkStore(),
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil)
+	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil, nil)
 
 	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
 	if err != nil {
@@ -131,7 +132,7 @@ func TestBootstrapOrchestratorGetStatusBlocksDeployWhenServiceInventoryIsEmpty(t
 		newFakeMeshNetworkStore(),
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil)
+	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil, nil)
 
 	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
 	if err != nil {
@@ -266,7 +267,7 @@ func TestBootstrapOrchestratorGetStatusIncludesRuntimeInventory(t *testing.T) {
 		newFakeMeshNetworkStore(),
 		newFakeClusterStore(),
 		nil,
-	).WithOneClickPipeline(nil, nil, nil, deploymentSvc, nil).WithInternalServiceStore(internalServices)
+	).WithOneClickPipeline(nil, nil, nil, deploymentSvc, nil, nil).WithInternalServiceStore(internalServices)
 
 	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
 	if err != nil {
@@ -810,7 +811,7 @@ func TestBootstrapOrchestratorOneClickDeployRequiresConfiguredServices(t *testin
 		meshStore,
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, nil)
 
 	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",
@@ -887,7 +888,7 @@ func TestBootstrapOrchestratorOneClickDeployAllowsInternalOnlyProjectsWithoutRep
 		meshStore,
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, nil)
 
 	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",
@@ -982,7 +983,7 @@ func TestBootstrapOrchestratorOneClickDeployMarksDeploymentFailedWhenRolloutCann
 		newFakeMeshNetworkStore(),
 		newFakeClusterStore(),
 		nil,
-	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, &RolloutExecutionService{})
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, &RolloutExecutionService{}, nil)
 
 	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",
@@ -1077,7 +1078,7 @@ func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 		meshStore,
 		clusterStore,
 		nil,
-	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil)
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, nil)
 
 	_, err = orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
 		RequesterUserID: "usr_123",
@@ -1086,5 +1087,302 @@ func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 	})
 	if !errors.Is(err, ErrRepoLinkNotFound) {
 		t.Fatalf("expected ErrRepoLinkNotFound, got %v", err)
+	}
+}
+
+func TestBootstrapOrchestratorOneClickDeployQueuesBuildForRepoK3sServiceWithoutImageOverride(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	installStore := newFakeGitHubInstallationStore(&models.GitHubInstallation{
+		ID:                   "ghi_alpha",
+		UserID:               "usr_123",
+		GitHubInstallationID: 100,
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto distributed k3s",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "cls_123",
+		PlacementPolicyJSON:     `{"strategy":"spread"}`,
+		DomainPolicyJSON:        `{"mode":"auto"}`,
+		CompatibilityPolicyJSON: `{"env_injection":false}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "be",
+		Path:   "backend",
+		Kind:   "api",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured services: %v", err)
+	}
+	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore()
+
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+	buildJobSvc := NewBuildJobService(repoLinkStore, buildStore).WithServiceStore(projectServiceStore)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		installStore,
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, buildJobSvc)
+
+	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+	})
+	if err != nil {
+		t.Fatalf("expected build to be queued, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.BuildJobID == "" || result.BuildJobStatus != BuildJobStatusQueued {
+		t.Fatalf("expected queued build job, got %#v", result)
+	}
+	if result.DeploymentID != "" || result.RevisionID != "" {
+		t.Fatalf("expected no deployment or revision before build callback, got %#v", result)
+	}
+	if result.RolloutStatus != "build_queued" {
+		t.Fatalf("expected build_queued rollout status, got %#v", result)
+	}
+	storedJob := buildStore.byProjectID["prj_123"][result.BuildJobID]
+	if storedJob == nil {
+		t.Fatalf("expected persisted build job %q", result.BuildJobID)
+	}
+	if storedJob.GitHubInstallationID != 100 {
+		t.Fatalf("expected GitHub installation id 100, got %#v", storedJob)
+	}
+	if storedJob.TrackedBranch != "main" || storedJob.CommitSHA != "" {
+		t.Fatalf("expected tracked branch main and unresolved commit sha, got %#v", storedJob)
+	}
+	if len(blueprintStore.items) != 0 {
+		t.Fatalf("expected no blueprints to be created, got %#v", blueprintStore.items)
+	}
+	deployments, listErr := deploymentStore.ListByProject("prj_123")
+	if listErr != nil {
+		t.Fatalf("list deployments: %v", listErr)
+	}
+	if len(deployments) != 0 {
+		t.Fatalf("expected no deployments to be created, got %#v", deployments)
+	}
+}
+
+func TestBootstrapOrchestratorOneClickDeployRejectsDirectRepoK3sDeployWithoutResolvedPortWhenImageOverrideProvided(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto distributed k3s",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "cls_123",
+		PlacementPolicyJSON:     `{"strategy":"spread"}`,
+		DomainPolicyJSON:        `{"mode":"auto"}`,
+		CompatibilityPolicyJSON: `{"env_injection":false}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "be",
+		Path:   "backend",
+		Kind:   "api",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured services: %v", err)
+	}
+	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		nil,
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, nil)
+
+	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		ImageRef:        "ghcr.io/lazyops/be:rev_123",
+	})
+	if !errors.Is(err, ErrOneClickRepoServicesNotReady) {
+		t.Fatalf("expected ErrOneClickRepoServicesNotReady, got result=%#v err=%v", result, err)
+	}
+	if !strings.Contains(err.Error(), `service "be" requires target_port/service_port or healthcheck.port`) {
+		t.Fatalf("expected unresolved port detail, got %v", err)
+	}
+}
+
+func TestBootstrapOrchestratorOneClickDeployAllowsDirectRepoK3sDeployWithExplicitImageOverrideAndHealthcheckPort(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto distributed k3s",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "cls_123",
+		PlacementPolicyJSON:     `{"strategy":"spread"}`,
+		DomainPolicyJSON:        `{"mode":"auto"}`,
+		CompatibilityPolicyJSON: `{"env_injection":false}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "be",
+		Path:   "backend",
+		Kind:   "api",
+		Public: true,
+		Healthcheck: map[string]any{
+			"path": "/healthz",
+			"port": 8080,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("build configured services: %v", err)
+	}
+	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		nil,
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, nil)
+
+	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		ImageRef:        "ghcr.io/lazyops/be:rev_123",
+	})
+	if err != nil {
+		t.Fatalf("one-click deploy: %v", err)
+	}
+	if result == nil || result.DeploymentID == "" || result.RevisionID == "" {
+		t.Fatalf("expected created deployment, got %#v", result)
 	}
 }
