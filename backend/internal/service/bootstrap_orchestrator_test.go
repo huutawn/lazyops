@@ -919,6 +919,100 @@ func TestBootstrapOrchestratorOneClickDeployAllowsInternalOnlyProjectsWithoutRep
 	}
 }
 
+func TestBootstrapOrchestratorOneClickDeployMarksDeploymentFailedWhenRolloutCannotStart(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme Internal",
+		Slug:          "acme-internal",
+		DefaultBranch: "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto standalone",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "standalone",
+		TargetKind:              "instance",
+		TargetID:                "inst_123",
+		PlacementPolicyJSON:     `{"strategy":"single-node"}`,
+		DomainPolicyJSON:        `{"mode":"auto"}`,
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "standalone", []ConfigureProjectServiceItem{{
+		Name:               "db",
+		Kind:               "postgres",
+		SourceType:         serviceSourceTypeInternal,
+		ManagedByLazyops:   true,
+		ConnectionTemplate: defaultPostgresConnectionTemplate(),
+	}})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+
+	compiler := NewServiceInventoryBlueprintCompiler(newFakeProjectRepoLinkStore(), bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		newFakeProjectRepoLinkStore(),
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		nil,
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, &RolloutExecutionService{})
+
+	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+	})
+	if err != nil {
+		t.Fatalf("one-click deploy: %v", err)
+	}
+	if result.RolloutStatus != "failed_to_start" {
+		t.Fatalf("expected failed_to_start rollout status, got %#v", result)
+	}
+
+	storedDeployment, err := deploymentStore.GetByIDForProject("prj_123", result.DeploymentID)
+	if err != nil {
+		t.Fatalf("load deployment: %v", err)
+	}
+	if storedDeployment == nil || storedDeployment.Status != DeploymentStatusFailed {
+		t.Fatalf("expected deployment to be marked failed, got %#v", storedDeployment)
+	}
+
+	storedRevision, err := revisionStore.GetByIDForProject("prj_123", result.RevisionID)
+	if err != nil {
+		t.Fatalf("load revision: %v", err)
+	}
+	if storedRevision == nil || storedRevision.Status != RevisionStatusFailed {
+		t.Fatalf("expected revision to be marked failed, got %#v", storedRevision)
+	}
+}
+
 func TestBootstrapOrchestratorOneClickDeployRequiresRepoLink(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",

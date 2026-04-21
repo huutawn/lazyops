@@ -419,6 +419,10 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 			timeline[len(timeline)-1].State = "failed"
 			timeline[len(timeline)-1].Timestamp = time.Now().UTC()
 			timeline[len(timeline)-1].Message = rolloutReason
+			if transitionErr := s.markOneClickRolloutFailed(project.ID, deployResult.Deployment.ID, deployResult.Revision.ID); transitionErr != nil {
+				rolloutReason = rolloutReason + "; additionally failed to mark deployment as failed: " + transitionErr.Error()
+				timeline[len(timeline)-1].Message = rolloutReason
+			}
 		}
 	}
 
@@ -433,6 +437,21 @@ func (s *BootstrapOrchestrator) OneClickDeploy(cmd BootstrapOneClickDeployComman
 		AgentID:       agentID,
 		Timeline:      timeline,
 	}, nil
+}
+
+func (s *BootstrapOrchestrator) markOneClickRolloutFailed(projectID, deploymentID, revisionID string) error {
+	if s == nil || s.deploymentSvc == nil {
+		return nil
+	}
+	if _, err := s.deploymentSvc.TransitionRevisionStatus(projectID, revisionID, RevisionStatusFailed); err != nil &&
+		!errors.Is(err, ErrInvalidRevisionStateTransition) {
+		return err
+	}
+	if _, err := s.deploymentSvc.TransitionDeploymentStatus(projectID, deploymentID, DeploymentStatusFailed); err != nil &&
+		!errors.Is(err, ErrInvalidDeploymentStateTransition) {
+		return err
+	}
+	return nil
 }
 
 func (s *BootstrapOrchestrator) OnInventoryChanged(userID string) error {
