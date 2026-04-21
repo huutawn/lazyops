@@ -175,6 +175,20 @@ type BootstrapRuntimeInventoryRecord struct {
 	InternalServices []BootstrapRuntimeInternalServiceRecord
 }
 
+type BootstrapBuildStatusRecord struct {
+	BuildJobID    string
+	Status        string
+	TriggerKind   string
+	CommitSHA     string
+	TrackedBranch string
+	Summary       string
+	Details       string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	StartedAt     *time.Time
+	CompletedAt   *time.Time
+}
+
 type ProjectBootstrapStatusRecord struct {
 	ProjectID        string
 	OverallState     string
@@ -182,6 +196,7 @@ type ProjectBootstrapStatusRecord struct {
 	AutoMode         BootstrapAutoModeRecord
 	Inventory        BootstrapInventoryRecord
 	RuntimeInventory BootstrapRuntimeInventoryRecord
+	LatestBuild      *BootstrapBuildStatusRecord
 	PublicURLs       []string
 	PublicURLReason  string
 	UpdatedAt        time.Time
@@ -507,6 +522,50 @@ func (s *BootstrapOrchestrator) enqueueOneClickRepoBuild(
 		triggerKind = "one_click_deploy"
 	}
 
+	if activeBuild, err := s.buildJobs.LatestActive(project.ID); err != nil {
+		return nil, err
+	} else if activeBuild != nil {
+		now := time.Now().UTC()
+		sourceRef := resolveOneClickSourceRef(cmd.SourceRef, *repoLink)
+		return &BootstrapOneClickDeployRecord{
+			ProjectID:      project.ID,
+			BuildJobID:     activeBuild.ID,
+			BuildJobStatus: activeBuild.Status,
+			RolloutStatus:  "build_queued",
+			RolloutReason:  fmt.Sprintf("reusing active build job %s", activeBuild.ID),
+			Timeline: []BootstrapPipelineEventRecord{
+				{
+					ID:        "reuse_build",
+					State:     "completed",
+					Label:     "Reuse active build",
+					Message:   fmt.Sprintf("Build job %s is already running for %s", activeBuild.ID, sourceRef),
+					Timestamp: now,
+				},
+				{
+					ID:        "build_images",
+					State:     "running",
+					Label:     "Build repo services",
+					Message:   "Build worker is still cloning/building the linked repository",
+					Timestamp: now,
+				},
+				{
+					ID:        "create_deployment",
+					State:     "pending",
+					Label:     "Create deployment",
+					Message:   "Deployment will be created automatically after the active build callback succeeds",
+					Timestamp: now,
+				},
+				{
+					ID:        "rollout",
+					State:     "pending",
+					Label:     "Start rollout",
+					Message:   "Rollout will start automatically after deployment creation",
+					Timestamp: now,
+				},
+			},
+		}, nil
+	}
+
 	buildJob, err := s.buildJobs.EnqueueManual(ManualBuildEnqueueCommand{
 		ProjectID:            project.ID,
 		ProjectRepoLinkID:    repoLink.ID,
@@ -648,14 +707,15 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 	}
 
 	infraState, infraSummary := deriveInfraStateSummary(inventory)
-	deployState, deploySummary, err := s.deriveDeployState(project.ID, codeState, infraState, serviceInventory)
-	if err != nil {
-		return nil, err
-	}
 	deploymentOverviews, err := s.listStatusDeployments(requesterUserID, requesterRole, project.ID)
 	if err != nil {
 		return nil, err
 	}
+	latestBuild, err := s.resolveLatestBuildStatus(project.ID, deploymentOverviews)
+	if err != nil {
+		return nil, err
+	}
+	deployState, deploySummary := s.deriveDeployState(codeState, infraState, serviceInventory, deploymentOverviews, latestBuild)
 	publicURLs, publicURLReason := resolveStatusPublicURLsFromOverviews(deploymentOverviews)
 	internalServices, err := s.listProjectInternalServices(project.ID)
 	if err != nil {
@@ -719,6 +779,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 			HealthyK3sClusters:  healthyClusterCount(inventory),
 		},
 		RuntimeInventory: runtimeInventory,
+		LatestBuild:      latestBuild,
 		PublicURLs:       publicURLs,
 		PublicURLReason:  publicURLReason,
 		UpdatedAt:        time.Now().UTC(),
@@ -1056,55 +1117,168 @@ func (s *BootstrapOrchestrator) collectInventory(userID string) (bootstrapInvent
 	}, nil
 }
 
-func (s *BootstrapOrchestrator) deriveDeployState(projectID, codeState, infraState string, serviceInventory bootstrapServiceInventorySummary) (string, string, error) {
-	if strings.TrimSpace(projectID) == "" {
-		return "blocked", "Dự án chưa sẵn sàng", nil
-	}
-
+func (s *BootstrapOrchestrator) deriveDeployState(
+	codeState, infraState string,
+	serviceInventory bootstrapServiceInventorySummary,
+	deployments []DeploymentOverviewRecord,
+	latestBuild *BootstrapBuildStatusRecord,
+) (string, string) {
 	if serviceInventory.Known && serviceInventory.TotalCount == 0 {
-		return "blocked", "Chưa có service nào được cấu hình. Hãy thêm ít nhất một service trong mục Dịch vụ", nil
+		return "blocked", "Chưa có service nào được cấu hình. Hãy thêm ít nhất một service trong mục Dịch vụ"
 	}
 
 	if serviceInventory.RepoCount > 0 && codeState != "healthy" {
-		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước", nil
+		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước"
 	}
 	if infraState != "ready" && infraState != "degraded" {
-		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước", nil
+		return "blocked", "Hãy kết nối mã nguồn và máy chủ trước"
 	}
 
 	if s.deployments == nil {
-		return "ready", "Đã sẵn sàng triển khai", nil
+		return "ready", "Đã sẵn sàng triển khai"
 	}
 
-	deployments, err := s.deployments.ListByProject(projectID)
-	if err != nil {
-		return "error", "Failed to inspect deployments", err
-	}
-	if len(deployments) == 0 {
-		return "ready", "Đã sẵn sàng triển khai", nil
+	latestDeployment := findLatestDeployment(deployments)
+	if latestBuild != nil && latestBuildShouldSurface(latestBuild, latestDeployment) {
+		switch strings.ToLower(strings.TrimSpace(latestBuild.Status)) {
+		case BuildJobStatusQueued, BuildJobStatusRunning:
+			return "building", latestBuild.Summary
+		case BuildJobStatusSucceeded:
+			if strings.TrimSpace(latestBuild.Details) != "" {
+				return "error", latestBuild.Details
+			}
+			return "building", latestBuild.Summary
+		case BuildJobStatusFailed, BuildJobStatusCanceled:
+			if strings.TrimSpace(latestBuild.Details) != "" {
+				return "error", latestBuild.Details
+			}
+			return "error", latestBuild.Summary
+		}
 	}
 
-	latest := deployments[0]
-	status := strings.ToLower(strings.TrimSpace(latest.Status))
+	if latestDeployment == nil {
+		return "ready", "Đã sẵn sàng triển khai"
+	}
+
+	status := strings.ToLower(strings.TrimSpace(latestDeployment.RolloutState))
 	switch status {
 	case DeploymentStatusQueued, DeploymentStatusRunning, DeploymentStatusCandidateReady:
-		lastActivity := latest.UpdatedAt
+		lastActivity := latestDeployment.UpdatedAt
 		if lastActivity.IsZero() {
-			lastActivity = latest.CreatedAt
+			lastActivity = latestDeployment.CreatedAt
 		}
 		if !lastActivity.IsZero() && time.Since(lastActivity) > bootstrapDeployStuckTimeout {
-			return "error", "Triển khai trước đó có thể đang bị kẹt. Vui lòng triển khai lại", nil
+			return "error", "Triển khai trước đó có thể đang bị kẹt. Vui lòng triển khai lại"
 		}
-		return "deploying", "Đang triển khai", nil
+		return "deploying", "Đang triển khai"
 	case DeploymentStatusPromoted:
-		return "healthy", "Bản triển khai mới nhất đang hoạt động tốt", nil
+		return "healthy", "Bản triển khai mới nhất đang hoạt động tốt"
 	case DeploymentStatusRolledBack:
-		return "rolled_back", "Bản triển khai mới nhất đã bị hoàn tác", nil
+		return "rolled_back", "Bản triển khai mới nhất đã bị hoàn tác"
 	case DeploymentStatusFailed, DeploymentStatusCanceled:
-		return "error", "Bản triển khai mới nhất thất bại", nil
+		return "error", "Bản triển khai mới nhất thất bại"
 	default:
-		return "ready", "Đã sẵn sàng triển khai", nil
+		return "ready", "Đã sẵn sàng triển khai"
 	}
+}
+
+func (s *BootstrapOrchestrator) resolveLatestBuildStatus(projectID string, deployments []DeploymentOverviewRecord) (*BootstrapBuildStatusRecord, error) {
+	if s == nil || s.buildJobs == nil || strings.TrimSpace(projectID) == "" {
+		return nil, nil
+	}
+
+	record, err := s.buildJobs.Latest(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, nil
+	}
+
+	summary, details := summarizeBootstrapBuild(*record, findLatestDeployment(deployments))
+	return &BootstrapBuildStatusRecord{
+		BuildJobID:    record.ID,
+		Status:        record.Status,
+		TriggerKind:   record.TriggerKind,
+		CommitSHA:     record.CommitSHA,
+		TrackedBranch: record.TrackedBranch,
+		Summary:       summary,
+		Details:       details,
+		CreatedAt:     record.CreatedAt,
+		UpdatedAt:     record.UpdatedAt,
+		StartedAt:     record.StartedAt,
+		CompletedAt:   record.CompletedAt,
+	}, nil
+}
+
+func latestBuildShouldSurface(build *BootstrapBuildStatusRecord, latestDeployment *DeploymentOverviewRecord) bool {
+	if build == nil {
+		return false
+	}
+	if isBuildJobActiveStatus(build.Status) {
+		return true
+	}
+	if latestDeployment == nil {
+		return true
+	}
+	return latestDeployment.CreatedAt.Before(build.CreatedAt)
+}
+
+func summarizeBootstrapBuild(build BuildJobRecord, latestDeployment *DeploymentOverviewRecord) (string, string) {
+	ref := strings.TrimSpace(build.RepoFullName)
+	if ref == "" {
+		ref = "linked repository"
+	}
+	branch := strings.TrimSpace(build.TrackedBranch)
+	if branch != "" {
+		ref = ref + "@" + branch
+	}
+
+	blockingReason := bootstrapBuildBlockingReason(build, latestDeployment)
+	switch strings.TrimSpace(strings.ToLower(build.Status)) {
+	case BuildJobStatusQueued:
+		return fmt.Sprintf("Đang xếp build images từ %s", ref), fmt.Sprintf("Build job %s đang chờ worker xử lý.", build.ID)
+	case BuildJobStatusRunning:
+		return fmt.Sprintf("Đang build images từ %s", ref), fmt.Sprintf("Build job %s đang clone/build repository trước khi tạo deployment.", build.ID)
+	case BuildJobStatusSucceeded:
+		if blockingReason != "" {
+			return "Build hoàn tất nhưng chưa thể tạo deployment", blockingReason
+		}
+		return "Build hoàn tất", fmt.Sprintf("Build job %s đã hoàn tất.", build.ID)
+	case BuildJobStatusFailed:
+		if blockingReason != "" {
+			return "Build thất bại", blockingReason
+		}
+		return "Build thất bại", fmt.Sprintf("Build job %s đã thất bại.", build.ID)
+	case BuildJobStatusCanceled:
+		if blockingReason != "" {
+			return "Build đã bị hủy", blockingReason
+		}
+		return "Build đã bị hủy", fmt.Sprintf("Build job %s đã bị hủy.", build.ID)
+	default:
+		return "Trạng thái build chưa xác định", fmt.Sprintf("Build job %s đang ở trạng thái %s.", build.ID, strings.TrimSpace(build.Status))
+	}
+}
+
+func bootstrapBuildBlockingReason(build BuildJobRecord, latestDeployment *DeploymentOverviewRecord) string {
+	if latestDeployment != nil && !latestDeployment.CreatedAt.Before(build.CreatedAt) {
+		return ""
+	}
+
+	serviceReason := ""
+	for _, item := range build.ArtifactMetadata.ServiceArtifacts {
+		if reason := strings.TrimSpace(item.PortResolutionReason); reason != "" {
+			serviceReason = fmt.Sprintf("Service %q: %s", strings.TrimSpace(item.ServiceName), reason)
+			break
+		}
+	}
+	if serviceReason != "" {
+		return serviceReason
+	}
+	if reason := strings.TrimSpace(build.ArtifactMetadata.PortResolutionReason); reason != "" {
+		return reason
+	}
+	return ""
 }
 
 func (s *BootstrapOrchestrator) resolveStatusPublicURLs(requesterUserID, requesterRole, projectID string) ([]string, string, error) {
@@ -2031,6 +2205,8 @@ func buildDeployActions(projectID, deployState string, serviceInventory bootstra
 
 func deriveOverallState(codeState, infraState, deployState string) string {
 	switch deployState {
+	case "building":
+		return "building"
 	case "deploying":
 		return "deploying"
 	case "healthy", "degraded":

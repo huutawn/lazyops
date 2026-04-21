@@ -54,6 +54,7 @@ type BuildJobStore interface {
 	Create(job *models.BuildJob) error
 	GetByDeliveryID(deliveryID string) (*models.BuildJob, error)
 	GetByIDForProject(projectID, buildJobID string) (*models.BuildJob, error)
+	GetLatestByProject(projectID string) (*models.BuildJob, error)
 	UpdateStatus(buildJobID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error
 	UpdateResult(buildJobID, status, commitSHA, artifactMetadataJSON string, startedAt, completedAt *time.Time, updatedAt time.Time) error
 }

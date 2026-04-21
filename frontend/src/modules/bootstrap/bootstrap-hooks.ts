@@ -29,7 +29,17 @@ export function useProjectBootstrapStatus(projectId: string) {
     },
     enabled: !!projectId,
     staleTime: 20 * 1000,
-    refetchInterval: 20 * 1000,
+    refetchInterval: (query) => {
+      const data = query.state.data as ProjectBootstrapStatus | undefined;
+      const buildStatus = data?.latest_build?.status;
+      if (buildStatus === 'queued' || buildStatus === 'running') {
+        return 5 * 1000;
+      }
+      if (data?.overall_state === 'building' || data?.overall_state === 'deploying') {
+        return 5 * 1000;
+      }
+      return 20 * 1000;
+    },
   });
 }
 

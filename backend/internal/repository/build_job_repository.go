@@ -46,6 +46,19 @@ func (r *BuildJobRepository) GetByIDForProject(projectID, buildJobID string) (*m
 	return &job, nil
 }
 
+func (r *BuildJobRepository) GetLatestByProject(projectID string) (*models.BuildJob, error) {
+	var job models.BuildJob
+	tx := r.db.Where("project_id = ?", projectID).Order("created_at DESC").Limit(1).Find(&job)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, nil
+	}
+
+	return &job, nil
+}
+
 func (r *BuildJobRepository) UpdateStatus(buildJobID, status string, startedAt, completedAt *time.Time, updatedAt time.Time) error {
 	updates := map[string]any{
 		"status":     status,

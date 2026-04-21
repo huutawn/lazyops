@@ -83,6 +83,20 @@ type BootstrapRuntimeInventoryResponse struct {
 	InternalServices []BootstrapRuntimeInternalServiceResponse `json:"internal_services"`
 }
 
+type BootstrapBuildStatusResponse struct {
+	BuildJobID    string     `json:"build_job_id"`
+	Status        string     `json:"status"`
+	TriggerKind   string     `json:"trigger_kind,omitempty"`
+	CommitSHA     string     `json:"commit_sha,omitempty"`
+	TrackedBranch string     `json:"tracked_branch,omitempty"`
+	Summary       string     `json:"summary,omitempty"`
+	Details       string     `json:"details,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+}
+
 type BootstrapStatusResponse struct {
 	ProjectID        string                            `json:"project_id"`
 	OverallState     string                            `json:"overall_state"`
@@ -90,6 +104,7 @@ type BootstrapStatusResponse struct {
 	AutoMode         BootstrapAutoModeResponse         `json:"auto_mode"`
 	Inventory        BootstrapInventoryResponse        `json:"inventory"`
 	RuntimeInventory BootstrapRuntimeInventoryResponse `json:"runtime_inventory"`
+	LatestBuild      *BootstrapBuildStatusResponse     `json:"latest_build,omitempty"`
 	PublicURLs       []string                          `json:"public_urls"`
 	PublicURLReason  string                            `json:"public_url_reason,omitempty"`
 	UpdatedAt        time.Time                         `json:"updated_at"`

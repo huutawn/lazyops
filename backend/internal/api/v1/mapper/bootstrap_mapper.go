@@ -128,6 +128,23 @@ func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) resp
 		})
 	}
 
+	var latestBuild *responsedto.BootstrapBuildStatusResponse
+	if record.LatestBuild != nil {
+		latestBuild = &responsedto.BootstrapBuildStatusResponse{
+			BuildJobID:    record.LatestBuild.BuildJobID,
+			Status:        record.LatestBuild.Status,
+			TriggerKind:   record.LatestBuild.TriggerKind,
+			CommitSHA:     record.LatestBuild.CommitSHA,
+			TrackedBranch: record.LatestBuild.TrackedBranch,
+			Summary:       record.LatestBuild.Summary,
+			Details:       record.LatestBuild.Details,
+			CreatedAt:     record.LatestBuild.CreatedAt,
+			UpdatedAt:     record.LatestBuild.UpdatedAt,
+			StartedAt:     record.LatestBuild.StartedAt,
+			CompletedAt:   record.LatestBuild.CompletedAt,
+		}
+	}
+
 	return responsedto.BootstrapStatusResponse{
 		ProjectID:    record.ProjectID,
 		OverallState: record.OverallState,
@@ -173,6 +190,7 @@ func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) resp
 			},
 			InternalServices: internalServices,
 		},
+		LatestBuild: latestBuild,
 		PublicURLs:      append([]string{}, record.PublicURLs...),
 		PublicURLReason: record.PublicURLReason,
 		UpdatedAt:       record.UpdatedAt,

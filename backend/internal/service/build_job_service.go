@@ -132,6 +132,41 @@ func (s *BuildJobService) EnqueueManual(cmd ManualBuildEnqueueCommand) (*BuildJo
 	})
 }
 
+func (s *BuildJobService) Latest(projectID string) (*BuildJobRecord, error) {
+	if s == nil || s.buildJobs == nil {
+		return nil, nil
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	job, err := s.buildJobs.GetLatestByProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, nil
+	}
+
+	record, err := ToBuildJobRecord(*job)
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (s *BuildJobService) LatestActive(projectID string) (*BuildJobRecord, error) {
+	record, err := s.Latest(projectID)
+	if err != nil || record == nil {
+		return record, err
+	}
+	if !isBuildJobActiveStatus(record.Status) {
+		return nil, nil
+	}
+	return record, nil
+}
+
 func (s *BuildJobService) resolveBuildTargets(projectID string) ([]BuildTargetServiceRecord, error) {
 	if s == nil || s.services == nil {
 		return nil, nil
@@ -306,4 +341,13 @@ func ToBuildJobRecord(item models.BuildJob) (BuildJobRecord, error) {
 		CreatedAt:            item.CreatedAt,
 		UpdatedAt:            item.UpdatedAt,
 	}, nil
+}
+
+func isBuildJobActiveStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case BuildJobStatusQueued, BuildJobStatusRunning:
+		return true
+	default:
+		return false
+	}
 }

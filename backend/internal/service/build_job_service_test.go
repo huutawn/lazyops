@@ -59,6 +59,24 @@ func (f *fakeBuildJobStore) GetByIDForProject(projectID, buildJobID string) (*mo
 	return nil, nil
 }
 
+func (f *fakeBuildJobStore) GetLatestByProject(projectID string) (*models.BuildJob, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	projectItems := f.byProjectID[projectID]
+	if projectItems == nil {
+		return nil, nil
+	}
+	var latest *models.BuildJob
+	for _, item := range projectItems {
+		if latest == nil || item.CreatedAt.After(latest.CreatedAt) {
+			copyItem := *item
+			latest = &copyItem
+		}
+	}
+	return latest, nil
+}
+
 func (f *fakeBuildJobStore) GetByDeliveryID(deliveryID string) (*models.BuildJob, error) {
 	if f.getErr != nil {
 		return nil, f.getErr

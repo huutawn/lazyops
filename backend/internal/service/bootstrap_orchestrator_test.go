@@ -1386,3 +1386,352 @@ func TestBootstrapOrchestratorOneClickDeployAllowsDirectRepoK3sDeployWithExplici
 		t.Fatalf("expected created deployment, got %#v", result)
 	}
 }
+
+func TestBootstrapOrchestratorOneClickDeployReusesActiveBuildJob(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	installStore := newFakeGitHubInstallationStore(&models.GitHubInstallation{
+		ID:                   "ghi_alpha",
+		UserID:               "usr_123",
+		GitHubInstallationID: 100,
+		AccountLogin:         "lazyops",
+		AccountType:          "Organization",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_123",
+		ProjectID:               "prj_123",
+		Name:                    "Auto distributed k3s",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "cls_123",
+		PlacementPolicyJSON:     `{"strategy":"spread"}`,
+		DomainPolicyJSON:        `{"mode":"auto"}`,
+		CompatibilityPolicyJSON: `{"env_injection":false}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "be",
+		Path:   "backend",
+		Kind:   "api",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured services: %v", err)
+	}
+	projectServiceStore := newFakeProjectServiceStore()
+	if err := projectServiceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	blueprintStore := newFakeBlueprintStore()
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore()
+	seedBootstrapBuildJob(t, buildStore, &models.BuildJob{
+		ID:                "bld_active",
+		ProjectID:         "prj_123",
+		ProjectRepoLinkID: "prl_123",
+		GitHubDeliveryID:  "manual:bld_active",
+		RepoFullName:      "lazyops/backend",
+		TriggerKind:       "one_click_deploy",
+		Status:            BuildJobStatusRunning,
+		TrackedBranch:     "main",
+		CommitSHA:         "",
+	}, []BuildTargetServiceRecord{{
+		ServiceName: "be",
+		ServicePath: "backend",
+	}}, BuildArtifactMetadataStageRecord{})
+	buildJobSvc := NewBuildJobService(repoLinkStore, buildStore).WithServiceStore(projectServiceStore)
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, projectServiceStore, blueprintStore)
+	deploymentSvc := NewDeploymentService(projectStore, blueprintStore, revisionStore, deploymentStore).
+		WithServiceInventoryCompiler(compiler)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		bindingStore,
+		deploymentStore,
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+		installStore,
+	).WithOneClickPipeline(projectServiceStore, nil, nil, deploymentSvc, nil, buildJobSvc)
+
+	result, err := orchestrator.OneClickDeploy(BootstrapOneClickDeployCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+	})
+	if err != nil {
+		t.Fatalf("expected active build to be reused, got err=%v", err)
+	}
+	if result == nil || result.BuildJobID != "bld_active" {
+		t.Fatalf("expected active build job to be reused, got %#v", result)
+	}
+	if result.RolloutReason != "reusing active build job bld_active" {
+		t.Fatalf("unexpected rollout reason %#v", result)
+	}
+	if len(buildStore.byProjectID["prj_123"]) != 1 {
+		t.Fatalf("expected no extra build jobs to be created, got %d", len(buildStore.byProjectID["prj_123"]))
+	}
+}
+
+func TestBootstrapOrchestratorGetStatusShowsActiveBuildProgress(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	clusterStore := newFakeClusterStore(&models.Cluster{
+		ID:                  "cls_123",
+		UserID:              "usr_123",
+		Name:                "prod-k3s",
+		InstanceID:          ptrString("inst_123"),
+		Provider:            "k3s",
+		KubeconfigSecretRef: "secret://clusters/prod-k3s/kubeconfig",
+		Status:              "ready",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "be",
+		Path:   "backend",
+		Kind:   "api",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	buildStore := newFakeBuildJobStore()
+	seedBootstrapBuildJob(t, buildStore, &models.BuildJob{
+		ID:                "bld_running",
+		ProjectID:         "prj_123",
+		ProjectRepoLinkID: "prl_123",
+		GitHubDeliveryID:  "manual:bld_running",
+		RepoFullName:      "lazyops/backend",
+		TriggerKind:       "one_click_deploy",
+		Status:            BuildJobStatusRunning,
+		TrackedBranch:     "main",
+	}, []BuildTargetServiceRecord{{
+		ServiceName: "be",
+		ServicePath: "backend",
+	}}, BuildArtifactMetadataStageRecord{})
+	buildJobSvc := NewBuildJobService(repoLinkStore, buildStore).WithServiceStore(serviceStore)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		nil,
+		newFakeDeploymentStore(),
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		clusterStore,
+		nil,
+	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil, buildJobSvc)
+
+	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	if status.Steps[2].State != "building" {
+		t.Fatalf("expected deploy step to show building, got %#v", status.Steps[2])
+	}
+	if status.LatestBuild == nil || status.LatestBuild.BuildJobID != "bld_running" {
+		t.Fatalf("expected latest build metadata, got %#v", status.LatestBuild)
+	}
+	if !strings.Contains(status.Steps[2].Summary, "Đang build images") {
+		t.Fatalf("expected build progress summary, got %q", status.Steps[2].Summary)
+	}
+}
+
+func TestBootstrapOrchestratorGetStatusShowsBuildCallbackFailureReason(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_123",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:                      "inst_123",
+		UserID:                  "usr_123",
+		Name:                    "edge-hcm",
+		Status:                  "online",
+		RuntimeCapabilitiesJSON: `{}`,
+		LabelsJSON:              `{}`,
+	})
+	clusterStore := newFakeClusterStore(&models.Cluster{
+		ID:                  "cls_123",
+		UserID:              "usr_123",
+		Name:                "prod-k3s",
+		InstanceID:          ptrString("inst_123"),
+		Provider:            "k3s",
+		KubeconfigSecretRef: "secret://clusters/prod-k3s/kubeconfig",
+		Status:              "ready",
+	})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{{
+		Name:   "be",
+		Path:   "backend",
+		Kind:   "api",
+		Public: true,
+	}})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	buildStore := newFakeBuildJobStore()
+	seedBootstrapBuildJob(t, buildStore, &models.BuildJob{
+		ID:                "bld_succeeded",
+		ProjectID:         "prj_123",
+		ProjectRepoLinkID: "prl_123",
+		GitHubDeliveryID:  "manual:bld_succeeded",
+		RepoFullName:      "lazyops/backend",
+		TriggerKind:       "one_click_deploy",
+		Status:            BuildJobStatusSucceeded,
+		TrackedBranch:     "main",
+		CommitSHA:         "abc123",
+	}, []BuildTargetServiceRecord{{
+		ServiceName: "be",
+		ServicePath: "backend",
+	}}, BuildArtifactMetadataStageRecord{
+		ServiceArtifacts: []BuildServiceArtifactRecord{{
+			ServiceName:          "be",
+			ServicePath:          "backend",
+			PortResolutionStatus: BuildPortResolutionStatusUnresolved,
+			PortResolutionReason: "service requires a resolved target_port/service_port before rollout",
+		}},
+	})
+	buildJobSvc := NewBuildJobService(repoLinkStore, buildStore).WithServiceStore(serviceStore)
+
+	orchestrator := NewBootstrapOrchestrator(
+		projectStore,
+		NewProjectService(projectStore),
+		nil,
+		repoLinkStore,
+		nil,
+		nil,
+		newFakeDeploymentStore(),
+		instanceStore,
+		newFakeMeshNetworkStore(),
+		clusterStore,
+		nil,
+	).WithOneClickPipeline(serviceStore, nil, nil, nil, nil, buildJobSvc)
+
+	status, err := orchestrator.GetStatus("usr_123", RoleViewer, "prj_123")
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	if status.Steps[2].State != "error" {
+		t.Fatalf("expected deploy step error when callback is blocked, got %#v", status.Steps[2])
+	}
+	if status.LatestBuild == nil || !strings.Contains(status.LatestBuild.Details, "resolved target_port/service_port") {
+		t.Fatalf("expected latest build details to surface callback failure, got %#v", status.LatestBuild)
+	}
+	if !strings.Contains(status.Steps[2].Summary, "resolved target_port/service_port") {
+		t.Fatalf("expected deploy summary to surface callback failure, got %q", status.Steps[2].Summary)
+	}
+}
+
+func seedBootstrapBuildJob(t *testing.T, store *fakeBuildJobStore, job *models.BuildJob, targets []BuildTargetServiceRecord, artifact BuildArtifactMetadataStageRecord) {
+	t.Helper()
+
+	workerInputJSON, err := json.Marshal(BuildWorkerInputRecord{
+		BuildJobID:            job.ID,
+		ProjectID:             job.ProjectID,
+		ProjectRepoLinkID:     job.ProjectRepoLinkID,
+		GitHubDeliveryID:      job.GitHubDeliveryID,
+		GitHubInstallationID:  job.GitHubInstallationID,
+		GitHubRepoID:          job.GitHubRepoID,
+		RepoFullName:          job.RepoFullName,
+		TrackedBranch:         job.TrackedBranch,
+		CommitSHA:             job.CommitSHA,
+		TriggerKind:           job.TriggerKind,
+		ServiceTargets:        normalizeBuildTargetServices(targets),
+		ArtifactMetadataStage: artifact,
+		RetryPolicy: BuildRetryPolicyRecord{
+			MaxAttempts: DefaultBuildJobMaxAttempts,
+			Backoff:     "linear",
+		},
+		CallbackExpectation: BuildCallbackExpectationRecord{
+			Path:           "/api/v1/builds/callback",
+			RequiredFields: buildCallbackRequiredFields(targets),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal worker input: %v", err)
+	}
+	artifactJSON, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatalf("marshal artifact metadata: %v", err)
+	}
+	job.WorkerInputJSON = string(workerInputJSON)
+	job.ArtifactMetadataJSON = string(artifactJSON)
+	if job.CreatedAt.IsZero() {
+		job.CreatedAt = time.Now().UTC()
+	}
+	if job.UpdatedAt.IsZero() {
+		job.UpdatedAt = job.CreatedAt
+	}
+	store.put(job)
+}

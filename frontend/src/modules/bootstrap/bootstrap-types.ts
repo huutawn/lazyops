@@ -73,6 +73,20 @@ export type BootstrapRuntimeInventory = {
   internal_services: BootstrapRuntimeInternalService[];
 };
 
+export type BootstrapLatestBuild = {
+  build_job_id: string;
+  status: string;
+  trigger_kind?: string;
+  commit_sha?: string;
+  tracked_branch?: string;
+  summary?: string;
+  details?: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
+};
+
 export type ProjectBootstrapStatus = {
   project_id: string;
   overall_state: string;
@@ -80,6 +94,7 @@ export type ProjectBootstrapStatus = {
   auto_mode: BootstrapAutoMode;
   inventory: BootstrapInventory;
   runtime_inventory: BootstrapRuntimeInventory;
+  latest_build?: BootstrapLatestBuild;
   public_urls?: string[];
   public_url_reason?: string;
   updated_at: string;
@@ -119,6 +134,8 @@ export type BootstrapOneClickDeployResult = {
   blueprint_id: string;
   revision_id: string;
   deployment_id: string;
+  build_job_id?: string;
+  build_job_status?: string;
   rollout_status: string;
   rollout_reason?: string;
   correlation_id?: string;

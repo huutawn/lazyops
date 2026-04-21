@@ -42,6 +42,7 @@ const TIMELINE_BADGE: Record<string, StatusBadgeProps['variant']> = {
   success: 'success',
   pending: 'warning',
   running: 'warning',
+  building: 'warning',
   deploying: 'warning',
   failed: 'danger',
   error: 'danger',
@@ -238,12 +239,33 @@ export function ProjectThreeStepWizard({
             ))}
           </div>
 
+          {data.latest_build ? (
+            <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-[13px] font-semibold text-white">
+                    Build gần nhất: {formatBootstrapStateLabelVN(data.latest_build.status)}
+                  </div>
+                  <div className="mt-1 text-[13px] text-[#94a3b8]">
+                    {data.latest_build.summary || `Build job ${data.latest_build.build_job_id}`}
+                  </div>
+                  {data.latest_build.details ? (
+                    <div className="mt-1 text-[12px] text-[#cbd5e1]">{data.latest_build.details}</div>
+                  ) : null}
+                </div>
+                <div className="text-[11px] text-[#64748b]">{data.latest_build.build_job_id}</div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-6 flex flex-wrap items-center gap-6 border-t border-[#1e293b] pt-6">
             <div className="flex items-center gap-2">
               <span className="text-[13px] text-[#64748b]">Tổng quan:</span>
               <span className={cn(
                 'text-[13px] font-medium',
-                data.overall_state === 'running' ? 'text-[#10B981]' : 'text-[#EF4444]'
+                data.overall_state === 'running' ? 'text-[#10B981]' :
+                data.overall_state === 'building' || data.overall_state === 'deploying' || data.overall_state === 'ready_to_deploy' ? 'text-[#0EA5E9]' :
+                'text-[#EF4444]'
               )}>
                 {formatBootstrapStateLabelVN(data.overall_state)}
               </span>
@@ -382,7 +404,7 @@ export function ProjectThreeStepWizard({
         ))}
       </div>
 
-      {(latestOneClick || deploymentDetail.data) ? (
+      {(latestOneClick || deploymentDetail.data || data.latest_build) ? (
         <SectionCard
           title="Tiến trình triển khai"
           description="Theo dõi tiến trình triển khai theo thời gian thực."
@@ -411,6 +433,14 @@ export function ProjectThreeStepWizard({
           ) : null}
 
           <div className="flex flex-col gap-2">
+            {!latestOneClick && data.latest_build ? (
+              <TimelineRow
+                label="Build repo services"
+                description={data.latest_build.details || data.latest_build.summary || `Build job ${data.latest_build.build_job_id}`}
+                state={data.latest_build.status}
+                timestamp={data.latest_build.updated_at}
+              />
+            ) : null}
             {pipelineEvents.map((event) => (
               <TimelineRow
                 key={`pipeline-${event.id}-${event.timestamp}`}

@@ -58,6 +58,7 @@ export function formatBootstrapStateLabelVN(value: string): string {
     installing: 'Đang cài',
     ready: 'Sẵn sàng',
     blocked: 'Bị chặn',
+    building: 'Đang build',
     deploying: 'Đang triển khai',
     degraded: 'Cần xử lý',
     rolled_back: 'Đã hoàn tác',
@@ -160,11 +161,15 @@ export function resolveProjectNextAction({
     };
   }
 
-  if (deploy?.state === 'deploying') {
+  if (deploy?.state === 'building' || deploy?.state === 'deploying') {
     return {
       kind: 'logs',
-      label: 'Xem nhật ký',
-      description: deploy.summary || 'Bản triển khai đang chạy. Mở nhật ký để theo dõi tiến trình.',
+      label: deploy?.state === 'building' ? 'Theo dõi tiến trình' : 'Xem nhật ký',
+      description:
+        deploy.summary ||
+        (deploy?.state === 'building'
+          ? 'Build đang chạy trước khi tạo deployment. Mở nhật ký để theo dõi tiến trình.'
+          : 'Bản triển khai đang chạy. Mở nhật ký để theo dõi tiến trình.'),
       href: logsHref,
     };
   }

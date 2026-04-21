@@ -113,7 +113,9 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
         setActionMessage(
           result.deployment_id
             ? `Đã tạo deployment ${result.deployment_id}. Bạn có thể mở tab Triển khai hoặc Nhật ký để theo dõi tiếp.`
-            : 'Đã bắt đầu triển khai project.',
+            : result.build_job_id
+              ? `Đã xếp build job ${result.build_job_id}. LazyOps sẽ build image rồi tự tạo deployment sau khi callback thành công.`
+              : 'Đã bắt đầu triển khai project.',
         );
       } catch (error) {
         setActionError(error instanceof Error ? error.message : 'Không thể bắt đầu triển khai.');
@@ -160,6 +162,25 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
         {actionError ? (
           <div className="mt-4 rounded-2xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fecaca]">
             {actionError}
+          </div>
+        ) : null}
+
+        {bootstrap.data.latest_build ? (
+          <div className="mt-4 rounded-2xl border border-[#38bdf8]/20 bg-[#0B1120]/80 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white">
+                  Build gần nhất: {formatBootstrapStateLabelVN(bootstrap.data.latest_build.status)}
+                </div>
+                <div className="mt-1 text-sm text-[#94a3b8]">
+                  {bootstrap.data.latest_build.summary || `Build job ${bootstrap.data.latest_build.build_job_id}`}
+                </div>
+                {bootstrap.data.latest_build.details ? (
+                  <div className="mt-1 text-xs text-[#cbd5e1]">{bootstrap.data.latest_build.details}</div>
+                ) : null}
+              </div>
+              <div className="text-xs text-[#64748b]">{bootstrap.data.latest_build.build_job_id}</div>
+            </div>
           </div>
         ) : null}
       </SectionCard>
