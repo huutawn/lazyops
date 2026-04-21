@@ -55,8 +55,6 @@ func (m *IPTablesManager) WithExecFunc(fn func(args ...string) ([]byte, error)) 
 	return m
 }
 
-// EnsureChain creates the LAZYOPS_SIDECAR chain if it doesn't exist,
-// and inserts a jump rule from OUTPUT to this chain.
 func (m *IPTablesManager) EnsureChain() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

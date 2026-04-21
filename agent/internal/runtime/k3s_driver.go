@@ -458,12 +458,34 @@ func (d *K3sDriver) runK3sServiceHealthGateCheck(ctx context.Context, namespace 
 
 	err := d.runKubectl(ctx, namespace, "rollout", "status", fmt.Sprintf("deployment/%s", spec.Name), "--timeout=60s")
 	if err == nil {
+		podsHealthy, podMessage := d.verifyK3sServicePodsHealthy(ctx, namespace, spec.Name)
+		if !podsHealthy {
+			result.Passed = false
+			result.Successes = 0
+			result.Failures = 1
+			result.Message = podMessage
+			return result
+		}
+		result.Message = firstNonEmptyK3s(strings.TrimSpace(podMessage), result.Message)
 		return result
 	}
 
 	tolerated, progress := d.shouldTolerateRolloutStatusFailure(ctx, namespace, spec.Name, err)
 	if tolerated {
-		result.Message = firstNonEmptyK3s(strings.TrimSpace(progress.Message), "deployment rollout timeout tolerated after readiness verification")
+		podsHealthy, podMessage := d.verifyK3sServicePodsHealthy(ctx, namespace, spec.Name)
+		if !podsHealthy {
+			result.Passed = false
+			result.Successes = 0
+			result.Failures = 1
+			result.Message = firstNonEmptyK3s(strings.TrimSpace(podMessage), formatK3sHealthGateFailure(err, progress))
+			return result
+		}
+		result.Message = joinNonEmptyK3s(
+			"; ",
+			strings.TrimSpace(progress.Message),
+			strings.TrimSpace(podMessage),
+			"deployment rollout timeout tolerated after readiness verification",
+		)
 		return result
 	}
 
@@ -472,6 +494,161 @@ func (d *K3sDriver) runK3sServiceHealthGateCheck(ctx context.Context, namespace 
 	result.Failures = 1
 	result.Message = formatK3sHealthGateFailure(err, progress)
 	return result
+}
+
+func (d *K3sDriver) verifyK3sServicePodsHealthy(ctx context.Context, namespace, serviceName string) (bool, string) {
+	serviceName = strings.TrimSpace(serviceName)
+	if serviceName == "" {
+		return false, "service name is required to verify pod health"
+	}
+
+	podJSON, err := d.kubectlOutput(
+		ctx,
+		namespace,
+		"get",
+		"pods",
+		"-l",
+		fmt.Sprintf("app.kubernetes.io/name=%s", serviceName),
+		"-o",
+		"json",
+	)
+	if err != nil {
+		return false, fmt.Sprintf("collect pod status failed: %s", err.Error())
+	}
+	return evaluateK3sServicePodsHealth(serviceName, podJSON)
+}
+
+func evaluateK3sServicePodsHealth(serviceName string, podJSON []byte) (bool, string) {
+	var pods podListState
+	if err := json.Unmarshal(podJSON, &pods); err != nil {
+		return false, fmt.Sprintf("decode pod status failed: %s", err.Error())
+	}
+
+	activePods := make([]podState, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		if strings.TrimSpace(pod.Metadata.DeletionTimestamp) != "" {
+			continue
+		}
+		activePods = append(activePods, pod)
+	}
+	if len(activePods) == 0 {
+		return false, fmt.Sprintf("service %s has no active pods", strings.TrimSpace(serviceName))
+	}
+
+	notReady := make([]string, 0)
+	readyCount := 0
+	for _, pod := range activePods {
+		ready, fatal, detail := summarizeK3sPodHealth(pod)
+		if fatal {
+			return false, detail
+		}
+		if !ready {
+			notReady = append(notReady, detail)
+			continue
+		}
+		readyCount++
+	}
+
+	if len(notReady) > 0 {
+		return false, fmt.Sprintf(
+			"service %s has active pods that are not ready: %s",
+			strings.TrimSpace(serviceName),
+			strings.Join(notReady, ", "),
+		)
+	}
+
+	return true, fmt.Sprintf(
+		"deployment rollout is healthy; %d/%d active pods ready",
+		readyCount,
+		len(activePods),
+	)
+}
+
+func summarizeK3sPodHealth(pod podState) (ready bool, fatal bool, detail string) {
+	podName := firstNonEmptyK3s(strings.TrimSpace(pod.Metadata.Name), "unknown-pod")
+	phase := firstNonEmptyK3s(strings.TrimSpace(pod.Status.Phase), "Unknown")
+
+	if strings.EqualFold(phase, "Failed") {
+		return false, true, fmt.Sprintf("pod %s is in Failed phase", podName)
+	}
+
+	for _, status := range pod.Status.InitContainerStatuses {
+		if fatal, detail := summarizeK3sContainerFailure(podName, status); fatal {
+			return false, true, detail
+		}
+		if !status.Ready && status.State.Terminated == nil {
+			return false, false, fmt.Sprintf("pod %s init container %s is not ready", podName, firstNonEmptyK3s(strings.TrimSpace(status.Name), "unknown"))
+		}
+	}
+
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return false, false, fmt.Sprintf("pod %s has no container status yet (phase=%s)", podName, phase)
+	}
+
+	if !strings.EqualFold(phase, "Running") {
+		return false, false, fmt.Sprintf("pod %s is in %s phase", podName, phase)
+	}
+
+	for _, status := range pod.Status.ContainerStatuses {
+		if fatal, detail := summarizeK3sContainerFailure(podName, status); fatal {
+			return false, true, detail
+		}
+		if !status.Ready {
+			return false, false, fmt.Sprintf(
+				"pod %s container %s is not ready",
+				podName,
+				firstNonEmptyK3s(strings.TrimSpace(status.Name), "unknown"),
+			)
+		}
+	}
+
+	return true, false, fmt.Sprintf("pod %s is ready", podName)
+}
+
+func summarizeK3sContainerFailure(podName string, status podContainerStatus) (bool, string) {
+	containerName := firstNonEmptyK3s(strings.TrimSpace(status.Name), "unknown")
+
+	if status.State.Waiting != nil {
+		reason := strings.TrimSpace(status.State.Waiting.Reason)
+		if isFatalK3sContainerWaitingReason(reason) {
+			return true, fmt.Sprintf(
+				"pod %s container %s is waiting in %s (restarts=%d)",
+				podName,
+				containerName,
+				firstNonEmptyK3s(reason, "Waiting"),
+				status.RestartCount,
+			)
+		}
+	}
+
+	if status.State.Terminated != nil && status.State.Terminated.ExitCode != 0 {
+		reason := strings.TrimSpace(status.State.Terminated.Reason)
+		return true, fmt.Sprintf(
+			"pod %s container %s terminated with exit code %d (%s)",
+			podName,
+			containerName,
+			status.State.Terminated.ExitCode,
+			firstNonEmptyK3s(reason, "terminated"),
+		)
+	}
+
+	return false, ""
+}
+
+func isFatalK3sContainerWaitingReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "crashloopbackoff",
+		"imagepullbackoff",
+		"errimagepull",
+		"createcontainerconfigerror",
+		"createcontainererror",
+		"runcontainererror",
+		"starterror",
+		"invalidimagename":
+		return true
+	default:
+		return false
+	}
 }
 
 func formatK3sHealthGateFailure(err error, progress RolloutProgress) string {
@@ -1036,6 +1213,16 @@ func firstNonEmptyK3s(values ...string) string {
 	return ""
 }
 
+func joinNonEmptyK3s(sep string, values ...string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return strings.Join(parts, sep)
+}
+
 func countHealthyServices(items []ServiceHealthResult) int {
 	count := 0
 	for _, item := range items {
@@ -1101,6 +1288,37 @@ type deploymentRolloutState struct {
 			Message string `json:"message"`
 		} `json:"conditions"`
 	} `json:"status"`
+}
+
+type podListState struct {
+	Items []podState `json:"items"`
+}
+
+type podState struct {
+	Metadata struct {
+		Name              string `json:"name"`
+		DeletionTimestamp string `json:"deletionTimestamp"`
+	} `json:"metadata"`
+	Status struct {
+		Phase                 string               `json:"phase"`
+		InitContainerStatuses []podContainerStatus `json:"initContainerStatuses"`
+		ContainerStatuses     []podContainerStatus `json:"containerStatuses"`
+	} `json:"status"`
+}
+
+type podContainerStatus struct {
+	Name         string `json:"name"`
+	Ready        bool   `json:"ready"`
+	RestartCount int    `json:"restartCount"`
+	State        struct {
+		Waiting *struct {
+			Reason string `json:"reason"`
+		} `json:"waiting"`
+		Terminated *struct {
+			Reason   string `json:"reason"`
+			ExitCode int    `json:"exitCode"`
+		} `json:"terminated"`
+	} `json:"state"`
 }
 
 type ingressState struct {

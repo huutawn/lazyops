@@ -16,6 +16,10 @@ type BuildArtifactMetadataResponse struct {
 	SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
 	DetectedFramework       string                             `json:"detected_framework,omitempty"`
 	SuggestedHealthcheck    *BuildSuggestedHealthcheckResponse `json:"suggested_healthcheck,omitempty"`
+	PortResolutionStatus    string                             `json:"port_resolution_status,omitempty"`
+	PortResolutionSource    string                             `json:"port_resolution_source,omitempty"`
+	PortResolutionReason    string                             `json:"port_resolution_reason,omitempty"`
+	CandidatePorts          []int                              `json:"candidate_ports,omitempty"`
 }
 
 type BuildDetectedPortResponse struct {
@@ -42,6 +46,10 @@ type BuildServiceArtifactResponse struct {
 	SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
 	DetectedFramework       string                             `json:"detected_framework,omitempty"`
 	SuggestedHealthcheck    *BuildSuggestedHealthcheckResponse `json:"suggested_healthcheck,omitempty"`
+	PortResolutionStatus    string                             `json:"port_resolution_status,omitempty"`
+	PortResolutionSource    string                             `json:"port_resolution_source,omitempty"`
+	PortResolutionReason    string                             `json:"port_resolution_reason,omitempty"`
+	CandidatePorts          []int                              `json:"candidate_ports,omitempty"`
 }
 
 type BuildJobResponse struct {

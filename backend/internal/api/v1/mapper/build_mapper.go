@@ -52,6 +52,10 @@ func ToBuildCallbackCommand(req requestdto.BuildCallbackRequest) service.BuildCa
 			SuggestedTargetPort:     item.SuggestedTargetPort,
 			DetectedFramework:       item.DetectedFramework,
 			SuggestedHealthcheck:    artifactHealthcheck,
+			PortResolutionStatus:    item.PortResolutionStatus,
+			PortResolutionSource:    item.PortResolutionSource,
+			PortResolutionReason:    item.PortResolutionReason,
+			CandidatePorts:          append([]int(nil), item.CandidatePorts...),
 		})
 	}
 
@@ -70,6 +74,10 @@ func ToBuildCallbackCommand(req requestdto.BuildCallbackRequest) service.BuildCa
 		SuggestedTargetPort:     req.Metadata.SuggestedTargetPort,
 		DetectedFramework:       req.Metadata.DetectedFramework,
 		SuggestedHealthcheck:    suggestedHealthcheck,
+		PortResolutionStatus:    req.Metadata.PortResolutionStatus,
+		PortResolutionSource:    req.Metadata.PortResolutionSource,
+		PortResolutionReason:    req.Metadata.PortResolutionReason,
+		CandidatePorts:          append([]int(nil), req.Metadata.CandidatePorts...),
 	}
 }
 
@@ -160,6 +168,10 @@ func toBuildJobResponse(record service.BuildJobRecord) responsedto.BuildJobRespo
 			SuggestedHealthcheck: toBuildSuggestedHealthcheckResponse(
 				record.ArtifactMetadata.SuggestedHealthcheck,
 			),
+			PortResolutionStatus: record.ArtifactMetadata.PortResolutionStatus,
+			PortResolutionSource: record.ArtifactMetadata.PortResolutionSource,
+			PortResolutionReason: record.ArtifactMetadata.PortResolutionReason,
+			CandidatePorts:       append([]int(nil), record.ArtifactMetadata.CandidatePorts...),
 		},
 		StartedAt:   record.StartedAt,
 		CompletedAt: record.CompletedAt,
@@ -202,6 +214,10 @@ func toBuildServiceArtifactResponses(items []service.BuildServiceArtifactRecord)
 			SuggestedTargetPort:     item.SuggestedTargetPort,
 			DetectedFramework:       item.DetectedFramework,
 			SuggestedHealthcheck:    toBuildSuggestedHealthcheckResponse(item.SuggestedHealthcheck),
+			PortResolutionStatus:    item.PortResolutionStatus,
+			PortResolutionSource:    item.PortResolutionSource,
+			PortResolutionReason:    item.PortResolutionReason,
+			CandidatePorts:          append([]int(nil), item.CandidatePorts...),
 		})
 	}
 	return out

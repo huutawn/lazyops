@@ -263,8 +263,8 @@ func TestBuildJobServiceStagesRepoServiceTargetsForWorker(t *testing.T) {
 		TrackedBranch:        "main",
 	})
 	serviceModels, err := buildConfiguredProjectServiceModels("prj_123", "distributed-k3s", []ConfigureProjectServiceItem{
-		{Name: "api", Path: "backend", Kind: "api", Public: false},
-		{Name: "web", Path: "fe", Kind: "web", Public: true},
+		{Name: "api", Path: "backend", Kind: "api", Public: false, RuntimeProfile: "service", StartHint: "PORT=8080 go run ./cmd/api", Healthcheck: map[string]any{"path": "/healthz", "port": 8080}},
+		{Name: "web", Path: "fe", Kind: "web", Public: true, RuntimeProfile: "web", TargetPort: 3000, ServicePort: 3000},
 		{Name: "db", Path: ".lazyops/internal/postgres/db", Kind: "postgres", SourceType: "internal", Public: false},
 	})
 	if err != nil {
@@ -301,8 +301,17 @@ func TestBuildJobServiceStagesRepoServiceTargetsForWorker(t *testing.T) {
 	if record.WorkerInput.ServiceTargets[0].ServiceName != "api" || record.WorkerInput.ServiceTargets[0].ServicePath != "backend" {
 		t.Fatalf("expected backend target first, got %#v", record.WorkerInput.ServiceTargets)
 	}
+	if record.WorkerInput.ServiceTargets[0].RuntimeProfile != "service" || record.WorkerInput.ServiceTargets[0].StartHint == "" {
+		t.Fatalf("expected backend runtime hints to be staged, got %#v", record.WorkerInput.ServiceTargets[0])
+	}
+	if got, ok := record.WorkerInput.ServiceTargets[0].DeclaredHealthcheck["port"].(float64); !ok || int(got) != 8080 {
+		t.Fatalf("expected backend healthcheck hint to be staged, got %#v", record.WorkerInput.ServiceTargets[0])
+	}
 	if record.WorkerInput.ServiceTargets[1].ServiceName != "web" || record.WorkerInput.ServiceTargets[1].ServicePath != "fe" {
 		t.Fatalf("expected fe target second, got %#v", record.WorkerInput.ServiceTargets)
+	}
+	if !record.WorkerInput.ServiceTargets[1].Public || record.WorkerInput.ServiceTargets[1].DeclaredTargetPort != 3000 || record.WorkerInput.ServiceTargets[1].DeclaredServicePort != 3000 {
+		t.Fatalf("expected frontend explicit port hints to be staged, got %#v", record.WorkerInput.ServiceTargets[1])
 	}
 	requiredFields := record.WorkerInput.CallbackExpectation.RequiredFields
 	if !containsString(requiredFields, "metadata.service_artifacts") {

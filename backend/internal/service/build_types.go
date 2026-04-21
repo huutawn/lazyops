@@ -14,6 +14,18 @@ const (
 	BuildJobStatusCanceled  = "canceled"
 
 	DefaultBuildJobMaxAttempts = 3
+
+	BuildPortResolutionStatusResolved   = "resolved"
+	BuildPortResolutionStatusAmbiguous  = "ambiguous"
+	BuildPortResolutionStatusUnresolved = "unresolved"
+
+	BuildPortResolutionSourceExplicit      = "explicit"
+	BuildPortResolutionSourceDockerInspect = "docker_inspect"
+	BuildPortResolutionSourceFrameworkHint = "framework_hint"
+	BuildPortResolutionSourceSmokeRun      = "smoke_run"
+	BuildPortResolutionSourceStartHint     = "start_hint"
+	BuildPortResolutionSourceMixed         = "mixed"
+	BuildPortResolutionSourceInternal      = "internal_default"
 )
 
 type BuildRetryPolicyRecord struct {
@@ -40,6 +52,10 @@ type BuildArtifactMetadataStageRecord struct {
 	SuggestedTargetPort     int                              `json:"suggested_target_port,omitempty"`
 	DetectedFramework       string                           `json:"detected_framework,omitempty"`
 	SuggestedHealthcheck    *BuildSuggestedHealthcheckRecord `json:"suggested_healthcheck,omitempty"`
+	PortResolutionStatus    string                           `json:"port_resolution_status,omitempty"`
+	PortResolutionSource    string                           `json:"port_resolution_source,omitempty"`
+	PortResolutionReason    string                           `json:"port_resolution_reason,omitempty"`
+	CandidatePorts          []int                            `json:"candidate_ports,omitempty"`
 }
 
 type BuildSuggestedHealthcheckRecord struct {
@@ -59,11 +75,21 @@ type BuildServiceArtifactRecord struct {
 	SuggestedTargetPort     int                              `json:"suggested_target_port,omitempty"`
 	DetectedFramework       string                           `json:"detected_framework,omitempty"`
 	SuggestedHealthcheck    *BuildSuggestedHealthcheckRecord `json:"suggested_healthcheck,omitempty"`
+	PortResolutionStatus    string                           `json:"port_resolution_status,omitempty"`
+	PortResolutionSource    string                           `json:"port_resolution_source,omitempty"`
+	PortResolutionReason    string                           `json:"port_resolution_reason,omitempty"`
+	CandidatePorts          []int                            `json:"candidate_ports,omitempty"`
 }
 
 type BuildTargetServiceRecord struct {
-	ServiceName string `json:"service_name"`
-	ServicePath string `json:"service_path"`
+	ServiceName         string         `json:"service_name"`
+	ServicePath         string         `json:"service_path"`
+	RuntimeProfile      string         `json:"runtime_profile,omitempty"`
+	Public              bool           `json:"public,omitempty"`
+	StartHint           string         `json:"start_hint,omitempty"`
+	DeclaredTargetPort  int            `json:"declared_target_port,omitempty"`
+	DeclaredServicePort int            `json:"declared_service_port,omitempty"`
+	DeclaredHealthcheck map[string]any `json:"declared_healthcheck,omitempty"`
 }
 
 type BuildWorkerInputRecord struct {
@@ -125,6 +151,10 @@ type BuildCallbackCommand struct {
 	SuggestedTargetPort     int
 	DetectedFramework       string
 	SuggestedHealthcheck    *BuildSuggestedHealthcheckRecord
+	PortResolutionStatus    string
+	PortResolutionSource    string
+	PortResolutionReason    string
+	CandidatePorts          []int
 }
 
 type BuildCallbackResult struct {
@@ -167,8 +197,14 @@ func normalizeBuildTargetServices(items []BuildTargetServiceRecord) []BuildTarge
 		}
 		seen[key] = struct{}{}
 		out = append(out, BuildTargetServiceRecord{
-			ServiceName: name,
-			ServicePath: path,
+			ServiceName:         name,
+			ServicePath:         path,
+			RuntimeProfile:      strings.TrimSpace(item.RuntimeProfile),
+			Public:              item.Public,
+			StartHint:           strings.TrimSpace(item.StartHint),
+			DeclaredTargetPort:  item.DeclaredTargetPort,
+			DeclaredServicePort: item.DeclaredServicePort,
+			DeclaredHealthcheck: cloneAnyMap(item.DeclaredHealthcheck),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {

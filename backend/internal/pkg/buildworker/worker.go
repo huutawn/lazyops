@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -157,7 +158,7 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	)
 
 	// Build
-	imageRef, imageDigest, serviceArtifacts, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, err := w.buildAndPush(ctx, input)
+	result, err := w.buildAndPush(ctx, input)
 
 	status := "succeeded"
 	if err != nil {
@@ -166,13 +167,13 @@ func (w *Worker) processJob(ctx context.Context, job models.BuildJob) {
 	}
 
 	// Callback
-	if err := w.callback(ctx, input, status, imageRef, imageDigest, serviceArtifacts, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck); err != nil {
+	if err := w.callback(ctx, input, status, result); err != nil {
 		slog.Error("build callback failed", "job_id", job.ID, "error", err)
 		w.failJob(job.ID, fmt.Sprintf("callback failed: %v", err))
 		return
 	}
 
-	slog.Info("build job completed", "job_id", job.ID, "status", status, "image", imageRef)
+	slog.Info("build job completed", "job_id", job.ID, "status", status, "image", result.ImageRef)
 }
 
 type BuildWorkerInput struct {
@@ -194,8 +195,14 @@ type BuildWorkerInput struct {
 }
 
 type BuildTargetServiceMetadata struct {
-	ServiceName string `json:"service_name"`
-	ServicePath string `json:"service_path"`
+	ServiceName         string         `json:"service_name"`
+	ServicePath         string         `json:"service_path"`
+	RuntimeProfile      string         `json:"runtime_profile,omitempty"`
+	Public              bool           `json:"public,omitempty"`
+	StartHint           string         `json:"start_hint,omitempty"`
+	DeclaredTargetPort  int            `json:"declared_target_port,omitempty"`
+	DeclaredServicePort int            `json:"declared_service_port,omitempty"`
+	DeclaredHealthcheck map[string]any `json:"declared_healthcheck,omitempty"`
 }
 
 type BuildServiceArtifactMetadata struct {
@@ -209,100 +216,157 @@ type BuildServiceArtifactMetadata struct {
 	SuggestedTargetPort     int                                `json:"suggested_target_port,omitempty"`
 	DetectedFramework       string                             `json:"detected_framework,omitempty"`
 	SuggestedHealthcheck    *BuildSuggestedHealthcheckMetadata `json:"suggested_healthcheck,omitempty"`
+	PortResolutionStatus    string                             `json:"port_resolution_status,omitempty"`
+	PortResolutionSource    string                             `json:"port_resolution_source,omitempty"`
+	PortResolutionReason    string                             `json:"port_resolution_reason,omitempty"`
+	CandidatePorts          []int                              `json:"candidate_ports,omitempty"`
 }
+
+type buildResult struct {
+	ImageRef                string
+	ImageDigest             string
+	ServiceArtifacts        []BuildServiceArtifactMetadata
+	Services                []string
+	DetectedPorts           []BuildDetectedPortMetadata
+	PortDetectionSource     string
+	PortDetectionConfidence string
+	SuggestedTargetPort     int
+	DetectedFramework       string
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckMetadata
+	PortResolutionStatus    string
+	PortResolutionSource    string
+	PortResolutionReason    string
+	CandidatePorts          []int
+}
+
+type buildPortResolution struct {
+	Status                  string
+	Source                  string
+	Reason                  string
+	CandidatePorts          []int
+	SuggestedTargetPort     int
+	SuggestedHealthcheck    *BuildSuggestedHealthcheckMetadata
+	PortDetectionConfidence string
+}
+
+const (
+	buildPortResolutionStatusResolved   = "resolved"
+	buildPortResolutionStatusAmbiguous  = "ambiguous"
+	buildPortResolutionStatusUnresolved = "unresolved"
+
+	buildPortResolutionSourceExplicit      = "explicit"
+	buildPortResolutionSourceDockerInspect = "docker_inspect"
+	buildPortResolutionSourceFrameworkHint = "framework_hint"
+	buildPortResolutionSourceSmokeRun      = "smoke_run"
+	buildPortResolutionSourceStartHint     = "start_hint"
+	buildPortResolutionSourceMixed         = "mixed"
+	buildPortResolutionSourceInternal      = "internal_default"
+)
 
 func (w *Worker) buildAndPush(
 	ctx context.Context,
 	input BuildWorkerInput,
-) (
-	imageRef string,
-	imageDigest string,
-	serviceArtifacts []BuildServiceArtifactMetadata,
-	services []string,
-	detectedPorts []BuildDetectedPortMetadata,
-	portDetectionSource string,
-	portDetectionConfidence string,
-	suggestedTargetPort int,
-	detectedFramework string,
-	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
-	err error,
-) {
+) (buildResult, error) {
 	// Clone repo
 	repoDir, err := w.cloneRepo(ctx, input)
 	if err != nil {
-		return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("clone repo: %w", err)
+		return buildResult{}, fmt.Errorf("clone repo: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
 
 	// Login to registry
 	if err := w.dockerLogin(ctx); err != nil {
-		return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("docker login: %w", err)
+		return buildResult{}, fmt.Errorf("docker login: %w", err)
 	}
 
 	repoServiceTargets := normalizeBuildTargets(input.ServiceTargets)
 	if len(repoServiceTargets) > 0 {
-		services = make([]string, 0, len(repoServiceTargets))
-		serviceArtifacts = make([]BuildServiceArtifactMetadata, 0, len(repoServiceTargets))
+		result := buildResult{
+			Services:         make([]string, 0, len(repoServiceTargets)),
+			ServiceArtifacts: make([]BuildServiceArtifactMetadata, 0, len(repoServiceTargets)),
+		}
 		for _, target := range repoServiceTargets {
 			serviceDir, err := resolveServiceBuildDir(repoDir, target.ServicePath)
 			if err != nil {
-				return "", "", nil, nil, nil, "", "", 0, "", nil, err
+				return buildResult{}, err
 			}
 			imageName := w.imageNameForService(input, target.ServiceName)
 			if err := w.buildImage(ctx, serviceDir, imageName); err != nil {
-				return "", "", nil, nil, nil, "", "", 0, "", nil, err
+				return buildResult{}, err
 			}
 			slog.Info("pushing docker image", "image", imageName, "service", target.ServiceName)
 			pushCmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "push", imageName)
 			pushOutput, err := pushCmd.CombinedOutput()
 			if err != nil {
-				return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("docker push %s: %s: %w", target.ServiceName, string(pushOutput), err)
+				return buildResult{}, fmt.Errorf("docker push %s: %s: %w", target.ServiceName, string(pushOutput), err)
 			}
 
 			digest, _ := w.getImageDigest(ctx, imageName)
 			detectedServices := w.detectServices(serviceDir)
 			detectedFramework, suggestedHealthcheck := w.detectFrontendMetadata(serviceDir)
-			detectedPorts, portDetectionSource, _ := w.inspectImagePorts(ctx, imageName)
-			suggestedTargetPort, portDetectionConfidence := selectSuggestedTargetPort(detectedServices, detectedPorts, detectedFramework, suggestedHealthcheck)
-			services = append(services, target.ServiceName)
-			serviceArtifacts = append(serviceArtifacts, BuildServiceArtifactMetadata{
+			exposedPorts, _, _ := w.inspectImagePorts(ctx, imageName)
+			smokePorts, smokeReason := w.smokeRunImagePorts(ctx, imageName)
+			detectedPorts, portDetectionSource := mergeDetectedPorts(exposedPorts, smokePorts)
+			resolution := resolveBuildPort(target, detectedServices, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason)
+			result.Services = append(result.Services, target.ServiceName)
+			result.ServiceArtifacts = append(result.ServiceArtifacts, BuildServiceArtifactMetadata{
 				ServiceName:             target.ServiceName,
 				ServicePath:             target.ServicePath,
 				ImageRef:                imageName,
 				ImageDigest:             digest,
 				DetectedPorts:           detectedPorts,
 				PortDetectionSource:     portDetectionSource,
-				PortDetectionConfidence: portDetectionConfidence,
-				SuggestedTargetPort:     suggestedTargetPort,
+				PortDetectionConfidence: resolution.PortDetectionConfidence,
+				SuggestedTargetPort:     resolution.SuggestedTargetPort,
 				DetectedFramework:       detectedFramework,
-				SuggestedHealthcheck:    suggestedHealthcheck,
+				SuggestedHealthcheck:    resolution.SuggestedHealthcheck,
+				PortResolutionStatus:    resolution.Status,
+				PortResolutionSource:    resolution.Source,
+				PortResolutionReason:    resolution.Reason,
+				CandidatePorts:          cloneIntSlice(resolution.CandidatePorts),
 			})
 		}
-		return "", "", serviceArtifacts, services, nil, "", "", 0, "", nil, nil
+		return result, nil
 	}
 
 	imageName := w.imageName(input, shortCommitTag(input.CommitSHA))
 	if err := w.buildImage(ctx, repoDir, imageName); err != nil {
-		return "", "", nil, nil, nil, "", "", 0, "", nil, err
+		return buildResult{}, err
 	}
 
 	slog.Info("pushing docker image", "image", imageName)
 	pushCmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "push", imageName)
 	pushOutput, err := pushCmd.CombinedOutput()
 	if err != nil {
-		return "", "", nil, nil, nil, "", "", 0, "", nil, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
+		return buildResult{}, fmt.Errorf("docker push: %s: %w", string(pushOutput), err)
 	}
 
 	digest, _ := w.getImageDigest(ctx, imageName)
-	services = w.detectServices(repoDir)
+	services := w.detectServices(repoDir)
 	if len(services) == 0 {
 		services = []string{"app"}
 	}
-	detectedFramework, suggestedHealthcheck = w.detectFrontendMetadata(repoDir)
-	detectedPorts, portDetectionSource, _ = w.inspectImagePorts(ctx, imageName)
-	suggestedTargetPort, portDetectionConfidence = selectSuggestedTargetPort(services, detectedPorts, detectedFramework, suggestedHealthcheck)
+	detectedFramework, suggestedHealthcheck := w.detectFrontendMetadata(repoDir)
+	exposedPorts, _, _ := w.inspectImagePorts(ctx, imageName)
+	smokePorts, smokeReason := w.smokeRunImagePorts(ctx, imageName)
+	detectedPorts, portDetectionSource := mergeDetectedPorts(exposedPorts, smokePorts)
+	resolution := resolveBuildPort(BuildTargetServiceMetadata{}, services, detectedPorts, smokePorts, detectedFramework, suggestedHealthcheck, smokeReason)
 
-	return imageName, digest, nil, services, detectedPorts, portDetectionSource, portDetectionConfidence, suggestedTargetPort, detectedFramework, suggestedHealthcheck, nil
+	return buildResult{
+		ImageRef:                imageName,
+		ImageDigest:             digest,
+		Services:                services,
+		DetectedPorts:           detectedPorts,
+		PortDetectionSource:     portDetectionSource,
+		PortDetectionConfidence: resolution.PortDetectionConfidence,
+		SuggestedTargetPort:     resolution.SuggestedTargetPort,
+		DetectedFramework:       detectedFramework,
+		SuggestedHealthcheck:    resolution.SuggestedHealthcheck,
+		PortResolutionStatus:    resolution.Status,
+		PortResolutionSource:    resolution.Source,
+		PortResolutionReason:    resolution.Reason,
+		CandidatePorts:          cloneIntSlice(resolution.CandidatePorts),
+	}, nil
 }
 
 func (w *Worker) imageName(input BuildWorkerInput, tag string) string {
@@ -556,20 +620,11 @@ func (w *Worker) detectFrontendMetadata(repoDir string) (string, *BuildSuggested
 func (w *Worker) callback(
 	ctx context.Context,
 	input BuildWorkerInput,
-	status,
-	imageRef,
-	imageDigest string,
-	serviceArtifacts []BuildServiceArtifactMetadata,
-	services []string,
-	detectedPorts []BuildDetectedPortMetadata,
-	portDetectionSource string,
-	portDetectionConfidence string,
-	suggestedTargetPort int,
-	detectedFramework string,
-	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
+	status string,
+	result buildResult,
 ) error {
-	if services == nil {
-		services = []string{}
+	if result.Services == nil {
+		result.Services = []string{}
 	}
 
 	body := map[string]any{
@@ -581,34 +636,46 @@ func (w *Worker) callback(
 
 	if status == "succeeded" {
 		metadata := map[string]any{
-			"detected_services": services,
+			"detected_services": result.Services,
 		}
-		if len(serviceArtifacts) > 0 {
-			metadata["service_artifacts"] = serviceArtifacts
+		if len(result.ServiceArtifacts) > 0 {
+			metadata["service_artifacts"] = result.ServiceArtifacts
 		}
-		if imageRef != "" {
-			body["image_ref"] = imageRef
+		if result.ImageRef != "" {
+			body["image_ref"] = result.ImageRef
 		}
-		if imageDigest != "" {
-			body["image_digest"] = imageDigest
+		if result.ImageDigest != "" {
+			body["image_digest"] = result.ImageDigest
 		}
-		if len(detectedPorts) > 0 {
-			metadata["detected_ports"] = detectedPorts
+		if len(result.DetectedPorts) > 0 {
+			metadata["detected_ports"] = result.DetectedPorts
 		}
-		if strings.TrimSpace(portDetectionSource) != "" {
-			metadata["port_detection_source"] = strings.TrimSpace(portDetectionSource)
+		if strings.TrimSpace(result.PortDetectionSource) != "" {
+			metadata["port_detection_source"] = strings.TrimSpace(result.PortDetectionSource)
 		}
-		if strings.TrimSpace(portDetectionConfidence) != "" {
-			metadata["port_detection_confidence"] = strings.TrimSpace(portDetectionConfidence)
+		if strings.TrimSpace(result.PortDetectionConfidence) != "" {
+			metadata["port_detection_confidence"] = strings.TrimSpace(result.PortDetectionConfidence)
 		}
-		if suggestedTargetPort > 0 {
-			metadata["suggested_target_port"] = suggestedTargetPort
+		if result.SuggestedTargetPort > 0 {
+			metadata["suggested_target_port"] = result.SuggestedTargetPort
 		}
-		if strings.TrimSpace(detectedFramework) != "" {
-			metadata["detected_framework"] = strings.TrimSpace(detectedFramework)
+		if strings.TrimSpace(result.DetectedFramework) != "" {
+			metadata["detected_framework"] = strings.TrimSpace(result.DetectedFramework)
 		}
-		if suggestedHealthcheck != nil {
-			metadata["suggested_healthcheck"] = suggestedHealthcheck
+		if result.SuggestedHealthcheck != nil {
+			metadata["suggested_healthcheck"] = result.SuggestedHealthcheck
+		}
+		if strings.TrimSpace(result.PortResolutionStatus) != "" {
+			metadata["port_resolution_status"] = strings.TrimSpace(result.PortResolutionStatus)
+		}
+		if strings.TrimSpace(result.PortResolutionSource) != "" {
+			metadata["port_resolution_source"] = strings.TrimSpace(result.PortResolutionSource)
+		}
+		if strings.TrimSpace(result.PortResolutionReason) != "" {
+			metadata["port_resolution_reason"] = strings.TrimSpace(result.PortResolutionReason)
+		}
+		if len(result.CandidatePorts) > 0 {
+			metadata["candidate_ports"] = cloneIntSlice(result.CandidatePorts)
 		}
 		body["metadata"] = metadata
 	}
@@ -622,9 +689,9 @@ func (w *Worker) callback(
 	slog.Info("sending build callback",
 		"url", url,
 		"status", status,
-		"image", imageRef,
-		"service_artifact_count", len(serviceArtifacts),
-		"detected_services", services,
+		"image", result.ImageRef,
+		"service_artifact_count", len(result.ServiceArtifacts),
+		"detected_services", result.Services,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(payload)))
@@ -691,39 +758,313 @@ func (w *Worker) inspectImagePorts(ctx context.Context, imageName string) ([]Bui
 	return ports, "docker_inspect", nil
 }
 
-func selectSuggestedTargetPort(
+func (w *Worker) smokeRunImagePorts(ctx context.Context, imageName string) ([]int, string) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	containerName := "lazyops-port-scan-" + randomHex(6)
+	runCmd := exec.CommandContext(timeoutCtx, w.cfg.BuildWorker.DockerBin, "run", "-d", "--name", containerName, imageName)
+	output, err := runCmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Sprintf("smoke run failed: %s", strings.TrimSpace(string(output)))
+	}
+
+	containerID := strings.TrimSpace(string(output))
+	defer w.removeContainer(context.Background(), containerID)
+
+	deadline := time.Now().Add(15 * time.Second)
+	stableUntil := time.Time{}
+	found := make(map[int]struct{})
+	lastReason := ""
+
+	for {
+		state, err := w.inspectContainerState(timeoutCtx, containerID)
+		if err != nil {
+			lastReason = fmt.Sprintf("inspect smoke-run container: %v", err)
+			break
+		}
+		if state.Pid > 0 {
+			ports, err := readListeningPortsForPID(state.Pid)
+			if err == nil {
+				for _, port := range ports {
+					found[port] = struct{}{}
+				}
+				if len(found) > 0 && stableUntil.IsZero() {
+					stableUntil = time.Now().Add(1 * time.Second)
+				}
+			} else {
+				lastReason = fmt.Sprintf("inspect listening ports: %v", err)
+			}
+		}
+
+		if len(found) > 1 {
+			break
+		}
+		if len(found) > 0 && !stableUntil.IsZero() && time.Now().After(stableUntil) {
+			break
+		}
+		if !state.Running {
+			if len(found) == 0 {
+				reason := strings.TrimSpace(state.Error)
+				if reason == "" {
+					reason = fmt.Sprintf("container exited before binding a listening port (status=%s exit_code=%d)", strings.TrimSpace(state.Status), state.ExitCode)
+				}
+				lastReason = reason
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			if len(found) == 0 && lastReason == "" {
+				lastReason = "timed out waiting for the container to expose a listening port"
+			}
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	return normalizeCandidatePorts(mapKeysToInts(found)), strings.TrimSpace(lastReason)
+}
+
+type dockerContainerState struct {
+	Status   string `json:"Status"`
+	Running  bool   `json:"Running"`
+	Pid      int    `json:"Pid"`
+	ExitCode int    `json:"ExitCode"`
+	Error    string `json:"Error"`
+}
+
+func (w *Worker) inspectContainerState(ctx context.Context, containerID string) (dockerContainerState, error) {
+	cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "inspect", containerID, "--format", "{{json .State}}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return dockerContainerState{}, fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+	}
+	var state dockerContainerState
+	if err := json.Unmarshal(output, &state); err != nil {
+		return dockerContainerState{}, err
+	}
+	return state, nil
+}
+
+func (w *Worker) removeContainer(ctx context.Context, containerID string) {
+	if strings.TrimSpace(containerID) == "" {
+		return
+	}
+	cmd := exec.CommandContext(ctx, w.cfg.BuildWorker.DockerBin, "rm", "-f", containerID)
+	_, _ = cmd.CombinedOutput()
+}
+
+func readListeningPortsForPID(pid int) ([]int, error) {
+	if pid <= 0 {
+		return nil, nil
+	}
+	ports := make(map[int]struct{})
+	for _, path := range []string{
+		filepath.Join("/proc", strconv.Itoa(pid), "net", "tcp"),
+		filepath.Join("/proc", strconv.Itoa(pid), "net", "tcp6"),
+	} {
+		payload, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, port := range parseProcNetListeningPorts(string(payload)) {
+			ports[port] = struct{}{}
+		}
+	}
+	return normalizeCandidatePorts(mapKeysToInts(ports)), nil
+}
+
+func parseProcNetListeningPorts(payload string) []int {
+	lines := strings.Split(strings.TrimSpace(payload), "\n")
+	if len(lines) <= 1 {
+		return nil
+	}
+	ports := make(map[int]struct{})
+	for _, line := range lines[1:] {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 4 || fields[3] != "0A" {
+			continue
+		}
+		addressParts := strings.SplitN(fields[1], ":", 2)
+		if len(addressParts) != 2 {
+			continue
+		}
+		value, err := strconv.ParseInt(strings.TrimSpace(addressParts[1]), 16, 32)
+		if err != nil || value <= 0 {
+			continue
+		}
+		ports[int(value)] = struct{}{}
+	}
+	return normalizeCandidatePorts(mapKeysToInts(ports))
+}
+
+func resolveBuildPort(
+	target BuildTargetServiceMetadata,
 	services []string,
 	detectedPorts []BuildDetectedPortMetadata,
+	smokePorts []int,
 	detectedFramework string,
 	suggestedHealthcheck *BuildSuggestedHealthcheckMetadata,
-) (int, string) {
+	smokeReason string,
+) buildPortResolution {
+	if declaredPort, declaredReason, declaredHealthcheck := declaredPortHint(target); declaredPort > 0 {
+		reason := declaredReason
+		if reason == "" {
+			reason = fmt.Sprintf("using declared service port %d", declaredPort)
+		}
+		return buildPortResolution{
+			Status:                  buildPortResolutionStatusResolved,
+			Source:                  buildPortResolutionSourceExplicit,
+			Reason:                  strings.TrimSpace(reason),
+			CandidatePorts:          []int{declaredPort},
+			SuggestedTargetPort:     declaredPort,
+			SuggestedHealthcheck:    cloneSuggestedHealthcheck(declaredHealthcheck),
+			PortDetectionConfidence: "high",
+		}
+	}
+
+	candidateSources := map[int]map[string]struct{}{}
+	addCandidate := func(port int, source string) {
+		if port <= 0 || strings.TrimSpace(source) == "" {
+			return
+		}
+		if _, ok := candidateSources[port]; !ok {
+			candidateSources[port] = make(map[string]struct{})
+		}
+		candidateSources[port][source] = struct{}{}
+	}
+
 	if port := selectInternalServicePort(services, detectedPorts); port > 0 {
-		return port, "high"
+		addCandidate(port, buildPortResolutionSourceInternal)
+	}
+	for _, port := range parseStartHintPorts(target.StartHint) {
+		addCandidate(port, buildPortResolutionSourceStartHint)
 	}
 	if suggestedHealthcheck != nil && suggestedHealthcheck.Port > 0 {
-		if containsDetectedPort(detectedPorts, suggestedHealthcheck.Port) || len(detectedPorts) == 0 {
-			return suggestedHealthcheck.Port, "high"
-		}
-		return suggestedHealthcheck.Port, "medium"
-	}
-	if len(detectedPorts) == 1 {
-		return detectedPorts[0].Port, "high"
-	}
-	switch strings.ToLower(strings.TrimSpace(detectedFramework)) {
-	case "next", "vite", "react-scripts":
-		if containsDetectedPort(detectedPorts, 3000) || len(detectedPorts) == 0 {
-			return 3000, "medium"
-		}
+		addCandidate(suggestedHealthcheck.Port, buildPortResolutionSourceFrameworkHint)
 	}
 	for _, item := range detectedPorts {
-		if item.Port >= 1024 {
-			return item.Port, "low"
+		if item.Port > 0 && item.Exposed {
+			addCandidate(item.Port, buildPortResolutionSourceDockerInspect)
 		}
 	}
-	if len(detectedPorts) > 0 {
-		return detectedPorts[0].Port, "low"
+	for _, port := range smokePorts {
+		addCandidate(port, buildPortResolutionSourceSmokeRun)
 	}
-	return 0, ""
+
+	candidatePorts := make([]int, 0, len(candidateSources))
+	for port := range candidateSources {
+		candidatePorts = append(candidatePorts, port)
+	}
+	candidatePorts = normalizeCandidatePorts(candidatePorts)
+
+	if len(candidatePorts) == 0 {
+		reason := strings.TrimSpace(smokeReason)
+		if reason == "" {
+			reason = "no candidate port could be resolved from docker inspect, start hint, framework hint, or smoke run"
+		}
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusUnresolved,
+			Source:         "",
+			Reason:         reason,
+			CandidatePorts: nil,
+		}
+	}
+	if len(candidatePorts) > 1 {
+		sourceSet := make(map[string]struct{})
+		for _, sources := range candidateSources {
+			for source := range sources {
+				sourceSet[source] = struct{}{}
+			}
+		}
+		reason := fmt.Sprintf(
+			"multiple candidate ports detected (%s); declare target_port/service_port or set a precise healthcheck.port",
+			intsToCSV(candidatePorts),
+		)
+		if extra := strings.TrimSpace(smokeReason); extra != "" {
+			reason += "; " + extra
+		}
+		return buildPortResolution{
+			Status:         buildPortResolutionStatusAmbiguous,
+			Source:         summarizeSources(sourceSet),
+			Reason:         reason,
+			CandidatePorts: candidatePorts,
+		}
+	}
+
+	port := candidatePorts[0]
+	portSources := candidateSources[port]
+	source := summarizeSources(portSources)
+	reason := fmt.Sprintf("resolved port %d from %s", port, strings.ReplaceAll(source, "_", " "))
+	if source == "" {
+		source = buildPortResolutionSourceMixed
+	}
+
+	var healthcheck *BuildSuggestedHealthcheckMetadata
+	if suggestedHealthcheck != nil && suggestedHealthcheck.Port == port {
+		healthcheck = cloneSuggestedHealthcheck(suggestedHealthcheck)
+	}
+	return buildPortResolution{
+		Status:                  buildPortResolutionStatusResolved,
+		Source:                  source,
+		Reason:                  reason,
+		CandidatePorts:          candidatePorts,
+		SuggestedTargetPort:     port,
+		SuggestedHealthcheck:    healthcheck,
+		PortDetectionConfidence: resolutionConfidenceForSources(portSources),
+	}
+}
+
+func declaredPortHint(target BuildTargetServiceMetadata) (int, string, *BuildSuggestedHealthcheckMetadata) {
+	if target.DeclaredTargetPort > 0 {
+		return target.DeclaredTargetPort, fmt.Sprintf("using declared target_port=%d", target.DeclaredTargetPort), declaredHealthcheckHint(target.DeclaredHealthcheck)
+	}
+	if target.DeclaredServicePort > 0 {
+		return target.DeclaredServicePort, fmt.Sprintf("using declared service_port=%d", target.DeclaredServicePort), declaredHealthcheckHint(target.DeclaredHealthcheck)
+	}
+	if port := intValue(target.DeclaredHealthcheck["port"]); port > 0 {
+		healthcheck := declaredHealthcheckHint(target.DeclaredHealthcheck)
+		return port, fmt.Sprintf("using declared healthcheck.port=%d", port), healthcheck
+	}
+	return 0, "", nil
+}
+
+func declaredHealthcheckHint(raw map[string]any) *BuildSuggestedHealthcheckMetadata {
+	if len(raw) == 0 {
+		return nil
+	}
+	port := intValue(raw["port"])
+	if port <= 0 {
+		return nil
+	}
+	path := strings.TrimSpace(stringValue(raw["path"]))
+	if path == "" {
+		return nil
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return &BuildSuggestedHealthcheckMetadata{
+		Path: path,
+		Port: port,
+	}
+}
+
+func resolutionConfidenceForSources(sources map[string]struct{}) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	if len(sources) > 1 {
+		return "high"
+	}
+	switch summarizeSources(sources) {
+	case buildPortResolutionSourceExplicit, buildPortResolutionSourceSmokeRun, buildPortResolutionSourceInternal:
+		return "high"
+	case buildPortResolutionSourceDockerInspect, buildPortResolutionSourceFrameworkHint, buildPortResolutionSourceStartHint:
+		return "medium"
+	default:
+		return "low"
+	}
 }
 
 func selectInternalServicePort(services []string, detectedPorts []BuildDetectedPortMetadata) int {
@@ -758,6 +1099,193 @@ func containsDetectedPort(detectedPorts []BuildDetectedPortMetadata, port int) b
 		}
 	}
 	return false
+}
+
+func mergeDetectedPorts(exposedPorts []BuildDetectedPortMetadata, smokePorts []int) ([]BuildDetectedPortMetadata, string) {
+	ports := make(map[string]BuildDetectedPortMetadata, len(exposedPorts)+len(smokePorts))
+	for _, item := range exposedPorts {
+		if item.Port <= 0 {
+			continue
+		}
+		protocol := strings.ToLower(strings.TrimSpace(item.Protocol))
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		key := fmt.Sprintf("%d/%s", item.Port, protocol)
+		item.Protocol = protocol
+		item.Exposed = true
+		if strings.TrimSpace(item.Name) == "" {
+			item.Name = fmt.Sprintf("%d-%s", item.Port, protocol)
+		}
+		ports[key] = item
+	}
+	for _, port := range smokePorts {
+		if port <= 0 {
+			continue
+		}
+		key := fmt.Sprintf("%d/tcp", port)
+		existing, ok := ports[key]
+		if ok {
+			existing.Exposed = true
+			ports[key] = existing
+			continue
+		}
+		ports[key] = BuildDetectedPortMetadata{
+			Port:     port,
+			Protocol: "tcp",
+			Name:     fmt.Sprintf("%d-tcp", port),
+			Exposed:  false,
+		}
+	}
+
+	out := make([]BuildDetectedPortMetadata, 0, len(ports))
+	for _, item := range ports {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Port == out[j].Port {
+			return out[i].Protocol < out[j].Protocol
+		}
+		return out[i].Port < out[j].Port
+	})
+
+	switch {
+	case len(exposedPorts) > 0 && len(smokePorts) > 0:
+		return out, buildPortResolutionSourceMixed
+	case len(smokePorts) > 0:
+		return out, buildPortResolutionSourceSmokeRun
+	case len(exposedPorts) > 0:
+		return out, buildPortResolutionSourceDockerInspect
+	default:
+		return out, ""
+	}
+}
+
+var startHintPortPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:^|[\s"'` + "`" + `])PORT=(\d{2,5})(?:$|[\s"'` + "`" + `])`),
+	regexp.MustCompile(`(?i)--port(?:=|\s+)(\d{2,5})`),
+	regexp.MustCompile(`(?i)(?:^|\s)-p\s+(\d{2,5})(?:$|\s)`),
+	regexp.MustCompile(`(?i)(?:listen|addr|bind|serve)\S*\s+0\.0\.0\.0:(\d{2,5})`),
+}
+
+func parseStartHintPorts(startHint string) []int {
+	startHint = strings.TrimSpace(startHint)
+	if startHint == "" {
+		return nil
+	}
+	ports := make([]int, 0, 2)
+	for _, pattern := range startHintPortPatterns {
+		matches := pattern.FindAllStringSubmatch(startHint, -1)
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+			port, err := strconv.Atoi(strings.TrimSpace(match[1]))
+			if err != nil || port <= 0 {
+				continue
+			}
+			ports = append(ports, port)
+		}
+	}
+	return normalizeCandidatePorts(ports)
+}
+
+func summarizeSources(sources map[string]struct{}) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	if len(sources) == 1 {
+		for source := range sources {
+			return source
+		}
+	}
+	return buildPortResolutionSourceMixed
+}
+
+func normalizeCandidatePorts(items []int) []int {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(items))
+	out := make([]int, 0, len(items))
+	for _, item := range items {
+		if item <= 0 {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	sort.Ints(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneIntSlice(items []int) []int {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]int, len(items))
+	copy(out, items)
+	return out
+}
+
+func cloneSuggestedHealthcheck(item *BuildSuggestedHealthcheckMetadata) *BuildSuggestedHealthcheckMetadata {
+	if item == nil {
+		return nil
+	}
+	cloned := *item
+	return &cloned
+}
+
+func mapKeysToInts(items map[int]struct{}) []int {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(items))
+	for item := range items {
+		out = append(out, item)
+	}
+	return out
+}
+
+func intsToCSV(items []int) string {
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, strconv.Itoa(item))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func intValue(raw any) int {
+	switch value := raw.(type) {
+	case int:
+		return value
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float32:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
+}
+
+func stringValue(raw any) string {
+	if value, ok := raw.(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
 }
 
 func (w *Worker) callbackURL() string {
@@ -806,8 +1334,14 @@ func normalizeBuildTargets(items []BuildTargetServiceMetadata) []BuildTargetServ
 		}
 		seen[key] = struct{}{}
 		out = append(out, BuildTargetServiceMetadata{
-			ServiceName: name,
-			ServicePath: path,
+			ServiceName:         name,
+			ServicePath:         path,
+			RuntimeProfile:      strings.TrimSpace(item.RuntimeProfile),
+			Public:              item.Public,
+			StartHint:           strings.TrimSpace(item.StartHint),
+			DeclaredTargetPort:  item.DeclaredTargetPort,
+			DeclaredServicePort: item.DeclaredServicePort,
+			DeclaredHealthcheck: cloneAnyMap(item.DeclaredHealthcheck),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -816,6 +1350,17 @@ func normalizeBuildTargets(items []BuildTargetServiceMetadata) []BuildTargetServ
 		}
 		return out[i].ServiceName < out[j].ServiceName
 	})
+	return out
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
 	return out
 }
 

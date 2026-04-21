@@ -117,3 +117,53 @@ func TestValidateK3sManifestPreflightRejectsMissingPVCClaimReference(t *testing.
 		t.Fatalf("expected missing pvc claim validation error, got %v", err)
 	}
 }
+
+func TestValidateK3sManifestPreflightRejectsGenericServiceWithoutResolvedPort(t *testing.T) {
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{Namespace: "lazyops-test"},
+		Revision: contracts.DesiredRevisionPayload{
+			ServiceSpecs: []contracts.K3sServiceSpecPayload{
+				{
+					Name:           "api",
+					Kind:           "api",
+					RuntimeProfile: "service",
+					Public:         true,
+					ImageRef:       "ghcr.io/lazyops/api:abc123",
+				},
+			},
+		},
+	}
+
+	_, err := validateK3sManifestPreflight(runtimeCtx)
+	if err == nil || !strings.Contains(err.Error(), "requires a resolved target_port") {
+		t.Fatalf("expected unresolved target port validation error, got %v", err)
+	}
+}
+
+func TestValidateK3sManifestPreflightRejectsHealthcheckPortMismatch(t *testing.T) {
+	runtimeCtx := RuntimeContext{
+		Project: ProjectMetadata{Namespace: "lazyops-test"},
+		Revision: contracts.DesiredRevisionPayload{
+			ServiceSpecs: []contracts.K3sServiceSpecPayload{
+				{
+					Name:           "api",
+					Kind:           "api",
+					RuntimeProfile: "service",
+					Public:         true,
+					ImageRef:       "ghcr.io/lazyops/api:abc123",
+					TargetPort:     3000,
+					ServicePort:    3000,
+					HealthCheck: contracts.HealthCheckPayload{
+						Path: "/healthz",
+						Port: 8080,
+					},
+				},
+			},
+		},
+	}
+
+	_, err := validateK3sManifestPreflight(runtimeCtx)
+	if err == nil || !strings.Contains(err.Error(), "conflicts with resolved target_port 3000") {
+		t.Fatalf("expected healthcheck mismatch validation error, got %v", err)
+	}
+}

@@ -28,6 +28,9 @@ func validateK3sManifestPreflight(runtimeCtx RuntimeContext) (manifestPreflightR
 		if err := validateK3sServiceName(name); err != nil {
 			return result, err
 		}
+		if err := validateK3sServicePorts(spec); err != nil {
+			return result, err
+		}
 		if _, exists := serviceNames[name]; exists {
 			return result, fmt.Errorf("duplicate k3s service name %q in revision payload", name)
 		}
@@ -193,4 +196,43 @@ func requiresPVCForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
 	default:
 		return false
 	}
+}
+
+func validateK3sServicePorts(spec contracts.K3sServiceSpecPayload) error {
+	name := strings.TrimSpace(spec.Name)
+	if requiresResolvedPortForK3sSpec(spec) && spec.TargetPort <= 0 {
+		return fmt.Errorf(
+			"service %q requires a resolved target_port before k3s rollout; declare target_port/service_port or a precise healthcheck.port",
+			name,
+		)
+	}
+	healthPort := k3sHealthcheckPort(spec.HealthCheck)
+	healthPath := strings.TrimSpace(spec.HealthCheck.Path)
+	if healthPath != "" && healthPort <= 0 {
+		return fmt.Errorf("service %q defines healthcheck.path %q without healthcheck.port", name, healthPath)
+	}
+	if healthPort > 0 && spec.TargetPort > 0 && healthPort != spec.TargetPort {
+		return fmt.Errorf(
+			"service %q healthcheck.port %d conflicts with resolved target_port %d",
+			name,
+			healthPort,
+			spec.TargetPort,
+		)
+	}
+	return nil
+}
+
+func requiresResolvedPortForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
+	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
+	case "postgres", "mysql", "redis", "rabbitmq", "internal-db":
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(spec.RuntimeProfile), "worker") && !spec.Public && k3sHealthcheckPort(spec.HealthCheck) <= 0 {
+		return false
+	}
+	return strings.TrimSpace(spec.ImageRef) != ""
+}
+
+func k3sHealthcheckPort(healthcheck contracts.HealthCheckPayload) int {
+	return healthcheck.Port
 }

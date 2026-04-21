@@ -17,8 +17,10 @@ import (
 )
 
 var (
-	ErrBuildJobNotFound      = errors.New("build job not found")
-	ErrBuildArtifactMismatch = errors.New("build artifact mismatch")
+	ErrBuildJobNotFound        = errors.New("build job not found")
+	ErrBuildArtifactMismatch   = errors.New("build artifact mismatch")
+	ErrPortResolutionFailed    = errors.New("port resolution failed")
+	ErrPortResolutionAmbiguous = errors.New("port resolution ambiguous")
 )
 
 type UserBroadcaster interface {
@@ -115,6 +117,10 @@ func (s *BuildCallbackService) Handle(cmd BuildCallbackCommand) (*BuildCallbackR
 		cmd.SuggestedTargetPort,
 		cmd.DetectedFramework,
 		cmd.SuggestedHealthcheck,
+		cmd.PortResolutionStatus,
+		cmd.PortResolutionSource,
+		cmd.PortResolutionReason,
+		cmd.CandidatePorts,
 	)
 	if err != nil {
 		return nil, err
@@ -218,6 +224,9 @@ func (s *BuildCallbackService) createArtifactReadyRevision(job models.BuildJob, 
 		}
 		blueprintRecord = compiled.Blueprint
 		appliedServices = compiled.AppliedServices
+		if additionalApplied := applyArtifactToBlueprintServices(&blueprintRecord, artifact); len(additionalApplied) > 0 {
+			appliedServices = normalizeDetectedServices(append(appliedServices, additionalApplied...))
+		}
 	} else {
 		if s.blueprints == nil {
 			return nil, nil, nil
@@ -381,6 +390,10 @@ func normalizeBuildArtifactMetadata(
 	suggestedTargetPort int,
 	detectedFramework string,
 	suggestedHealthcheck *BuildSuggestedHealthcheckRecord,
+	portResolutionStatus string,
+	portResolutionSource string,
+	portResolutionReason string,
+	candidatePorts []int,
 ) (BuildArtifactMetadataStageRecord, error) {
 	artifact := BuildArtifactMetadataStageRecord{
 		CommitSHA:               strings.TrimSpace(commitSHA),
@@ -391,9 +404,13 @@ func normalizeBuildArtifactMetadata(
 		DetectedPorts:           normalizeDetectedPorts(detectedPorts),
 		PortDetectionSource:     normalizePortDetectionSource(portDetectionSource),
 		PortDetectionConfidence: normalizePortDetectionConfidence(portDetectionConfidence),
-		SuggestedTargetPort:     normalizeSuggestedTargetPort(suggestedTargetPort, detectedPorts, suggestedHealthcheck),
+		SuggestedTargetPort:     normalizeSuggestedTargetPort(suggestedTargetPort, detectedPorts, suggestedHealthcheck, candidatePorts, portResolutionStatus),
 		DetectedFramework:       normalizeDetectedFramework(detectedFramework),
 		SuggestedHealthcheck:    normalizeSuggestedHealthcheck(suggestedHealthcheck),
+		PortResolutionStatus:    normalizePortResolutionStatus(portResolutionStatus),
+		PortResolutionSource:    normalizePortResolutionSource(portResolutionSource),
+		PortResolutionReason:    strings.TrimSpace(portResolutionReason),
+		CandidatePorts:          normalizeCandidatePorts(candidatePorts),
 	}
 	if artifact.CommitSHA == "" {
 		return BuildArtifactMetadataStageRecord{}, ErrInvalidInput
@@ -500,7 +517,181 @@ func validateResolvedBuildArtifacts(expectedTargets []BuildTargetServiceRecord, 
 			"multi-service build callback cannot fall back to a shared top-level image without metadata.service_artifacts",
 		)
 	}
+	if err := validateResolvedServicePorts(expectedTargets, services, artifact); err != nil {
+		return err
+	}
 	return nil
+}
+
+type portResolutionSnapshot struct {
+	Status         string
+	Source         string
+	Reason         string
+	CandidatePorts []int
+}
+
+func validateResolvedServicePorts(expectedTargets []BuildTargetServiceRecord, services []BlueprintServiceContractRecord, artifact BuildArtifactMetadataStageRecord) error {
+	if len(services) == 0 {
+		return nil
+	}
+
+	expectedByKey := make(map[string]BuildTargetServiceRecord, len(expectedTargets))
+	for _, target := range normalizeBuildTargetServices(expectedTargets) {
+		expectedByKey[buildTargetServiceKey(target.ServiceName, target.ServicePath)] = target
+	}
+	resolutionByIndex := buildArtifactResolutionSnapshots(services, artifact)
+
+	for index, service := range services {
+		expectedTarget, hasExpectedTarget := expectedByKey[buildTargetServiceKey(service.Name, service.Path)]
+		if !hasExpectedTarget && strings.TrimSpace(service.ImageRef) == "" {
+			continue
+		}
+		if !requiresResolvedServicePort(service, expectedTarget) {
+			if err := validateServiceHealthcheckConsistency(service); err != nil {
+				return err
+			}
+			continue
+		}
+
+		resolvedPort := firstPositive(service.TargetPort, service.ServicePort)
+		if resolvedPort <= 0 {
+			snapshot, ok := resolutionByIndex[index]
+			if !ok {
+				snapshot = portResolutionSnapshot{
+					Status:         BuildPortResolutionStatusUnresolved,
+					Reason:         "no port resolution metadata was attached to the build artifact",
+					CandidatePorts: nil,
+				}
+			}
+			return newPortResolutionError(service, snapshot, "service requires a resolved target_port/service_port before rollout")
+		}
+		if err := validateServiceHealthcheckConsistency(service); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildArtifactResolutionSnapshots(services []BlueprintServiceContractRecord, artifact BuildArtifactMetadataStageRecord) map[int]portResolutionSnapshot {
+	if len(services) == 0 {
+		return nil
+	}
+	out := make(map[int]portResolutionSnapshot, len(services))
+	if len(artifact.ServiceArtifacts) > 0 {
+		for _, item := range artifact.ServiceArtifacts {
+			index := resolveServiceArtifactTargetIndex(services, item)
+			if index < 0 {
+				continue
+			}
+			out[index] = portResolutionSnapshot{
+				Status:         normalizePortResolutionStatus(item.PortResolutionStatus),
+				Source:         normalizePortResolutionSource(item.PortResolutionSource),
+				Reason:         strings.TrimSpace(item.PortResolutionReason),
+				CandidatePorts: normalizeCandidatePorts(item.CandidatePorts),
+			}
+		}
+		return out
+	}
+
+	indexes := resolveArtifactTargetServiceIndexes(
+		BlueprintRecord{Compiled: BlueprintCompiledContractRecord{Services: services}},
+		artifact,
+	)
+	for _, index := range indexes {
+		if index < 0 || index >= len(services) {
+			continue
+		}
+		out[index] = portResolutionSnapshot{
+			Status:         normalizePortResolutionStatus(artifact.PortResolutionStatus),
+			Source:         normalizePortResolutionSource(artifact.PortResolutionSource),
+			Reason:         strings.TrimSpace(artifact.PortResolutionReason),
+			CandidatePorts: normalizeCandidatePorts(artifact.CandidatePorts),
+		}
+	}
+	return out
+}
+
+func requiresResolvedServicePort(service BlueprintServiceContractRecord, expectedTarget BuildTargetServiceRecord) bool {
+	if isManagedInternalServiceKind(service.Kind) {
+		return false
+	}
+	if declaredServicePort(expectedTarget, service) > 0 {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(service.RuntimeProfile), "worker") && !service.Public && extractHealthcheckPort(service.Healthcheck) <= 0 {
+		return false
+	}
+	if strings.TrimSpace(service.ImageRef) == "" && strings.TrimSpace(service.SourceType) != serviceSourceTypeRepo && strings.TrimSpace(expectedTarget.ServiceName) == "" {
+		return false
+	}
+	return true
+}
+
+func declaredServicePort(expectedTarget BuildTargetServiceRecord, service BlueprintServiceContractRecord) int {
+	if expectedTarget.DeclaredTargetPort > 0 {
+		return expectedTarget.DeclaredTargetPort
+	}
+	if expectedTarget.DeclaredServicePort > 0 {
+		return expectedTarget.DeclaredServicePort
+	}
+	if port := extractHealthcheckPort(expectedTarget.DeclaredHealthcheck); port > 0 {
+		return port
+	}
+	return firstPositive(service.TargetPort, service.ServicePort)
+}
+
+func validateServiceHealthcheckConsistency(service BlueprintServiceContractRecord) error {
+	if len(service.Healthcheck) == 0 {
+		return nil
+	}
+	healthPort := extractHealthcheckPort(service.Healthcheck)
+	healthPath := strings.TrimSpace(extractHealthcheckString(service.Healthcheck, "path"))
+	if healthPath != "" && healthPort <= 0 {
+		return fmt.Errorf("%w: service %q defines healthcheck.path %q without healthcheck.port", ErrPortResolutionFailed, service.Name, healthPath)
+	}
+	resolvedPort := firstPositive(service.TargetPort, service.ServicePort)
+	if healthPort > 0 && resolvedPort > 0 && healthPort != resolvedPort {
+		return fmt.Errorf(
+			"%w: service %q resolved target port %d conflicts with healthcheck.port %d; update the service port or healthcheck to match",
+			ErrPortResolutionFailed,
+			service.Name,
+			resolvedPort,
+			healthPort,
+		)
+	}
+	return nil
+}
+
+func newPortResolutionError(service BlueprintServiceContractRecord, snapshot portResolutionSnapshot, summary string) error {
+	base := ErrPortResolutionFailed
+	status := normalizePortResolutionStatus(snapshot.Status)
+	if status == "" && len(snapshot.CandidatePorts) > 1 {
+		status = BuildPortResolutionStatusAmbiguous
+	}
+	if status == BuildPortResolutionStatusAmbiguous {
+		base = ErrPortResolutionAmbiguous
+	}
+	parts := []string{
+		fmt.Sprintf("service %q: %s", strings.TrimSpace(service.Name), strings.TrimSpace(summary)),
+	}
+	if status != "" {
+		parts = append(parts, "status="+status)
+	}
+	if source := normalizePortResolutionSource(snapshot.Source); source != "" {
+		parts = append(parts, "source="+source)
+	}
+	if len(snapshot.CandidatePorts) > 0 {
+		ports := make([]string, 0, len(snapshot.CandidatePorts))
+		for _, port := range snapshot.CandidatePorts {
+			ports = append(ports, fmt.Sprintf("%d", port))
+		}
+		parts = append(parts, "candidate_ports=["+strings.Join(ports, ",")+"]")
+	}
+	if reason := strings.TrimSpace(snapshot.Reason); reason != "" {
+		parts = append(parts, reason)
+	}
+	parts = append(parts, "declare target_port/service_port or a precise healthcheck.port to unblock the rollout")
+	return fmt.Errorf("%w: %s", base, strings.Join(parts, "; "))
 }
 
 func validateServiceArtifactsAgainstBlueprintServices(services []BlueprintServiceContractRecord, artifacts []BuildServiceArtifactRecord) error {
@@ -608,9 +799,13 @@ func normalizeBuildServiceArtifacts(items []BuildServiceArtifactRecord) []BuildS
 			DetectedPorts:           normalizeDetectedPorts(item.DetectedPorts),
 			PortDetectionSource:     normalizePortDetectionSource(item.PortDetectionSource),
 			PortDetectionConfidence: normalizePortDetectionConfidence(item.PortDetectionConfidence),
-			SuggestedTargetPort:     normalizeSuggestedTargetPort(item.SuggestedTargetPort, item.DetectedPorts, item.SuggestedHealthcheck),
+			SuggestedTargetPort:     normalizeSuggestedTargetPort(item.SuggestedTargetPort, item.DetectedPorts, item.SuggestedHealthcheck, item.CandidatePorts, item.PortResolutionStatus),
 			DetectedFramework:       normalizeDetectedFramework(item.DetectedFramework),
 			SuggestedHealthcheck:    normalizeSuggestedHealthcheck(item.SuggestedHealthcheck),
+			PortResolutionStatus:    normalizePortResolutionStatus(item.PortResolutionStatus),
+			PortResolutionSource:    normalizePortResolutionSource(item.PortResolutionSource),
+			PortResolutionReason:    strings.TrimSpace(item.PortResolutionReason),
+			CandidatePorts:          normalizeCandidatePorts(item.CandidatePorts),
 		}
 		artifact.ArtifactRef = deriveBuildArtifactRef(artifact.ImageRef, artifact.ImageDigest)
 		out = append(out, artifact)
@@ -627,6 +822,7 @@ func cloneBuildServiceArtifacts(items []BuildServiceArtifactRecord) []BuildServi
 		cloned := item
 		cloned.DetectedPorts = cloneDetectedPorts(item.DetectedPorts)
 		cloned.SuggestedHealthcheck = cloneSuggestedHealthcheck(item.SuggestedHealthcheck)
+		cloned.CandidatePorts = cloneIntSlice(item.CandidatePorts)
 		out = append(out, cloned)
 	}
 	return out
@@ -727,6 +923,10 @@ func normalizePortDetectionSource(raw string) string {
 		return "docker_inspect"
 	case "registry_api":
 		return "registry_api"
+	case "smoke_run":
+		return "smoke_run"
+	case "mixed":
+		return "mixed"
 	default:
 		return ""
 	}
@@ -745,9 +945,49 @@ func normalizePortDetectionConfidence(raw string) string {
 	}
 }
 
-func normalizeSuggestedTargetPort(port int, detectedPorts []ServiceDetectedPortRecord, suggestedHealthcheck *BuildSuggestedHealthcheckRecord) int {
+func normalizePortResolutionStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case BuildPortResolutionStatusResolved:
+		return BuildPortResolutionStatusResolved
+	case BuildPortResolutionStatusAmbiguous:
+		return BuildPortResolutionStatusAmbiguous
+	case BuildPortResolutionStatusUnresolved:
+		return BuildPortResolutionStatusUnresolved
+	default:
+		return ""
+	}
+}
+
+func normalizePortResolutionSource(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case BuildPortResolutionSourceExplicit:
+		return BuildPortResolutionSourceExplicit
+	case BuildPortResolutionSourceDockerInspect:
+		return BuildPortResolutionSourceDockerInspect
+	case BuildPortResolutionSourceFrameworkHint:
+		return BuildPortResolutionSourceFrameworkHint
+	case BuildPortResolutionSourceSmokeRun:
+		return BuildPortResolutionSourceSmokeRun
+	case BuildPortResolutionSourceStartHint:
+		return BuildPortResolutionSourceStartHint
+	case BuildPortResolutionSourceMixed:
+		return BuildPortResolutionSourceMixed
+	case BuildPortResolutionSourceInternal:
+		return BuildPortResolutionSourceInternal
+	default:
+		return ""
+	}
+}
+
+func normalizeSuggestedTargetPort(port int, detectedPorts []ServiceDetectedPortRecord, suggestedHealthcheck *BuildSuggestedHealthcheckRecord, candidatePorts []int, portResolutionStatus string) int {
 	if port > 0 {
 		return port
+	}
+	if normalizePortResolutionStatus(portResolutionStatus) == BuildPortResolutionStatusResolved {
+		normalizedCandidates := normalizeCandidatePorts(candidatePorts)
+		if len(normalizedCandidates) == 1 {
+			return normalizedCandidates[0]
+		}
 	}
 	if suggestedHealthcheck != nil && suggestedHealthcheck.Port > 0 {
 		return suggestedHealthcheck.Port
@@ -765,6 +1005,38 @@ func normalizeSuggestedTargetPort(port int, detectedPorts []ServiceDetectedPortR
 		return normalized[0].Port
 	}
 	return 0
+}
+
+func normalizeCandidatePorts(items []int) []int {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(items))
+	out := make([]int, 0, len(items))
+	for _, item := range items {
+		if item <= 0 {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	sort.Ints(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneIntSlice(items []int) []int {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]int, len(items))
+	copy(out, items)
+	return out
 }
 
 func normalizeSuggestedHealthcheck(raw *BuildSuggestedHealthcheckRecord) *BuildSuggestedHealthcheckRecord {
@@ -1068,6 +1340,15 @@ func applyArtifactToBlueprintService(service *BlueprintServiceContractRecord, ar
 	service.ImageRef = artifact.ImageRef
 	service.ImageDigest = artifact.ImageDigest
 	service.DetectedPorts = artifact.DetectedPorts
+
+	if healthPort := extractHealthcheckPort(service.Healthcheck); healthPort > 0 {
+		if service.TargetPort <= 0 {
+			service.TargetPort = healthPort
+		}
+		if service.ServicePort <= 0 {
+			service.ServicePort = healthPort
+		}
+	}
 
 	if artifact.SuggestedTargetPort > 0 {
 		if forceFallbackOverride || service.TargetPort <= 0 {

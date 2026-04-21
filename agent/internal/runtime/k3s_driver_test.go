@@ -452,8 +452,16 @@ func TestRunHealthGatePassesWhenDeploymentsRollOut(t *testing.T) {
 		"    printf 'deployment \"api\" successfully rolled out\\n'\n" +
 		"    exit 0\n" +
 		"    ;;\n" +
+		"  *\"get pods -l app.kubernetes.io/name=api -o json\"*)\n" +
+		"    printf '{\"items\":[{\"metadata\":{\"name\":\"api-abc\"},\"status\":{\"phase\":\"Running\",\"containerStatuses\":[{\"name\":\"api\",\"ready\":true,\"restartCount\":0,\"state\":{}}]}}]}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
 		"  *\"rollout status deployment/web\"*)\n" +
 		"    printf 'deployment \"web\" successfully rolled out\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"get pods -l app.kubernetes.io/name=web -o json\"*)\n" +
+		"    printf '{\"items\":[{\"metadata\":{\"name\":\"web-abc\"},\"status\":{\"phase\":\"Running\",\"containerStatuses\":[{\"name\":\"web\",\"ready\":true,\"restartCount\":0,\"state\":{}}]}}]}'\n" +
 		"    exit 0\n" +
 		"    ;;\n" +
 		"esac\n" +
@@ -495,6 +503,10 @@ func TestRunHealthGateToleratesRolloutTimeoutWhenDeploymentIsReady(t *testing.T)
 		"    printf '{\"metadata\":{\"generation\":3},\"spec\":{\"replicas\":1},\"status\":{\"observedGeneration\":3,\"replicas\":1,\"readyReplicas\":1,\"updatedReplicas\":1,\"availableReplicas\":1,\"conditions\":[{\"type\":\"Available\",\"status\":\"True\",\"message\":\"deployment has minimum availability\"}]}}'\n" +
 		"    exit 0\n" +
 		"    ;;\n" +
+		"  *\"get pods -l app.kubernetes.io/name=api -o json\"*)\n" +
+		"    printf '{\"items\":[{\"metadata\":{\"name\":\"api-abc\"},\"status\":{\"phase\":\"Running\",\"containerStatuses\":[{\"name\":\"api\",\"ready\":true,\"restartCount\":0,\"state\":{}}]}}]}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
 		"esac\n" +
 		"printf 'unexpected kubectl args: %s\\n' \"$*\" >&2\n" +
 		"exit 1\n"
@@ -517,6 +529,48 @@ func TestRunHealthGateToleratesRolloutTimeoutWhenDeploymentIsReady(t *testing.T)
 	}
 	if !strings.Contains(result.Services[0].Message, "tolerating") {
 		t.Fatalf("expected tolerated rollout message, got %#v", result.Services[0])
+	}
+}
+
+func TestRunHealthGateFailsWhenCrashLoopingPodMasksReadyDeployment(t *testing.T) {
+	root := t.TempDir()
+	kubectlPath := filepath.Join(root, "kubectl")
+	script := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *\"rollout status deployment/api\"*)\n" +
+		"    printf 'Waiting for deployment \"api\" rollout to finish: 1 old replicas are pending termination...\\nerror: timed out waiting for the condition\\n' >&2\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"  *\"get deployment/api -o json\"*)\n" +
+		"    printf '{\"metadata\":{\"generation\":4},\"spec\":{\"replicas\":1},\"status\":{\"observedGeneration\":4,\"replicas\":2,\"readyReplicas\":1,\"updatedReplicas\":1,\"availableReplicas\":1,\"conditions\":[{\"type\":\"Available\",\"status\":\"True\",\"message\":\"old replica pending termination\"}]}}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *\"get pods -l app.kubernetes.io/name=api -o json\"*)\n" +
+		"    printf '{\"items\":[{\"metadata\":{\"name\":\"api-old\"},\"status\":{\"phase\":\"Running\",\"containerStatuses\":[{\"name\":\"api\",\"ready\":true,\"restartCount\":0,\"state\":{}}]}},{\"metadata\":{\"name\":\"api-new\"},\"status\":{\"phase\":\"Running\",\"containerStatuses\":[{\"name\":\"api\",\"ready\":false,\"restartCount\":4,\"state\":{\"waiting\":{\"reason\":\"CrashLoopBackOff\"}}}]}}]}'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"printf 'unexpected kubectl args: %s\\n' \"$*\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+
+	driver := NewK3sDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root, kubectlPath, "")
+	result, err := driver.RunHealthGate(context.Background(), k3sHealthGateRuntimeContext(
+		contracts.K3sServiceSpecPayload{Name: "api", Kind: "api", ServicePort: 8080, TargetPort: 8080},
+	))
+	if err != nil {
+		t.Fatalf("run health gate: %v", err)
+	}
+	if result.Promotable {
+		t.Fatalf("expected non-promotable result, got %#v", result)
+	}
+	if len(result.Services) != 1 || result.Services[0].Passed {
+		t.Fatalf("expected api service to fail, got %#v", result.Services)
+	}
+	if !strings.Contains(result.Services[0].Message, "CrashLoopBackOff") {
+		t.Fatalf("expected crash loop details in message, got %#v", result.Services[0])
 	}
 }
 

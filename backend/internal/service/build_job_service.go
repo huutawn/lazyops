@@ -175,8 +175,14 @@ func (s *BuildJobService) resolveBuildTargets(projectID string) ([]BuildTargetSe
 			continue
 		}
 		targets = append(targets, BuildTargetServiceRecord{
-			ServiceName: record.Name,
-			ServicePath: record.Path,
+			ServiceName:         record.Name,
+			ServicePath:         record.Path,
+			RuntimeProfile:      record.RuntimeProfile,
+			Public:              record.Public,
+			StartHint:           record.StartHint,
+			DeclaredTargetPort:  record.TargetPort,
+			DeclaredServicePort: record.ServicePort,
+			DeclaredHealthcheck: cloneAnyMap(record.Healthcheck),
 		})
 	}
 	return targets, nil

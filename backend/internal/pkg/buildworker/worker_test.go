@@ -61,42 +61,114 @@ func TestDetectFrontendMetadataOmitWhenUnknown(t *testing.T) {
 	}
 }
 
-func TestSelectSuggestedTargetPortPrefersInternalServiceDefaults(t *testing.T) {
-	port, confidence := selectSuggestedTargetPort(
-		[]string{"postgres"},
-		[]BuildDetectedPortMetadata{{Port: 5432, Protocol: "tcp"}},
-		"",
-		nil,
-	)
-
-	if port != 5432 || confidence != "high" {
-		t.Fatalf("expected postgres default port with high confidence, got port=%d confidence=%q", port, confidence)
-	}
-}
-
-func TestSelectSuggestedTargetPortFallsBackToFrameworkHint(t *testing.T) {
-	port, confidence := selectSuggestedTargetPort(
-		[]string{"web"},
-		[]BuildDetectedPortMetadata{{Port: 3000, Protocol: "tcp"}, {Port: 9229, Protocol: "tcp"}},
-		"next",
-		nil,
-	)
-
-	if port != 3000 || confidence != "medium" {
-		t.Fatalf("expected next.js hint port 3000 with medium confidence, got port=%d confidence=%q", port, confidence)
-	}
-}
-
-func TestSelectSuggestedTargetPortChoosesSuggestedHealthcheckEvenWhenNotExposed(t *testing.T) {
-	port, confidence := selectSuggestedTargetPort(
+func TestResolveBuildPortUsesSmokeRunWhenImageDoesNotExposePort(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{},
 		[]string{"api"},
-		[]BuildDetectedPortMetadata{{Port: 8080, Protocol: "tcp"}},
+		nil,
+		[]int{4321},
 		"",
-		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
+		nil,
+		"",
 	)
 
-	if port != 3000 || confidence != "medium" {
-		t.Fatalf("expected healthcheck port 3000 with medium confidence, got port=%d confidence=%q", port, confidence)
+	if resolution.Status != buildPortResolutionStatusResolved {
+		t.Fatalf("expected resolved status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceSmokeRun {
+		t.Fatalf("expected smoke_run source, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 4321 {
+		t.Fatalf("expected suggested target port 4321, got %#v", resolution)
+	}
+	if len(resolution.CandidatePorts) != 1 || resolution.CandidatePorts[0] != 4321 {
+		t.Fatalf("expected candidate ports [4321], got %#v", resolution.CandidatePorts)
+	}
+}
+
+func TestResolveBuildPortMarksAmbiguousWhenMultiplePortsCompete(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{},
+		[]string{"web"},
+		[]BuildDetectedPortMetadata{{Port: 9229, Protocol: "tcp", Exposed: true}},
+		[]int{3000},
+		"next",
+		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
+		"",
+	)
+
+	if resolution.Status != buildPortResolutionStatusAmbiguous {
+		t.Fatalf("expected ambiguous status, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 0 {
+		t.Fatalf("expected no suggested target port, got %#v", resolution)
+	}
+	if got := resolution.CandidatePorts; len(got) != 2 || got[0] != 3000 || got[1] != 9229 {
+		t.Fatalf("expected candidate ports [3000 9229], got %#v", got)
+	}
+}
+
+func TestResolveBuildPortMarksUnresolvedWhenNoCandidateExists(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{},
+		[]string{"api"},
+		nil,
+		nil,
+		"",
+		nil,
+		"container exited before binding a port",
+	)
+
+	if resolution.Status != buildPortResolutionStatusUnresolved {
+		t.Fatalf("expected unresolved status, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 0 {
+		t.Fatalf("expected unresolved result to omit suggested port, got %#v", resolution)
+	}
+	if resolution.Reason == "" {
+		t.Fatalf("expected unresolved reason to be preserved, got %#v", resolution)
+	}
+}
+
+func TestResolveBuildPortRespectsExplicitDeclaredPort(t *testing.T) {
+	resolution := resolveBuildPort(
+		BuildTargetServiceMetadata{
+			DeclaredTargetPort: 7000,
+			DeclaredHealthcheck: map[string]any{
+				"path": "/healthz",
+				"port": 7000,
+			},
+		},
+		[]string{"api"},
+		[]BuildDetectedPortMetadata{{Port: 3000, Protocol: "tcp", Exposed: true}},
+		[]int{3000},
+		"next",
+		&BuildSuggestedHealthcheckMetadata{Port: 3000, Path: "/"},
+		"",
+	)
+
+	if resolution.Status != buildPortResolutionStatusResolved {
+		t.Fatalf("expected resolved status, got %#v", resolution)
+	}
+	if resolution.Source != buildPortResolutionSourceExplicit {
+		t.Fatalf("expected explicit source, got %#v", resolution)
+	}
+	if resolution.SuggestedTargetPort != 7000 {
+		t.Fatalf("expected explicit port 7000 to win, got %#v", resolution)
+	}
+	if resolution.SuggestedHealthcheck == nil || resolution.SuggestedHealthcheck.Port != 7000 {
+		t.Fatalf("expected declared healthcheck to be preserved, got %#v", resolution.SuggestedHealthcheck)
+	}
+}
+
+func TestParseProcNetListeningPorts(t *testing.T) {
+	payload := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
+		"   0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000        0 1 0000000000000000 100 0 0 10 0\n" +
+		"   1: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000        0 1 0000000000000000 100 0 0 10 0\n"
+
+	ports := parseProcNetListeningPorts(payload)
+	if len(ports) != 2 || ports[0] != 3000 || ports[1] != 8080 {
+		t.Fatalf("expected listening ports [3000 8080], got %#v", ports)
 	}
 }
 

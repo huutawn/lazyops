@@ -158,12 +158,16 @@ func TestBuildCallbackServiceAutoCompilesHiddenBlueprintWithoutExistingBlueprint
 		WithServiceInventoryCompiler(compiler)
 
 	result, err := service.Handle(BuildCallbackCommand{
-		BuildJobID:  "bld_123",
-		ProjectID:   "prj_123",
-		CommitSHA:   "abc123def456",
-		Status:      "succeeded",
-		ImageRef:    "ghcr.io/lazyops/backend:abc123",
-		ImageDigest: "sha256:deadbeef",
+		BuildJobID:           "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		Status:               "succeeded",
+		ImageRef:             "ghcr.io/lazyops/backend:abc123",
+		ImageDigest:          "sha256:deadbeef",
+		SuggestedTargetPort:  8080,
+		PortResolutionStatus: BuildPortResolutionStatusResolved,
+		PortResolutionSource: BuildPortResolutionSourceDockerInspect,
+		CandidatePorts:       []int{8080},
 	})
 	if err != nil {
 		t.Fatalf("build callback with hidden compiler: %v", err)
@@ -826,6 +830,233 @@ func TestBuildCallbackServiceRejectsArtifactsThatDoNotMapToBlueprintServices(t *
 	}
 	if !strings.Contains(err.Error(), "do not map to compiled services") {
 		t.Fatalf("expected compiled service mapping detail, got %v", err)
+	}
+}
+
+func TestBuildCallbackServiceRejectsUnresolvedPortForDeployableService(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{ID: "prj_123", UserID: "usr_123", Name: "Acme API", Slug: "acme-api"})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:           "api",
+			Path:           "backend",
+			Kind:           "api",
+			SourceType:     serviceSourceTypeRepo,
+			Public:         true,
+			RuntimeProfile: "service",
+		},
+		"artifact://builds/123",
+	))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend", Public: true, RuntimeProfile: "service"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	_, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName:          "api",
+				ServicePath:          "backend",
+				ImageRef:             "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest:          "sha256:api",
+				PortResolutionStatus: BuildPortResolutionStatusUnresolved,
+				PortResolutionReason: "no candidate port could be resolved",
+			},
+		},
+	})
+	if !errors.Is(err, ErrPortResolutionFailed) {
+		t.Fatalf("expected ErrPortResolutionFailed, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `service "api"`) {
+		t.Fatalf("expected service-specific error detail, got %v", err)
+	}
+}
+
+func TestBuildCallbackServiceRejectsAmbiguousPortResolution(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{ID: "prj_123", UserID: "usr_123", Name: "Acme API", Slug: "acme-api"})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:           "api",
+			Path:           "backend",
+			Kind:           "api",
+			SourceType:     serviceSourceTypeRepo,
+			Public:         true,
+			RuntimeProfile: "service",
+		},
+		"artifact://builds/123",
+	))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "api", ServicePath: "backend", Public: true, RuntimeProfile: "service"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	_, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName:          "api",
+				ServicePath:          "backend",
+				ImageRef:             "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest:          "sha256:api",
+				PortResolutionStatus: BuildPortResolutionStatusAmbiguous,
+				PortResolutionSource: BuildPortResolutionSourceMixed,
+				CandidatePorts:       []int{3000, 9229},
+				PortResolutionReason: "multiple candidate ports detected",
+			},
+		},
+	})
+	if !errors.Is(err, ErrPortResolutionAmbiguous) {
+		t.Fatalf("expected ErrPortResolutionAmbiguous, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "candidate_ports=[3000,9229]") {
+		t.Fatalf("expected candidate port detail, got %v", err)
+	}
+}
+
+func TestBuildCallbackServiceAllowsWorkerWithoutResolvedPort(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{ID: "prj_123", UserID: "usr_123", Name: "Acme Jobs", Slug: "acme-jobs"})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:           "jobs",
+			Path:           "worker",
+			Kind:           "app",
+			SourceType:     serviceSourceTypeRepo,
+			Public:         false,
+			RuntimeProfile: "worker",
+		},
+		"artifact://builds/123",
+	))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:                   "bld_123",
+		ProjectID:            "prj_123",
+		CommitSHA:            "abc123def456",
+		WorkerInputJSON:      mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{ServiceName: "jobs", ServicePath: "worker", RuntimeProfile: "worker"}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName:          "jobs",
+				ServicePath:          "worker",
+				ImageRef:             "ghcr.io/lazyops/prj_123-jobs:abc123",
+				ImageDigest:          "sha256:jobs",
+				PortResolutionStatus: BuildPortResolutionStatusUnresolved,
+				PortResolutionReason: "worker services do not expose ports",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected worker service without port to pass, got %v", err)
+	}
+	if result.Revision == nil {
+		t.Fatalf("expected worker revision to be created, got %#v", result)
+	}
+}
+
+func TestBuildCallbackServiceHydratesDeclaredHealthcheckPortIntoServicePorts(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{ID: "prj_123", UserID: "usr_123", Name: "Acme API", Slug: "acme-api"})
+	blueprintStore := newFakeBlueprintStore()
+	blueprintStore.items = append(blueprintStore.items, mustBlueprintModelWithSingleService(
+		t,
+		"bp_123",
+		"prj_123",
+		BlueprintServiceContractRecord{
+			Name:           "api",
+			Path:           "backend",
+			Kind:           "api",
+			SourceType:     serviceSourceTypeRepo,
+			Public:         true,
+			RuntimeProfile: "service",
+			Healthcheck: map[string]any{
+				"path": "/healthz",
+				"port": 8081,
+			},
+		},
+		"artifact://builds/123",
+	))
+	revisionStore := newFakeDesiredStateRevisionStore()
+	deploymentStore := newFakeDeploymentStore()
+	buildStore := newFakeBuildJobStore(&models.BuildJob{
+		ID:        "bld_123",
+		ProjectID: "prj_123",
+		CommitSHA: "abc123def456",
+		WorkerInputJSON: mustBuildWorkerInputJSON(t, "bld_123", "prj_123", "abc123def456", []BuildTargetServiceRecord{{
+			ServiceName:    "api",
+			ServicePath:    "backend",
+			Public:         true,
+			RuntimeProfile: "service",
+			DeclaredHealthcheck: map[string]any{
+				"path": "/healthz",
+				"port": 8081,
+			},
+		}}),
+		ArtifactMetadataJSON: `{"commit_sha":"abc123def456"}`,
+	})
+	service := NewBuildCallbackService(projectStore, blueprintStore, revisionStore, deploymentStore, buildStore, nil)
+
+	result, err := service.Handle(BuildCallbackCommand{
+		BuildJobID: "bld_123",
+		ProjectID:  "prj_123",
+		CommitSHA:  "abc123def456",
+		Status:     "succeeded",
+		ServiceArtifacts: []BuildServiceArtifactRecord{
+			{
+				ServiceName:          "api",
+				ServicePath:          "backend",
+				ImageRef:             "ghcr.io/lazyops/prj_123-api:abc123",
+				ImageDigest:          "sha256:api",
+				PortResolutionStatus: BuildPortResolutionStatusResolved,
+				PortResolutionSource: BuildPortResolutionSourceExplicit,
+				CandidatePorts:       []int{8081},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected explicit healthcheck port to pass, got %v", err)
+	}
+	if result.Revision == nil || len(result.Revision.Services) != 1 {
+		t.Fatalf("expected single-service revision, got %#v", result)
+	}
+	if result.Revision.Services[0].TargetPort != 8081 || result.Revision.Services[0].ServicePort != 8081 {
+		t.Fatalf("expected declared healthcheck port to hydrate service ports, got %#v", result.Revision.Services[0])
 	}
 }
 

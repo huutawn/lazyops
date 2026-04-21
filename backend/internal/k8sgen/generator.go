@@ -100,7 +100,10 @@ func (g *Generator) Generate(input Input) (ManifestBundle, error) {
 	}
 
 	for _, service := range input.Services {
-		normalized := normalizeServiceSpec(namespace, service)
+		normalized, err := normalizeServiceSpec(namespace, service)
+		if err != nil {
+			return ManifestBundle{}, err
+		}
 		if len(normalized.EnvBundle) > 0 {
 			documents = append(documents, ManifestDocument{
 				Name:    normalized.Name + "-env",
@@ -181,8 +184,15 @@ type normalizedServiceSpec struct {
 	Kind            string
 }
 
-func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceSpec {
-	targetPort := firstPositive(spec.TargetPort, spec.ServicePort, healthPort(spec.Healthcheck), detectedPrimaryPort(spec.DetectedPorts), defaultPortForKind(spec.Kind))
+func normalizeServiceSpec(namespace string, spec ServiceSpec) (normalizedServiceSpec, error) {
+	managedDefaultPort := defaultPortForKind(spec.Kind)
+	targetPort := firstPositive(spec.TargetPort, spec.ServicePort, healthPort(spec.Healthcheck), managedDefaultPort)
+	if targetPort <= 0 && !isManagedInternalServiceKind(spec.Kind) {
+		return normalizedServiceSpec{}, fmt.Errorf(
+			"service %q requires an explicit resolved target_port/service_port before manifest generation",
+			strings.TrimSpace(spec.Name),
+		)
+	}
 	servicePort := firstPositive(spec.ServicePort, targetPort)
 	replicas := spec.Replicas
 	if replicas <= 0 {
@@ -196,7 +206,34 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceS
 	}
 	sort.Strings(keys)
 	healthPath := strings.TrimSpace(stringValue(spec.Healthcheck["path"]))
-	healthPortValue := firstPositive(intValue(spec.Healthcheck["port"]), targetPort)
+	if healthPath != "" && !strings.HasPrefix(healthPath, "/") {
+		healthPath = "/" + healthPath
+	}
+	declaredHealthPort := intValue(spec.Healthcheck["port"])
+	healthPortValue := 0
+	hasHealthCheck := false
+	switch {
+	case healthPath != "" || declaredHealthPort > 0:
+		healthPortValue = firstPositive(declaredHealthPort, targetPort)
+		if healthPortValue <= 0 {
+			return normalizedServiceSpec{}, fmt.Errorf(
+				"service %q defines a healthcheck but no valid healthcheck.port/target port could be resolved",
+				strings.TrimSpace(spec.Name),
+			)
+		}
+		hasHealthCheck = true
+	case isManagedInternalServiceKind(spec.Kind):
+		healthPortValue = targetPort
+		hasHealthCheck = healthPortValue > 0
+	}
+	if !isManagedInternalServiceKind(spec.Kind) && healthPortValue > 0 && targetPort > 0 && healthPortValue != targetPort {
+		return normalizedServiceSpec{}, fmt.Errorf(
+			"service %q healthcheck.port %d conflicts with resolved target port %d",
+			strings.TrimSpace(spec.Name),
+			healthPortValue,
+			targetPort,
+		)
+	}
 	pvcSize := strings.TrimSpace(stringValue(spec.PVCSpec["size"]))
 	if pvcSize == "" && requiresPersistentVolume(spec.Kind) {
 		pvcSize = "5Gi"
@@ -216,13 +253,13 @@ func normalizeServiceSpec(namespace string, spec ServiceSpec) normalizedServiceS
 		EnvKeys:         keys,
 		HealthPath:      healthPath,
 		HealthPort:      healthPortValue,
-		HasHealthCheck:  healthPath != "" || healthPortValue > 0,
+		HasHealthCheck:  hasHealthCheck,
 		PVCName:         strings.TrimSpace(spec.Name) + "-data",
 		PVCSize:         pvcSize,
 		PVCMountPath:    pvcMountPathForKind(spec.Kind),
 		RequiresPVC:     pvcSize != "" || requiresPersistentVolume(spec.Kind),
 		Kind:            firstNonEmpty(spec.Kind, "app"),
-	}
+	}, nil
 }
 
 func joinDocuments(docs []ManifestDocument) string {
@@ -301,8 +338,12 @@ func defaultPortForKind(kind string) int {
 	case "rabbitmq":
 		return 5672
 	default:
-		return 8080
+		return 0
 	}
+}
+
+func isManagedInternalServiceKind(kind string) bool {
+	return defaultPortForKind(kind) > 0
 }
 
 func requiresPersistentVolume(kind string) bool {

@@ -38,6 +38,10 @@ func (ctl *BuildController) Callback(c *gin.Context) {
 			response.Error(c, http.StatusNotFound, "build callback rejected", "build_job_not_found", err.Error())
 		case errors.Is(err, service.ErrBuildArtifactMismatch):
 			response.Error(c, http.StatusConflict, "build callback rejected", "artifact_mismatch", err.Error())
+		case errors.Is(err, service.ErrPortResolutionAmbiguous):
+			response.Error(c, http.StatusConflict, "build callback rejected", "port_resolution_ambiguous", err.Error())
+		case errors.Is(err, service.ErrPortResolutionFailed):
+			response.Error(c, http.StatusConflict, "build callback rejected", "port_resolution_failed", err.Error())
 		default:
 			response.Error(c, http.StatusInternalServerError, "build callback failed", "internal_error", err.Error())
 		}

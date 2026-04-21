@@ -91,3 +91,50 @@ func TestGeneratorRendersNamespaceServiceIngressSecretAndPVC(t *testing.T) {
 		}
 	}
 }
+
+func TestGeneratorRejectsGenericServiceWithoutResolvedPort(t *testing.T) {
+	gen := NewGenerator()
+
+	_, err := gen.Generate(Input{
+		Namespace: "lazyops-prj-123",
+		Services: []ServiceSpec{
+			{
+				Name:     "api",
+				Kind:     "api",
+				Public:   true,
+				ImageRef: "ghcr.io/lazyops/api:rev_123",
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires an explicit resolved target_port/service_port") {
+		t.Fatalf("expected unresolved port error, got %v", err)
+	}
+}
+
+func TestGeneratorOmitsProbesForGenericServiceWithoutHealthcheck(t *testing.T) {
+	gen := NewGenerator()
+
+	bundle, err := gen.Generate(Input{
+		Namespace: "lazyops-prj-123",
+		Services: []ServiceSpec{
+			{
+				Name:        "api",
+				Kind:        "api",
+				Public:      true,
+				ImageRef:    "ghcr.io/lazyops/api:rev_123",
+				TargetPort:  8080,
+				ServicePort: 8080,
+			},
+		},
+		PublicDomains: []PublicDomain{{
+			ServiceName:  "api",
+			FallbackHost: "api.lazyops-prj-123.203.0.113.10.nip.io",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("generate manifest bundle: %v", err)
+	}
+	if strings.Contains(bundle.CombinedYAML, "startupProbe:") {
+		t.Fatalf("expected generic service without explicit healthcheck to omit probes, got:\n%s", bundle.CombinedYAML)
+	}
+}
