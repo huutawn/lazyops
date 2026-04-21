@@ -970,6 +970,27 @@ func TestFilesystemDriverRenderGatewayConfigSkipsFakeStandaloneMagicDomainsWitho
 	}
 }
 
+func TestCollectPublicURLsOnlyReturnsTLSReadyURLsWhenObservationsExist(t *testing.T) {
+	plan := GatewayPlan{
+		Routes: []GatewayRoute{
+			{
+				ServiceName: "web",
+				PrimaryURL:  "https://web.demo.203-0-113-10.sslip.io",
+				FallbackURL: "https://web.demo.203.0.113.10.nip.io",
+			},
+		},
+		TLSObservations: []GatewayTLSObservation{
+			{URL: "https://web.demo.203-0-113-10.sslip.io", Status: gatewayPublicURLStatusReady},
+			{URL: "https://web.demo.203.0.113.10.nip.io", Status: gatewayPublicURLStatusPending},
+		},
+	}
+
+	got := collectPublicURLs(plan)
+	if len(got) != 1 || got[0] != "https://web.demo.203-0-113-10.sslip.io" {
+		t.Fatalf("expected only TLS-ready urls, got %#v", got)
+	}
+}
+
 func TestFilesystemDriverRenderGatewayConfigRollsBackOnReloadFailure(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "runtime-root")
 	driver := NewFilesystemDriver(slog.New(slog.NewTextHandler(io.Discard, nil)), root)

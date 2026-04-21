@@ -712,6 +712,8 @@ type ProjectRuntimeSummaryResult struct {
 	SyncState        string
 	SyncReason       string
 	PublicURLs       []string
+	PublicURLStatus  string
+	PublicURLReason  string
 	Nodes            []ProjectRuntimeNodeRecord
 	Services         []ProjectRuntimeServiceRecord
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -211,6 +212,19 @@ func (f *fakeDeploymentStore) put(item *models.Deployment) {
 	}
 	cloned := *item
 	projectItems[item.ID] = &cloned
+}
+
+type fakePublicURLVerifier struct {
+	observations map[string]PublicURLTLSObservation
+}
+
+func (f *fakePublicURLVerifier) Observe(_ context.Context, rawURL string) PublicURLTLSObservation {
+	if f != nil && f.observations != nil {
+		if observation, ok := f.observations[rawURL]; ok {
+			return observation
+		}
+	}
+	return PublicURLTLSObservation{URL: rawURL, Status: publicURLStatusPending, Reason: "pending"}
 }
 
 func TestDeploymentServiceCreateSuccess(t *testing.T) {
@@ -625,6 +639,113 @@ func TestDeploymentServiceGetHealthySummaryWhenNoIncident(t *testing.T) {
 	}
 	if record.IncidentSummary.State != "healthy" {
 		t.Fatalf("expected healthy state, got %q", record.IncidentSummary.State)
+	}
+}
+
+func TestDeploymentServiceListPublishesOnlyTLSReadyPublicURLs(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Slug:   "acme-api",
+	})
+	compiledJSON, err := json.Marshal(desiredStateRevisionCompiledRecord{
+		RevisionID:          "rev_123",
+		ProjectID:           "prj_123",
+		ProjectSlug:         "acme-api",
+		BlueprintID:         "bp_123",
+		DeploymentBindingID: "bind_123",
+		RuntimeMode:         "standalone",
+		Services: []BlueprintServiceContractRecord{
+			{Name: "api", Public: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal compiled revision: %v", err)
+	}
+
+	revisionStore := newFakeDesiredStateRevisionStore(&models.DesiredStateRevision{
+		ID:                   "rev_123",
+		ProjectID:            "prj_123",
+		BlueprintID:          "bp_123",
+		DeploymentBindingID:  "bind_123",
+		CommitSHA:            "abc123",
+		TriggerKind:          "manual",
+		Status:               RevisionStatusPromoted,
+		CompiledRevisionJSON: string(compiledJSON),
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
+	})
+	deploymentStore := newFakeDeploymentStore(&models.Deployment{
+		ID:         "dep_123",
+		ProjectID:  "prj_123",
+		RevisionID: "rev_123",
+		Status:     DeploymentStatusPromoted,
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetKind: "instance",
+		TargetID:   "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:       "inst_123",
+		UserID:   "usr_123",
+		Name:     "api-host",
+		PublicIP: ptrString("203.0.113.10"),
+	})
+
+	readyURL := "https://api.acme-api.203-0-113-10.sslip.io"
+	fallbackURL := "https://api.acme-api.203.0.113.10.nip.io"
+	service := NewDeploymentService(projectStore, newFakeBlueprintStore(), revisionStore, deploymentStore).
+		WithPublicDomainSupport(bindingStore, instanceStore).
+		WithPublicURLVerifier(&fakePublicURLVerifier{
+			observations: map[string]PublicURLTLSObservation{
+				readyURL:    {URL: readyURL, Host: "api.acme-api.203-0-113-10.sslip.io", Status: publicURLStatusReady},
+				fallbackURL: {URL: fallbackURL, Host: "api.acme-api.203.0.113.10.nip.io", Status: publicURLStatusPending, Reason: "Đang chờ cấp chứng chỉ TLS công khai cho magic domain."},
+			},
+		})
+
+	items, err := service.List("usr_123", RoleOperator, "prj_123")
+	if err != nil {
+		t.Fatalf("list deployments: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one deployment overview, got %d", len(items))
+	}
+	if got := items[0].PublicURLs; len(got) != 1 || got[0] != readyURL {
+		t.Fatalf("expected only verified public url, got %#v", got)
+	}
+	if items[0].PublicURLStatus != publicURLStatusReady {
+		t.Fatalf("expected public_url_status ready, got %q", items[0].PublicURLStatus)
+	}
+	if items[0].PublicURLReason != "" {
+		t.Fatalf("expected empty public_url_reason when a verified url exists, got %q", items[0].PublicURLReason)
+	}
+}
+
+func TestResolveStatusPublicURLsFromOverviewsPrefersReasonWhenTLSPending(t *testing.T) {
+	overviews := []DeploymentOverviewRecord{
+		{
+			ID:              "dep_123",
+			Promoted:        true,
+			RolloutState:    DeploymentStatusPromoted,
+			PublicURLs:      []string{},
+			PublicURLStatus: publicURLStatusPending,
+			PublicURLReason: "Đang chờ cấp chứng chỉ TLS công khai cho magic domain.",
+		},
+	}
+
+	urls, status, reason := resolveStatusPublicURLsFromOverviews(overviews)
+	if len(urls) != 0 {
+		t.Fatalf("expected no public urls while TLS is pending, got %#v", urls)
+	}
+	if status != publicURLStatusPending {
+		t.Fatalf("expected pending public url status, got %q", status)
+	}
+	if reason == "" {
+		t.Fatal("expected pending public url reason to be preserved")
 	}
 }
 

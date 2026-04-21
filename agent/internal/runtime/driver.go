@@ -170,6 +170,10 @@ type GatewayPlan struct {
 	Validation           *GatewayHookResult             `json:"validation,omitempty"`
 	Apply                *GatewayHookResult             `json:"apply,omitempty"`
 	Reload               *GatewayHookResult             `json:"reload,omitempty"`
+	Observe              *GatewayHookResult             `json:"observe,omitempty"`
+	TLSObservations      []GatewayTLSObservation        `json:"tls_observations,omitempty"`
+	PublicURLStatus      string                         `json:"public_url_status,omitempty"`
+	PublicURLReason      string                         `json:"public_url_reason,omitempty"`
 	Rollback             *GatewayHookResult             `json:"rollback,omitempty"`
 }
 
@@ -198,6 +202,15 @@ type GatewayHookResult struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
+type GatewayTLSObservation struct {
+	URL        string    `json:"url"`
+	Host       string    `json:"host"`
+	Status     string    `json:"status"`
+	Reason     string    `json:"reason,omitempty"`
+	ErrorKind  string    `json:"error_kind,omitempty"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
 type GatewayActivation struct {
 	Version    string    `json:"version"`
 	PlanPath   string    `json:"plan_path"`
@@ -214,6 +227,8 @@ type GatewayRenderResult struct {
 	ActivationPath        string            `json:"activation_path"`
 	PreviousActiveVersion string            `json:"previous_active_version,omitempty"`
 	PublicURLs            []string          `json:"public_urls,omitempty"`
+	PublicURLStatus       string            `json:"public_url_status,omitempty"`
+	PublicURLReason       string            `json:"public_url_reason,omitempty"`
 	Plan                  GatewayPlan       `json:"plan"`
 	Activation            GatewayActivation `json:"activation"`
 	RolledBack            bool              `json:"rolled_back,omitempty"`
@@ -660,6 +675,8 @@ type PromotionSummary struct {
 	GatewayVersion           string            `json:"gateway_version,omitempty"`
 	SidecarVersion           string            `json:"sidecar_version,omitempty"`
 	PublicURLs               []string          `json:"public_urls,omitempty"`
+	PublicURLStatus          string            `json:"public_url_status,omitempty"`
+	PublicURLReason          string            `json:"public_url_reason,omitempty"`
 	LatencySignals           []LatencySignal   `json:"latency_signals,omitempty"`
 	Events                   []DeploymentEvent `json:"events,omitempty"`
 	Summary                  string            `json:"summary"`
@@ -701,6 +718,8 @@ type RollbackSummary struct {
 	GatewayVersion     string                     `json:"gateway_version,omitempty"`
 	SidecarVersion     string                     `json:"sidecar_version,omitempty"`
 	PublicURLs         []string                   `json:"public_urls,omitempty"`
+	PublicURLStatus    string                     `json:"public_url_status,omitempty"`
+	PublicURLReason    string                     `json:"public_url_reason,omitempty"`
 	Incident           *contracts.IncidentPayload `json:"incident,omitempty"`
 	Events             []DeploymentEvent          `json:"events,omitempty"`
 	Summary            string                     `json:"summary"`

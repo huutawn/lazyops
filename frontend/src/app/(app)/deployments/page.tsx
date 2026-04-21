@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/primitives/empty-state';
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
+import { buildPublicURLDisplay } from '@/modules/bootstrap/bootstrap-ui';
 import Link from 'next/link';
 
 const BUILD_STATE_VARIANT: Record<BuildState, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
@@ -92,6 +93,7 @@ export default function DeploymentsPage() {
                 {deployments.map((dep) => {
                   const publicURLs = dep.public_urls ?? [];
                   const primaryPublicURL = publicURLs[0] ?? '';
+                  const publicURLDisplay = buildPublicURLDisplay(primaryPublicURL, dep.public_url_status, dep.public_url_reason);
                   return (
                   <tr
                     key={dep.id}
@@ -133,7 +135,7 @@ export default function DeploymentsPage() {
                           {primaryPublicURL.replace(/^https?:\/\//, '')}
                         </a>
                       ) : (
-                        <span className="text-lazyops-muted">{dep.public_url_reason || '—'}</span>
+                        <span className="text-lazyops-muted">{publicURLDisplay.message}</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs text-lazyops-muted">

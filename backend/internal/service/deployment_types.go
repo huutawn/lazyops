@@ -82,6 +82,7 @@ type DeploymentOverviewRecord struct {
 	ServiceSpecs         []K3sServiceSpecRecord
 	PlacementAssignments []PlacementAssignmentRecord
 	PublicURLs           []string
+	PublicURLStatus      string
 	PublicURLReason      string
 	StartedAt            *time.Time
 	CompletedAt          *time.Time

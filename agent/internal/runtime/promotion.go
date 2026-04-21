@@ -43,7 +43,7 @@ func (d *FilesystemDriver) PromoteRelease(_ context.Context, runtimeCtx RuntimeC
 		}
 	}
 
-	gatewayVersion, publicURLs, err := loadPromotableGatewayState(d.root, runtimeCtx)
+	gatewayVersion, publicURLs, publicURLStatus, publicURLReason, err := loadPromotableGatewayState(d.root, runtimeCtx)
 	if err != nil {
 		return PromoteReleaseResult{}, err
 	}
@@ -94,6 +94,8 @@ func (d *FilesystemDriver) PromoteRelease(_ context.Context, runtimeCtx RuntimeC
 		GatewayVersion:           gatewayVersion,
 		SidecarVersion:           sidecarVersion,
 		PublicURLs:               publicURLs,
+		PublicURLStatus:          publicURLStatus,
+		PublicURLReason:          publicURLReason,
 		LatencySignals:           latencySignals,
 		Events:                   events,
 		Summary:                  promotionSummaryText(runtimeCtx.Revision.RevisionID, previousStable, drainPlan.Status),
@@ -250,14 +252,14 @@ func collectLatencySignals(snapshot *CandidateHealthSnapshot) []LatencySignal {
 	return signals
 }
 
-func loadPromotableGatewayState(root string, runtimeCtx RuntimeContext) (string, []string, error) {
+func loadPromotableGatewayState(root string, runtimeCtx RuntimeContext) (string, []string, string, string, error) {
 	if len(publicServiceNames(runtimeCtx.Services)) == 0 {
-		return "", nil, nil
+		return "", nil, "", "", nil
 	}
 	activationPath := filepath.Join(root, "projects", runtimeCtx.Project.ProjectID, "bindings", runtimeCtx.Binding.BindingID, "gateway", "live", "active.json")
 	activation, err := loadGatewayActivation(activationPath)
 	if err != nil {
-		return "", nil, &OperationError{
+		return "", nil, "", "", &OperationError{
 			Code:      "promotion_gateway_not_ready",
 			Message:   "gateway config must be rendered before promotion",
 			Retryable: true,
@@ -266,13 +268,13 @@ func loadPromotableGatewayState(root string, runtimeCtx RuntimeContext) (string,
 	}
 	planPayload, err := os.ReadFile(filepath.Join(root, "projects", runtimeCtx.Project.ProjectID, "bindings", runtimeCtx.Binding.BindingID, "gateway", "live", "plan.json"))
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", "", err
 	}
 	var plan GatewayPlan
 	if err := json.Unmarshal(planPayload, &plan); err != nil {
-		return "", nil, err
+		return "", nil, "", "", err
 	}
-	return activation.Version, collectPublicURLs(plan), nil
+	return activation.Version, collectPublicURLs(plan), strings.TrimSpace(plan.PublicURLStatus), strings.TrimSpace(plan.PublicURLReason), nil
 }
 
 func loadPromotableSidecarState(root string, runtimeCtx RuntimeContext) (string, error) {

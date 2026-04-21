@@ -3,10 +3,14 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,18 +24,24 @@ import (
 	"lazyops-agent/internal/contracts"
 )
 
+const (
+	gatewayPublicURLStatusReady   = "ready"
+	gatewayPublicURLStatusPending = "pending"
+	gatewayPublicURLStatusError   = "error"
+)
+
 type GatewayManager struct {
-	logger       *slog.Logger
-	runtimeRoot  string
-	logCollector *LogCollector
-	mu           sync.Mutex
-	logWatchers  map[string]logWatcherHandle
+	logger        *slog.Logger
+	runtimeRoot   string
+	logCollector  *LogCollector
+	mu            sync.Mutex
+	logWatchers   map[string]logWatcherHandle
 	logWatcherSeq uint64
-	now          func() time.Time
-	validateHook func(context.Context, GatewayPlan, gatewayRenderPaths) (GatewayHookResult, error)
-	applyHook    func(context.Context, GatewayPlan, gatewayRenderPaths) (GatewayActivation, GatewayHookResult, error)
-	reloadHook   func(context.Context, GatewayPlan, gatewayRenderPaths, GatewayActivation) (GatewayHookResult, error)
-	rollbackHook func(context.Context, GatewayPlan, gatewayRenderPaths, *GatewayActivation, GatewayActivation) (GatewayHookResult, error)
+	now           func() time.Time
+	validateHook  func(context.Context, GatewayPlan, gatewayRenderPaths) (GatewayHookResult, error)
+	applyHook     func(context.Context, GatewayPlan, gatewayRenderPaths) (GatewayActivation, GatewayHookResult, error)
+	reloadHook    func(context.Context, GatewayPlan, gatewayRenderPaths, GatewayActivation) (GatewayHookResult, error)
+	rollbackHook  func(context.Context, GatewayPlan, gatewayRenderPaths, *GatewayActivation, GatewayActivation) (GatewayHookResult, error)
 }
 
 type gatewayRenderPaths struct {
@@ -121,6 +131,8 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 		ActivationPath:        paths.liveActivePath,
 		PreviousActiveVersion: previousVersion,
 		PublicURLs:            collectPublicURLs(plan),
+		PublicURLStatus:       strings.TrimSpace(plan.PublicURLStatus),
+		PublicURLReason:       strings.TrimSpace(plan.PublicURLReason),
 		Plan:                  plan,
 	}
 
@@ -238,7 +250,15 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 	}
 
 	plan.Reload = &reloadResult
+	observeResult, observedPlan := m.observeGatewayTLS(ctx, plan)
+	plan = observedPlan
+	if observeResult.Name != "" {
+		plan.Observe = &observeResult
+	}
 	renderResult.Plan = plan
+	renderResult.PublicURLs = collectPublicURLs(plan)
+	renderResult.PublicURLStatus = strings.TrimSpace(plan.PublicURLStatus)
+	renderResult.PublicURLReason = strings.TrimSpace(plan.PublicURLReason)
 	if err := writeJSON(paths.versionPlanPath, plan); err != nil {
 		return GatewayRenderResult{}, err
 	}
@@ -954,13 +974,207 @@ func preferredMagicProviders() (string, string) {
 	return "sslip.io", "nip.io"
 }
 
+func (m *GatewayManager) observeGatewayTLS(ctx context.Context, plan GatewayPlan) (GatewayHookResult, GatewayPlan) {
+	result := GatewayHookResult{
+		Name:       "observe",
+		Status:     "skipped",
+		Message:    "gateway TLS observation skipped because there are no public routes to verify",
+		OccurredAt: m.now(),
+	}
+
+	if strings.TrimSpace(strings.ToLower(plan.Provider)) != "caddy" {
+		result.Message = "gateway TLS observation skipped because provider is not caddy"
+		return result, plan
+	}
+	if _, err := exec.LookPath("caddy"); err != nil {
+		result.Message = "gateway TLS observation skipped because caddy is not installed"
+		return result, plan
+	}
+
+	observations := make([]GatewayTLSObservation, 0, len(plan.Routes)*2)
+	for _, route := range plan.Routes {
+		candidates := []struct {
+			url  string
+			host string
+		}{
+			{url: route.PrimaryURL, host: route.PrimaryHost},
+			{url: route.FallbackURL, host: route.FallbackHost},
+		}
+		for _, candidate := range candidates {
+			if strings.TrimSpace(candidate.url) == "" || strings.TrimSpace(candidate.host) == "" {
+				continue
+			}
+			observation := observeGatewayTLSURL(ctx, candidate.url, candidate.host, m.now())
+			observations = append(observations, observation)
+			if m.logger != nil && observation.Status != gatewayPublicURLStatusReady {
+				m.logger.Warn("gateway_tls_observation_failed",
+					"url", observation.URL,
+					"host", observation.Host,
+					"status", observation.Status,
+					"error_kind", observation.ErrorKind,
+					"reason", observation.Reason,
+				)
+			}
+		}
+	}
+
+	plan.TLSObservations = observations
+	plan.PublicURLStatus, plan.PublicURLReason = summarizeGatewayTLSObservations(observations)
+	if len(observations) == 0 {
+		return result, plan
+	}
+
+	readyCount, pendingCount, errorCount := countGatewayTLSObservationStates(observations)
+	result.Status = "observed"
+	result.Message = fmt.Sprintf(
+		"gateway TLS observation completed: %d ready, %d pending, %d error",
+		readyCount,
+		pendingCount,
+		errorCount,
+	)
+	return result, plan
+}
+
+func observeGatewayTLSURL(ctx context.Context, rawURL, host string, observedAt time.Time) GatewayTLSObservation {
+	observation := GatewayTLSObservation{
+		URL:        strings.TrimSpace(rawURL),
+		Host:       strings.TrimSpace(host),
+		Status:     gatewayPublicURLStatusPending,
+		ObservedAt: observedAt,
+	}
+	if observation.URL == "" || observation.Host == "" {
+		observation.Reason = "gateway route is missing a host or URL"
+		observation.ErrorKind = "missing_host"
+		return observation
+	}
+
+	resolveCtx, cancelResolve := context.WithTimeout(ctx, 3*time.Second)
+	defer cancelResolve()
+	ips, err := net.DefaultResolver.LookupIPAddr(resolveCtx, observation.Host)
+	if err != nil || len(ips) == 0 {
+		observation.Status = gatewayPublicURLStatusPending
+		observation.Reason = "magic domain DNS is not resolving yet"
+		observation.ErrorKind = "dns_unresolved"
+		return observation
+	}
+
+	dialCtx, cancelDial := context.WithTimeout(ctx, 4*time.Second)
+	defer cancelDial()
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: 4 * time.Second},
+		Config: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: observation.Host,
+		},
+	}
+	conn, err := dialer.DialContext(dialCtx, "tcp", net.JoinHostPort(observation.Host, "443"))
+	if err != nil {
+		observation.Status, observation.Reason, observation.ErrorKind = classifyGatewayTLSError(err)
+		return observation
+	}
+	defer conn.Close()
+
+	tlsConn, ok := conn.(*tls.Conn)
+	if ok {
+		state := tlsConn.ConnectionState()
+		if len(state.PeerCertificates) == 0 {
+			observation.Status = gatewayPublicURLStatusError
+			observation.Reason = "gateway completed TLS without presenting a certificate"
+			observation.ErrorKind = "missing_certificate"
+			return observation
+		}
+	}
+
+	observation.Status = gatewayPublicURLStatusReady
+	observation.Reason = ""
+	observation.ErrorKind = ""
+	return observation
+}
+
+func classifyGatewayTLSError(err error) (status, reason, kind string) {
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+
+	switch {
+	case errors.As(err, &unknownAuthority) || strings.Contains(lower, "unknown authority"):
+		return gatewayPublicURLStatusError, "gateway is serving an untrusted local certificate", "unknown_authority"
+	case errors.As(err, &hostnameErr) || strings.Contains(lower, "certificate is valid for") || strings.Contains(lower, "not valid for"):
+		return gatewayPublicURLStatusError, "gateway certificate does not match the requested hostname", "hostname_mismatch"
+	case errors.Is(err, context.DeadlineExceeded),
+		strings.Contains(lower, "deadline exceeded"),
+		strings.Contains(lower, "i/o timeout"),
+		strings.Contains(lower, "connection refused"),
+		strings.Contains(lower, "no such host"),
+		strings.Contains(lower, "network is unreachable"),
+		strings.Contains(lower, "server misbehaving"):
+		return gatewayPublicURLStatusPending, "magic domain is not reachable on port 443 yet", "network_pending"
+	default:
+		return gatewayPublicURLStatusPending, "waiting for a browser-trusted public TLS certificate", "tls_pending"
+	}
+}
+
+func summarizeGatewayTLSObservations(observations []GatewayTLSObservation) (string, string) {
+	if len(observations) == 0 {
+		return "", ""
+	}
+	firstPending := ""
+	firstError := ""
+	for _, item := range observations {
+		switch strings.TrimSpace(item.Status) {
+		case gatewayPublicURLStatusReady:
+			return gatewayPublicURLStatusReady, ""
+		case gatewayPublicURLStatusError:
+			if firstError == "" {
+				firstError = strings.TrimSpace(item.Reason)
+			}
+		case gatewayPublicURLStatusPending:
+			if firstPending == "" {
+				firstPending = strings.TrimSpace(item.Reason)
+			}
+		}
+	}
+	if firstError != "" {
+		return gatewayPublicURLStatusError, firstError
+	}
+	if firstPending != "" {
+		return gatewayPublicURLStatusPending, firstPending
+	}
+	return "", ""
+}
+
+func countGatewayTLSObservationStates(observations []GatewayTLSObservation) (ready, pending, failed int) {
+	for _, item := range observations {
+		switch strings.TrimSpace(item.Status) {
+		case gatewayPublicURLStatusReady:
+			ready++
+		case gatewayPublicURLStatusError:
+			failed++
+		default:
+			pending++
+		}
+	}
+	return ready, pending, failed
+}
+
 func collectPublicURLs(plan GatewayPlan) []string {
+	statusByURL := make(map[string]string, len(plan.TLSObservations))
+	for _, observation := range plan.TLSObservations {
+		url := strings.TrimSpace(observation.URL)
+		if url == "" {
+			continue
+		}
+		statusByURL[url] = strings.TrimSpace(observation.Status)
+	}
 	urls := make([]string, 0, len(plan.Routes)*2)
 	seen := make(map[string]struct{}, len(plan.Routes)*2)
 	for _, route := range plan.Routes {
 		for _, candidate := range []string{route.PrimaryURL, route.FallbackURL} {
 			candidate = strings.TrimSpace(candidate)
 			if candidate == "" {
+				continue
+			}
+			if len(statusByURL) > 0 && statusByURL[candidate] != gatewayPublicURLStatusReady {
 				continue
 			}
 			if _, exists := seen[candidate]; exists {

@@ -96,6 +96,7 @@ export type ProjectBootstrapStatus = {
   runtime_inventory: BootstrapRuntimeInventory;
   latest_build?: BootstrapLatestBuild;
   public_urls?: string[];
+  public_url_status?: 'ready' | 'pending' | 'error';
   public_url_reason?: string;
   updated_at: string;
 };

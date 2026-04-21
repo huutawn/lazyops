@@ -27,6 +27,7 @@ type PublicDomainRecord struct {
 type PublicDomainResult struct {
 	Domains    []PublicDomainRecord
 	PublicURLs []string
+	Status     string
 	Reason     string
 }
 

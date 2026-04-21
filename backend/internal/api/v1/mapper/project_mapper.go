@@ -326,6 +326,8 @@ func ToProjectRuntimeSummaryResponse(result service.ProjectRuntimeSummaryResult)
 		SyncState:        result.SyncState,
 		SyncReason:       result.SyncReason,
 		PublicURLs:       append([]string{}, result.PublicURLs...),
+		PublicURLStatus:  result.PublicURLStatus,
+		PublicURLReason:  result.PublicURLReason,
 		Nodes:            nodes,
 		Services:         services,
 	}

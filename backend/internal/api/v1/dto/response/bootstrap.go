@@ -106,6 +106,7 @@ type BootstrapStatusResponse struct {
 	RuntimeInventory BootstrapRuntimeInventoryResponse `json:"runtime_inventory"`
 	LatestBuild      *BootstrapBuildStatusResponse     `json:"latest_build,omitempty"`
 	PublicURLs       []string                          `json:"public_urls"`
+	PublicURLStatus  string                            `json:"public_url_status,omitempty"`
 	PublicURLReason  string                            `json:"public_url_reason,omitempty"`
 	UpdatedAt        time.Time                         `json:"updated_at"`
 }

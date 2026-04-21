@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,14 +67,15 @@ type desiredStateRevisionCompiledRecord struct {
 }
 
 type DeploymentService struct {
-	projects      ProjectStore
-	blueprints    BlueprintStore
-	revisions     DesiredStateRevisionStore
-	deployments   DeploymentStore
-	incidents     RuntimeIncidentStore
-	bindings      DeploymentBindingStore
-	publicDomains *PublicDomainResolver
-	compiler      *ServiceInventoryBlueprintCompiler
+	projects          ProjectStore
+	blueprints        BlueprintStore
+	revisions         DesiredStateRevisionStore
+	deployments       DeploymentStore
+	incidents         RuntimeIncidentStore
+	bindings          DeploymentBindingStore
+	publicDomains     *PublicDomainResolver
+	publicURLVerifier PublicURLVerifier
+	compiler          *ServiceInventoryBlueprintCompiler
 }
 
 func NewDeploymentService(
@@ -116,6 +118,14 @@ func (s *DeploymentService) WithServiceInventoryCompiler(compiler *ServiceInvent
 		return s
 	}
 	s.compiler = compiler
+	return s
+}
+
+func (s *DeploymentService) WithPublicURLVerifier(verifier PublicURLVerifier) *DeploymentService {
+	if s == nil {
+		return s
+	}
+	s.publicURLVerifier = verifier
 	return s
 }
 
@@ -224,10 +234,11 @@ func (s *DeploymentService) List(requesterUserID, requesterRole, projectID strin
 		return nil, err
 	}
 
+	publicURLCache := make(map[string]PublicURLTLSObservation)
 	out := make([]DeploymentOverviewRecord, 0, len(deployments))
 	for _, item := range deployments {
 		revisionRecord, ok := revisionRecords[item.RevisionID]
-		publicDomain := s.resolveDeploymentPublicDomains(project.ID, revisionRecord, ok)
+		publicDomain := s.resolveDeploymentPublicDomains(project.ID, revisionRecord, ok, publicURLCache)
 		out = append(out, buildDeploymentOverview(item, revisionRecord, ok, revisionNumbers[item.RevisionID], publicDomain))
 	}
 
@@ -277,7 +288,7 @@ func (s *DeploymentService) Get(requesterUserID, requesterRole, projectID, deplo
 		revisionNumbers[deployment.RevisionID] = len(revisionNumbers) + 1
 	}
 
-	publicDomain := s.resolveDeploymentPublicDomains(project.ID, revisionRecord, true)
+	publicDomain := s.resolveDeploymentPublicDomains(project.ID, revisionRecord, true, make(map[string]PublicURLTLSObservation))
 	overview := buildDeploymentOverview(*deployment, revisionRecord, true, revisionNumbers[deployment.RevisionID], publicDomain)
 	incidentRecords := []models.RuntimeIncident{}
 	if s.incidents != nil {
@@ -818,7 +829,7 @@ func buildRevisionIndex(revisions []models.DesiredStateRevision) (map[string]Des
 	return records, numbers, nil
 }
 
-func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, revision DesiredStateRevisionRecord, hasRevision bool) PublicDomainResult {
+func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, revision DesiredStateRevisionRecord, hasRevision bool, cache map[string]PublicURLTLSObservation) PublicDomainResult {
 	if s == nil || s.bindings == nil || s.publicDomains == nil || !hasRevision {
 		return PublicDomainResult{PublicURLs: []string{}}
 	}
@@ -833,7 +844,7 @@ func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, rev
 		return PublicDomainResult{PublicURLs: []string{}}
 	}
 
-	return s.publicDomains.Resolve(PublicDomainResolveInput{
+	resolved := s.publicDomains.Resolve(PublicDomainResolveInput{
 		ProjectSlug:          revision.ProjectSlug,
 		RuntimeMode:          revision.RuntimeMode,
 		TargetKind:           binding.TargetKind,
@@ -841,6 +852,43 @@ func (s *DeploymentService) resolveDeploymentPublicDomains(projectID string, rev
 		Services:             revision.Services,
 		PlacementAssignments: revision.PlacementAssignments,
 	})
+	return s.applyTrustedPublicURLStatus(resolved, cache)
+}
+
+func (s *DeploymentService) applyTrustedPublicURLStatus(publicDomain PublicDomainResult, cache map[string]PublicURLTLSObservation) PublicDomainResult {
+	if s == nil || s.publicURLVerifier == nil || len(publicDomain.PublicURLs) == 0 {
+		return publicDomain
+	}
+	if cache == nil {
+		cache = make(map[string]PublicURLTLSObservation)
+	}
+
+	observations := make([]PublicURLTLSObservation, 0, len(publicDomain.PublicURLs))
+	readyURLs := make([]string, 0, len(publicDomain.PublicURLs))
+	for _, rawURL := range publicDomain.PublicURLs {
+		url := strings.TrimSpace(rawURL)
+		if url == "" {
+			continue
+		}
+		observation, ok := cache[url]
+		if !ok {
+			observation = s.publicURLVerifier.Observe(context.Background(), url)
+			cache[url] = observation
+			logFailedPublicURLObservation(observation)
+		}
+		observations = append(observations, observation)
+		if strings.TrimSpace(observation.Status) == publicURLStatusReady {
+			readyURLs = append(readyURLs, url)
+		}
+	}
+
+	publicDomain.PublicURLs = uniqueNonEmptyStrings(readyURLs)
+	publicDomain.Status, publicDomain.Reason = summarizePublicURLObservations(observations)
+	if len(publicDomain.PublicURLs) > 0 {
+		publicDomain.Status = publicURLStatusReady
+		publicDomain.Reason = ""
+	}
+	return publicDomain
 }
 
 func buildDeploymentOverview(
@@ -909,6 +957,7 @@ func buildDeploymentOverview(
 		ServiceSpecs:         serviceSpecs,
 		PlacementAssignments: placements,
 		PublicURLs:           append([]string{}, publicDomain.PublicURLs...),
+		PublicURLStatus:      publicDomain.Status,
 		PublicURLReason:      publicDomain.Reason,
 		StartedAt:            deployment.StartedAt,
 		CompletedAt:          deployment.CompletedAt,

@@ -64,6 +64,8 @@ export type ProjectRuntimeSummary = {
   sync_state: string;
   sync_reason?: string;
   public_urls: string[];
+  public_url_status?: 'ready' | 'pending' | 'error';
+  public_url_reason?: string;
   nodes: ProjectRuntimeNode[];
   services: ProjectRuntimeService[];
 };

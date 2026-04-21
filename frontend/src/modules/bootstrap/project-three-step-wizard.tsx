@@ -10,7 +10,7 @@ import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge, type StatusBadgeProps } from '@/components/primitives/status-badge';
 import { bootstrapStatusQueryKey, useAutoBootstrapProject, useOneClickDeploy, useProjectBootstrapStatus } from '@/modules/bootstrap/bootstrap-hooks';
 import type { BootstrapOneClickDeployResult, BootstrapPipelineEvent, BootstrapStep, BootstrapStepAction } from '@/modules/bootstrap/bootstrap-types';
-import { formatBootstrapStateLabelVN } from '@/modules/bootstrap/bootstrap-ui';
+import { buildPublicURLDisplay, formatBootstrapStateLabelVN } from '@/modules/bootstrap/bootstrap-ui';
 import { ProjectConnectInfraModal } from '@/modules/bootstrap/project-connect-infra-modal';
 import { cn } from '@/lib/utils';
 import { getProjectDeployment } from '@/modules/deployments/deployment-api';
@@ -157,6 +157,7 @@ export function ProjectThreeStepWizard({
   const publicURLs = data.public_urls ?? [];
   const primaryPublicURL = publicURLs[0] ?? '';
   const fallbackPublicURLs = publicURLs.slice(1);
+  const publicURLDisplay = buildPublicURLDisplay(primaryPublicURL, data.public_url_status, data.public_url_reason);
 
   const statusCards = [
     { title: 'Mã nguồn', value: code?.state ?? 'missing', summary: code?.summary ?? 'Chưa kết nối GitHub' },
@@ -290,7 +291,23 @@ export function ProjectThreeStepWizard({
 
           <div className="mt-4 rounded-xl border border-[#1e293b] bg-[#0B1120] p-4">
             <div className="flex flex-col gap-2">
-              <span className="text-[13px] font-semibold text-[#94a3b8]">Domain công khai</span>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[13px] font-semibold text-[#94a3b8]">Domain công khai</span>
+                {publicURLDisplay.label ? (
+                  <span
+                    className={cn(
+                      'text-[12px] font-semibold',
+                      publicURLDisplay.state === 'ready'
+                        ? 'text-[#10B981]'
+                        : publicURLDisplay.state === 'error'
+                          ? 'text-[#EF4444]'
+                          : 'text-[#0EA5E9]',
+                    )}
+                  >
+                    {publicURLDisplay.label}
+                  </span>
+                ) : null}
+              </div>
               {primaryPublicURL ? (
                 <div className="flex flex-col gap-2">
                   <a
@@ -319,7 +336,7 @@ export function ProjectThreeStepWizard({
                 </div>
               ) : (
                 <p className="text-[13px] text-[#94a3b8]">
-                  {data.public_url_reason || 'Chưa có domain công khai cho project này.'}
+                  {publicURLDisplay.message}
                 </p>
               )}
             </div>

@@ -69,6 +69,7 @@ type DeploymentOverviewResponse struct {
 	ServiceSpecs         []ProjectServiceResponse      `json:"service_specs,omitempty"`
 	PlacementAssignments []PlacementAssignmentResponse `json:"placement_assignments"`
 	PublicURLs           []string                      `json:"public_urls"`
+	PublicURLStatus      string                        `json:"public_url_status,omitempty"`
 	PublicURLReason      string                        `json:"public_url_reason,omitempty"`
 	StartedAt            *time.Time                    `json:"started_at,omitempty"`
 	CompletedAt          *time.Time                    `json:"completed_at,omitempty"`

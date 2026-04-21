@@ -123,6 +123,8 @@ type ProjectRuntimeSummaryResponse struct {
 	SyncState        string                          `json:"sync_state"`
 	SyncReason       string                          `json:"sync_reason,omitempty"`
 	PublicURLs       []string                        `json:"public_urls,omitempty"`
+	PublicURLStatus  string                          `json:"public_url_status,omitempty"`
+	PublicURLReason  string                          `json:"public_url_reason,omitempty"`
 	Nodes            []ProjectRuntimeNodeResponse    `json:"nodes,omitempty"`
 	Services         []ProjectRuntimeServiceResponse `json:"services,omitempty"`
 }

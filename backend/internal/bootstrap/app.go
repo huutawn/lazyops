@@ -183,6 +183,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	deploymentSvc := service.NewDeploymentService(projectRepo, blueprintRepo, revisionRepo, deploymentRepo).
 		WithIncidentStore(incidentRepo).
 		WithPublicDomainSupport(deploymentBindingRepo, instanceRepo, clusterRepo).
+		WithPublicURLVerifier(service.NewSystemPublicURLVerifier()).
 		WithServiceInventoryCompiler(serviceInventoryCompiler)
 	githubWebhookSvc := service.NewGitHubWebhookService(cfg.GitHubApp.WebhookSecret, projectRepoLinkSvc).WithBuildDispatcher(buildJobSvc)
 	instanceService := service.NewInstanceService(instanceRepo, bootstrapTokenRepo, cfg.Enrollment)

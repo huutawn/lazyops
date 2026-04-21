@@ -53,7 +53,7 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 		}
 	}
 
-	gatewayVersion, publicURLs, err := rollbackGatewayState(d.root, runtimeCtx)
+	gatewayVersion, publicURLs, publicURLStatus, publicURLReason, err := rollbackGatewayState(d.root, runtimeCtx)
 	if err != nil {
 		return RollbackReleaseResult{}, err
 	}
@@ -180,6 +180,8 @@ func (d *FilesystemDriver) RollbackRelease(_ context.Context, runtimeCtx Runtime
 		GatewayVersion:     gatewayVersion,
 		SidecarVersion:     sidecarVersion,
 		PublicURLs:         append([]string(nil), publicURLs...),
+		PublicURLStatus:    publicURLStatus,
+		PublicURLReason:    publicURLReason,
 		Incident:           incident,
 		Events:             events,
 		Summary:            rollbackSummaryText(plan),
@@ -319,12 +321,12 @@ func rollbackFilePaths(root string, layout WorkspaceLayout, runtimeCtx RuntimeCo
 	}
 }
 
-func rollbackGatewayState(root string, runtimeCtx RuntimeContext) (string, []string, error) {
-	gatewayVersion, publicURLs, err := loadPromotableGatewayState(root, runtimeCtx)
+func rollbackGatewayState(root string, runtimeCtx RuntimeContext) (string, []string, string, string, error) {
+	gatewayVersion, publicURLs, publicURLStatus, publicURLReason, err := loadPromotableGatewayState(root, runtimeCtx)
 	if err == nil {
-		return gatewayVersion, publicURLs, nil
+		return gatewayVersion, publicURLs, publicURLStatus, publicURLReason, nil
 	}
-	return "", nil, wrapRollbackPreconditionError(err, "rollback_gateway_unavailable", "gateway must remain available during rollback")
+	return "", nil, "", "", wrapRollbackPreconditionError(err, "rollback_gateway_unavailable", "gateway must remain available during rollback")
 }
 
 func rollbackSidecarState(root string, runtimeCtx RuntimeContext) (string, error) {

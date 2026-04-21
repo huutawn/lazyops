@@ -127,6 +127,8 @@ func (s *ProjectRuntimeService) Get(ctx context.Context, requesterUserID, reques
 		SyncState:        "missing",
 		SyncReason:       "Chua co deployment nao cho project nay.",
 		PublicURLs:       uniqueNonEmptyStrings(liveDeployment.PublicURLs),
+		PublicURLStatus:  strings.TrimSpace(liveDeployment.PublicURLStatus),
+		PublicURLReason:  strings.TrimSpace(liveDeployment.PublicURLReason),
 		Nodes:            nodeItems,
 		Services:         serviceRecords,
 	}

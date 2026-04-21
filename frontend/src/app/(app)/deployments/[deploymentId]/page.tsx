@@ -22,6 +22,7 @@ import { useProjectPlacementNodes } from '@/modules/project-services/project-ser
 import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { StatusBadge } from '@/components/primitives/status-badge';
+import { buildPublicURLDisplay } from '@/modules/bootstrap/bootstrap-ui';
 import type { BuildState, RolloutState } from '@/modules/deployments/deployment-types';
 import type { LogEntry } from '@/modules/observability/observability-types';
 import { listProjectLogs } from '@/modules/observability/observability-api';
@@ -193,6 +194,7 @@ export default function DeploymentDetailPage() {
   const publicURLs = dep.public_urls ?? [];
   const primaryPublicURL = publicURLs[0] ?? '';
   const fallbackPublicURLs = publicURLs.slice(1);
+  const publicURLDisplay = buildPublicURLDisplay(primaryPublicURL, dep.public_url_status, dep.public_url_reason);
 
   return (
     <div className="relative flex flex-col gap-8 max-w-[1400px] mx-auto py-10 lg:px-8">
@@ -292,6 +294,17 @@ export default function DeploymentDetailPage() {
             title={<div className="flex items-center gap-2"><Rocket className="size-5 text-[#38BDF8]" /> Domain công khai</div>}
             description="Các domain hiện tại có thể dùng để gọi service public của revision này."
           >
+            {publicURLDisplay.label ? (
+              <div className="mb-3 text-[12px] font-semibold text-[#94a3b8]">
+                Trạng thái HTTPS: <span className={cn(
+                  publicURLDisplay.state === 'ready'
+                    ? 'text-[#10B981]'
+                    : publicURLDisplay.state === 'error'
+                      ? 'text-[#EF4444]'
+                      : 'text-[#0EA5E9]',
+                )}>{publicURLDisplay.label}</span>
+              </div>
+            ) : null}
             {primaryPublicURL ? (
               <div className="flex flex-col gap-3">
                 <a
@@ -320,7 +333,7 @@ export default function DeploymentDetailPage() {
               </div>
             ) : (
               <p className="text-[14px] text-[#94a3b8]">
-                {dep.public_url_reason || 'Revision này chưa có domain công khai.'}
+                {publicURLDisplay.message}
               </p>
             )}
           </SectionCard>

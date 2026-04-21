@@ -75,6 +75,8 @@ export function normalizeProjectRuntimeSummary(projectId: string, summary?: Part
     sync_state: summary?.sync_state ?? 'missing',
     sync_reason: summary?.sync_reason,
     public_urls: summary?.public_urls ?? [],
+    public_url_status: summary?.public_url_status,
+    public_url_reason: summary?.public_url_reason,
     nodes: (summary?.nodes ?? []).map(normalizeNode),
     services: (summary?.services ?? []).map(normalizeService),
   };

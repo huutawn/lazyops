@@ -84,6 +84,48 @@ export function formatBootstrapStateLabelVN(value: string): string {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+export function formatPublicURLStatusLabelVN(value?: string): string {
+  switch ((value ?? '').toLowerCase()) {
+    case 'ready':
+      return 'Sẵn sàng';
+    case 'pending':
+      return 'Đang cấp HTTPS';
+    case 'error':
+      return 'Lỗi TLS';
+    default:
+      return '';
+  }
+}
+
+export function buildPublicURLDisplay(primaryPublicURL?: string, status?: string, reason?: string) {
+  if (primaryPublicURL) {
+    return {
+      state: 'ready',
+      label: formatPublicURLStatusLabelVN('ready'),
+      message: primaryPublicURL,
+    };
+  }
+
+  const normalizedStatus = (status ?? '').toLowerCase();
+  if (normalizedStatus === 'pending' || normalizedStatus === 'error') {
+    return {
+      state: normalizedStatus,
+      label: formatPublicURLStatusLabelVN(normalizedStatus),
+      message:
+        reason ||
+        (normalizedStatus === 'pending'
+          ? 'Đang chờ HTTPS công khai sẵn sàng cho magic domain.'
+          : 'Magic domain hiện chưa thể dùng HTTPS an toàn.'),
+    };
+  }
+
+  return {
+    state: 'missing',
+    label: '',
+    message: reason || 'Chưa có domain công khai cho project này.',
+  };
+}
+
 export function summarizeProjectSetup(status: ProjectBootstrapStatus): ProjectSetupCard[] {
   const code = findBootstrapStep(status, 'connect_code');
   const infra = findBootstrapStep(status, 'connect_infra');

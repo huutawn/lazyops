@@ -7,7 +7,7 @@ import { ErrorState } from '@/components/primitives/error-state';
 import { LoadingBlock } from '@/components/primitives/loading';
 import { SectionCard } from '@/components/primitives/section-card';
 import { useProjectBootstrapStatus, useOneClickDeploy } from '@/modules/bootstrap/bootstrap-hooks';
-import { formatBootstrapStateLabelVN, resolveProjectNextAction, summarizeProjectSetup } from '@/modules/bootstrap/bootstrap-ui';
+import { buildPublicURLDisplay, formatBootstrapStateLabelVN, resolveProjectNextAction, summarizeProjectSetup } from '@/modules/bootstrap/bootstrap-ui';
 import { ProjectConnectInfraModal } from '@/modules/bootstrap/project-connect-infra-modal';
 import { ProjectThreeStepWizard } from '@/modules/bootstrap/project-three-step-wizard';
 import { useDeployments } from '@/modules/deployments/deployment-hooks';
@@ -75,6 +75,11 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
     runtime.data?.public_urls?.[0] ||
     runtimeServices.flatMap((service) => service.public_urls ?? [])[0] ||
     '';
+  const publicURLDisplay = buildPublicURLDisplay(
+    primaryPublicURL,
+    bootstrap.data.public_url_status ?? runtime.data?.public_url_status,
+    bootstrap.data.public_url_reason ?? runtime.data?.public_url_reason,
+  );
   const nextAction = resolveProjectNextAction({
     status: bootstrap.data,
     repoLink: repoLink.data ?? null,
@@ -86,8 +91,10 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
     ? new Date(latestDeployment.created_at).toLocaleString()
     : 'Chưa có lần deploy nào';
   const runtimeSummary = primaryPublicURL
-    ? 'Đang có địa chỉ public'
-    : liveServices > 0
+    ? 'HTTPS công khai đã sẵn sàng'
+    : publicURLDisplay.state === 'pending' || publicURLDisplay.state === 'error'
+      ? publicURLDisplay.message
+      : liveServices > 0
       ? `${liveServices} service đang chạy`
       : runtime.data?.sync_reason || 'Chưa có runtime';
 
@@ -193,8 +200,8 @@ export function ProjectOverviewDashboard({ projectId }: ProjectOverviewDashboard
           <QuickSummaryCard
             icon={<ExternalLink className="size-5 text-[#38bdf8]" />}
             label="Website"
-            value={primaryPublicURL ? 'Đã có' : 'Chưa có'}
-            hint={primaryPublicURL || 'Sẽ xuất hiện sau khi project được deploy thành công.'}
+            value={primaryPublicURL ? 'Đã có' : publicURLDisplay.label || 'Chưa có'}
+            hint={primaryPublicURL || publicURLDisplay.message}
           />
           <QuickSummaryCard
             icon={<Rocket className="size-5 text-[#38bdf8]" />}

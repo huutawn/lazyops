@@ -198,6 +198,7 @@ type ProjectBootstrapStatusRecord struct {
 	RuntimeInventory BootstrapRuntimeInventoryRecord
 	LatestBuild      *BootstrapBuildStatusRecord
 	PublicURLs       []string
+	PublicURLStatus  string
 	PublicURLReason  string
 	UpdatedAt        time.Time
 }
@@ -716,7 +717,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 		return nil, err
 	}
 	deployState, deploySummary := s.deriveDeployState(codeState, infraState, serviceInventory, deploymentOverviews, latestBuild)
-	publicURLs, publicURLReason := resolveStatusPublicURLsFromOverviews(deploymentOverviews)
+	publicURLs, publicURLStatus, publicURLReason := resolveStatusPublicURLsFromOverviews(deploymentOverviews)
 	internalServices, err := s.listProjectInternalServices(project.ID)
 	if err != nil {
 		return nil, err
@@ -781,6 +782,7 @@ func (s *BootstrapOrchestrator) GetStatus(requesterUserID, requesterRole, projec
 		RuntimeInventory: runtimeInventory,
 		LatestBuild:      latestBuild,
 		PublicURLs:       publicURLs,
+		PublicURLStatus:  publicURLStatus,
 		PublicURLReason:  publicURLReason,
 		UpdatedAt:        time.Now().UTC(),
 	}
@@ -1281,13 +1283,13 @@ func bootstrapBuildBlockingReason(build BuildJobRecord, latestDeployment *Deploy
 	return ""
 }
 
-func (s *BootstrapOrchestrator) resolveStatusPublicURLs(requesterUserID, requesterRole, projectID string) ([]string, string, error) {
+func (s *BootstrapOrchestrator) resolveStatusPublicURLs(requesterUserID, requesterRole, projectID string) ([]string, string, string, error) {
 	overviews, err := s.listStatusDeployments(requesterUserID, requesterRole, projectID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	publicURLs, reason := resolveStatusPublicURLsFromOverviews(overviews)
-	return publicURLs, reason, nil
+	publicURLs, status, reason := resolveStatusPublicURLsFromOverviews(overviews)
+	return publicURLs, status, reason, nil
 }
 
 func (s *BootstrapOrchestrator) listStatusDeployments(requesterUserID, requesterRole, projectID string) ([]DeploymentOverviewRecord, error) {
@@ -1501,25 +1503,25 @@ func bootstrapInternalLocalEndpoint(runtimeMode, serviceName, fallbackHost strin
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
-func resolveStatusPublicURLsFromOverviews(overviews []DeploymentOverviewRecord) ([]string, string) {
+func resolveStatusPublicURLsFromOverviews(overviews []DeploymentOverviewRecord) ([]string, string, string) {
 	if len(overviews) == 0 {
-		return []string{}, ""
+		return []string{}, "", ""
 	}
 
 	for _, deployment := range overviews {
 		if !deployment.Promoted && strings.TrimSpace(strings.ToLower(deployment.RolloutState)) != DeploymentStatusPromoted {
 			continue
 		}
-		return append([]string{}, deployment.PublicURLs...), deployment.PublicURLReason
+		return append([]string{}, deployment.PublicURLs...), deployment.PublicURLStatus, deployment.PublicURLReason
 	}
 
 	for _, deployment := range overviews {
-		if len(deployment.PublicURLs) > 0 || strings.TrimSpace(deployment.PublicURLReason) != "" {
-			return append([]string{}, deployment.PublicURLs...), deployment.PublicURLReason
+		if len(deployment.PublicURLs) > 0 || strings.TrimSpace(deployment.PublicURLReason) != "" || strings.TrimSpace(deployment.PublicURLStatus) != "" {
+			return append([]string{}, deployment.PublicURLs...), deployment.PublicURLStatus, deployment.PublicURLReason
 		}
 	}
 
-	return []string{}, ""
+	return []string{}, "", ""
 }
 
 func buildBootstrapRuntimeInventory(

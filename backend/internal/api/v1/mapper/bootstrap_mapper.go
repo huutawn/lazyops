@@ -190,8 +190,9 @@ func ToBootstrapStatusResponse(record service.ProjectBootstrapStatusRecord) resp
 			},
 			InternalServices: internalServices,
 		},
-		LatestBuild: latestBuild,
+		LatestBuild:     latestBuild,
 		PublicURLs:      append([]string{}, record.PublicURLs...),
+		PublicURLStatus: record.PublicURLStatus,
 		PublicURLReason: record.PublicURLReason,
 		UpdatedAt:       record.UpdatedAt,
 	}
