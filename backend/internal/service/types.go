@@ -922,6 +922,7 @@ type ProjectEnvHelperPack struct {
 	Category         string
 	Audience         string
 	SourceService    string
+	RelatedServices  []string
 	PrimaryKey       string
 	PublicPath       string
 	Managed          bool

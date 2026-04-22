@@ -12,6 +12,7 @@ export type ProjectEnvHelperPack = {
   category: string;
   audience: string;
   source_service: string;
+  related_services: string[];
   primary_key: string;
   public_path?: string;
   managed: boolean;

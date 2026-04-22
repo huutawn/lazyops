@@ -308,7 +308,7 @@ func legacyInternalServiceToProjectServiceRecord(item models.ProjectInternalServ
 		PlacementMode:           servicePlacementModeSharedCluster,
 		PlacementNodeID:         "",
 		ConnectionTemplateKey:   "",
-		ConnectionTemplate:      postgresConnectionTemplateForKind(kind),
+		ConnectionTemplate:      defaultConnectionTemplateForKind(kind),
 		ConnectionTargetService: "",
 		ManagedByLazyops:        true,
 		StartHint:               "managed-internal-service",
@@ -695,11 +695,11 @@ func normalizeConfiguredConnectionTemplateKey(raw string) (string, error) {
 }
 
 func normalizeConfiguredConnectionTemplate(raw map[string]string, sourceType, kind string) (map[string]string, error) {
-	if sourceType == serviceSourceTypeInternal && strings.EqualFold(strings.TrimSpace(kind), "postgres") {
-		return normalizePostgresConnectionTemplate(raw)
+	if sourceType == serviceSourceTypeInternal && isRelationalDatabaseKind(kind) {
+		return normalizeConnectionTemplateForKind(kind, raw)
 	}
 	if len(raw) > 0 {
-		return nil, fmt.Errorf("service.connection_template is only supported for internal postgres services")
+		return nil, fmt.Errorf("service.connection_template is only supported for internal postgres or mysql services")
 	}
 	return map[string]string{}, nil
 }
@@ -1058,16 +1058,9 @@ func buildInitialProjectServiceItems(explicit []ConfigureProjectServiceItem, int
 			Kind:               kind,
 			SourceType:         serviceSourceTypeInternal,
 			ManagedByLazyops:   true,
-			ConnectionTemplate: postgresConnectionTemplateForKind(kind),
+			ConnectionTemplate: defaultConnectionTemplateForKind(kind),
 		})
 	}
 
 	return out
-}
-
-func postgresConnectionTemplateForKind(kind string) map[string]string {
-	if normalizeManagedInternalBridgeKind(kind) != "postgres" {
-		return map[string]string{}
-	}
-	return defaultPostgresConnectionTemplate()
 }

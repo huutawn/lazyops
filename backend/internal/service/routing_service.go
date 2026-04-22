@@ -539,9 +539,10 @@ func isFrontendDescriptor(item routingDescriptor) bool {
 	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
 	lowerKind := strings.ToLower(strings.TrimSpace(item.Kind))
 	lowerProfile := strings.ToLower(strings.TrimSpace(item.RuntimeProfile))
-	return lowerKind == "web" ||
-		lowerKind == "frontend" ||
-		lowerProfile == "web" ||
+	if lowerKind != "" && lowerKind != "app" {
+		return lowerKind == "web" || lowerKind == "frontend"
+	}
+	return lowerProfile == "web" ||
 		strings.Contains(lowerName, "front") ||
 		strings.Contains(lowerName, "fe") ||
 		strings.Contains(lowerName, "web") ||
@@ -551,9 +552,10 @@ func isFrontendDescriptor(item routingDescriptor) bool {
 func isBackendDescriptor(item routingDescriptor) bool {
 	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
 	lowerKind := strings.ToLower(strings.TrimSpace(item.Kind))
-	return lowerKind == "backend" ||
-		lowerKind == "server" ||
-		strings.Contains(lowerName, "backend") ||
+	if lowerKind != "" && lowerKind != "app" {
+		return lowerKind == "backend" || lowerKind == "server" || lowerKind == "api"
+	}
+	return strings.Contains(lowerName, "backend") ||
 		strings.Contains(lowerName, "server") ||
 		lowerName == "be"
 }
@@ -561,8 +563,12 @@ func isBackendDescriptor(item routingDescriptor) bool {
 func isAPIDescriptor(item routingDescriptor) bool {
 	lowerName := strings.ToLower(strings.TrimSpace(item.Name))
 	lowerKind := strings.ToLower(strings.TrimSpace(item.Kind))
-	return lowerKind == "api" ||
-		strings.Contains(lowerName, "api")
+	if lowerKind != "" && lowerKind != "app" {
+		return lowerKind == "api" || lowerKind == "backend" || lowerKind == "server"
+	}
+	return strings.Contains(lowerName, "api") ||
+		strings.Contains(lowerName, "backend") ||
+		lowerName == "be"
 }
 
 func isWebSocketDescriptor(item routingDescriptor) bool {

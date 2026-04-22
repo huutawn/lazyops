@@ -446,34 +446,57 @@ func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []P
 func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord, projectEnv map[string]string, effectiveRouting RoutingPolicyRecord) []ProjectEnvHelperPack {
 	items := make([]ProjectEnvHelperPack, 0)
 	serviceIndex := make(map[string]ProjectServiceRecord, len(services))
+	relationalDependents := make(map[string][]string)
 	for _, item := range services {
 		serviceIndex[item.Name] = item
-	}
-	for _, item := range services {
-		if item.SourceType != serviceSourceTypeInternal || !strings.EqualFold(strings.TrimSpace(item.Kind), "postgres") {
+		if strings.TrimSpace(item.ConnectionTargetService) == "" {
 			continue
 		}
-		template := coercePostgresConnectionTemplate(item.ConnectionTemplate)
+		targetName := strings.TrimSpace(item.ConnectionTargetService)
+		relationalDependents[targetName] = append(relationalDependents[targetName], item.Name)
+	}
+	for _, item := range services {
+		if item.SourceType != serviceSourceTypeInternal || !isRelationalDatabaseKind(item.Kind) {
+			continue
+		}
+		template := coerceConnectionTemplateForKind(item.Kind, item.ConnectionTemplate)
 		primaryKey := firstNonEmpty(template["DB_URL"], "DATABASE_URL")
-		runtimeKeys := sortedEnvKeys(buildPostgresConnectionTemplateEnv(item, projectEnv, runtimeMode))
+		runtimeValues := buildRelationalConnectionRuntimeValues(item, projectEnv, runtimeMode)
+		runtimeEnv := buildRelationalConnectionTemplateEnv(item, projectEnv, runtimeMode)
+		runtimeKeys := sortedEnvKeys(runtimeEnv)
+		envExample := make(map[string]string, len(template))
+		placeholderEnv := make(map[string]string, len(template))
+		localExampleEnv := make(map[string]string, len(template))
+		for _, slot := range relationalConnectionTemplateSlots {
+			envName := strings.TrimSpace(template[slot])
+			if envName == "" {
+				continue
+			}
+			envExample[envName] = ""
+			placeholderEnv[envName] = "${" + envName + "}"
+			localExampleEnv[envName] = localRelationalExampleValue(item.Kind, slot)
+		}
+		relatedServices := append([]string{item.Name}, relationalDependents[item.Name]...)
+		sort.Strings(relatedServices)
 		items = append(items, ProjectEnvHelperPack{
 			ServiceKind:     item.Kind,
 			Alias:           item.Name,
 			Category:        "database",
 			Audience:        "backend",
 			SourceService:   item.Name,
+			RelatedServices: relatedServices,
 			PrimaryKey:      primaryKey,
 			Managed:         true,
 			RuntimeInjected: true,
-			PlaceholderEnv:  map[string]string{primaryKey: "${" + primaryKey + "}"},
-			EnvExample:      map[string]string{primaryKey: ""},
-			LocalExampleEnv: map[string]string{primaryKey: "postgres://postgres:postgres@localhost:5432/app?sslmode=disable"},
+			PlaceholderEnv:  placeholderEnv,
+			EnvExample:      envExample,
+			LocalExampleEnv: localExampleEnv,
 			RuntimeKeys:     runtimeKeys,
 			Notes: []string{
 				"Prefer a single database URL in code and framework config.",
 				"LazyOps injects managed database keys for distributed-k3s; user-defined env values win when already present.",
 			},
-			LanguageSnippets: buildLanguageSnippets(primaryKey, "", "Database"),
+			LanguageSnippets: buildRelationalLanguageSnippets(primaryKey, template["DB_HOST"], runtimeValues),
 		})
 	}
 
@@ -490,6 +513,7 @@ func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, servi
 				Category:        "websocket",
 				Audience:        "frontend-browser",
 				SourceService:   route.Service,
+				RelatedServices: []string{route.Service},
 				PrimaryKey:      "WS_URL",
 				PublicPath:      publicPath,
 				Managed:         false,
@@ -515,6 +539,7 @@ func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, servi
 			Category:        "browser_api",
 			Audience:        "frontend-browser",
 			SourceService:   route.Service,
+			RelatedServices: []string{route.Service},
 			PrimaryKey:      "API_BASE_URL",
 			PublicPath:      publicPath,
 			Managed:         false,
@@ -537,6 +562,7 @@ func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, servi
 				Category:        "server_api",
 				Audience:        "frontend-server",
 				SourceService:   route.Service,
+				RelatedServices: []string{route.Service},
 				PrimaryKey:      "API_INTERNAL_URL",
 				PublicPath:      publicPath,
 				Managed:         false,
@@ -734,6 +760,77 @@ func buildLanguageSnippets(primaryKey, secondaryKey, title string) []ProjectEnvH
 			Title:     envTitle + " / PHP",
 			Content:   "$value = getenv('" + primaryKey + "') ?: '';\nif ($value === '') {\n    throw new RuntimeException('" + primaryKey + " is required');\n}",
 		},
+	}
+}
+
+func buildRelationalLanguageSnippets(primaryKey, secondaryKey string, runtimeValues map[string]string) []ProjectEnvHelperSnippet {
+	snippets := buildLanguageSnippets(primaryKey, secondaryKey, "Database")
+	dbNameKey := firstNonEmptyCompiledValue(secondaryKey, "DB_HOST")
+	decomposedBlock := fmt.Sprintf(
+		"db:\n  url: ${%s:}\n  name: ${DB_NAME:}\n  host: ${%s:}\n  port: ${DB_PORT:}\n  username: ${DB_USERNAME:}\n  password: ${DB_PASSWORD:}",
+		primaryKey,
+		dbNameKey,
+	)
+	fallbackCode := fmt.Sprintf(
+		"const url = process.env.%s ?? '';\nconst dbConfig = {\n  name: process.env.DB_NAME ?? '',\n  host: process.env.%s ?? '',\n  port: process.env.DB_PORT ?? '',\n  username: process.env.DB_USERNAME ?? '',\n  password: process.env.DB_PASSWORD ?? '',\n};",
+		primaryKey,
+		dbNameKey,
+	)
+	snippets = append(snippets,
+		ProjectEnvHelperSnippet{
+			Language:  "nodejs",
+			Framework: "native",
+			Kind:      "config_file",
+			Title:     "Database / Node.js decomposed fallback",
+			Content:   fallbackCode,
+		},
+		ProjectEnvHelperSnippet{
+			Language:  "java",
+			Framework: "spring",
+			Kind:      "config_file",
+			Title:     "Database / Spring decomposed application.yml",
+			Content:   decomposedBlock,
+		},
+		ProjectEnvHelperSnippet{
+			Language:  "csharp",
+			Framework: ".net",
+			Kind:      "config_file",
+			Title:     "Database / .NET appsettings fallback",
+			Content:   "{\n  \"Database\": {\n    \"Url\": \"${" + primaryKey + "}\",\n    \"Name\": \"${DB_NAME}\",\n    \"Host\": \"${" + dbNameKey + "}\",\n    \"Port\": \"${DB_PORT}\",\n    \"Username\": \"${DB_USERNAME}\",\n    \"Password\": \"${DB_PASSWORD}\"\n  }\n}",
+		},
+	)
+	_ = runtimeValues
+	return snippets
+}
+
+func localRelationalExampleValue(kind, slot string) string {
+	switch strings.ToUpper(strings.TrimSpace(slot)) {
+	case "DB_URL":
+		if normalizeManagedInternalBridgeKind(kind) == "mysql" {
+			return "mysql://mysql:mysql@tcp(localhost:3306)/app"
+		}
+		return "postgres://postgres:postgres@localhost:5432/app?sslmode=disable"
+	case "DB_NAME":
+		return "app"
+	case "DB_HOST":
+		return "localhost"
+	case "DB_PORT":
+		if normalizeManagedInternalBridgeKind(kind) == "mysql" {
+			return "3306"
+		}
+		return "5432"
+	case "DB_USERNAME":
+		if normalizeManagedInternalBridgeKind(kind) == "mysql" {
+			return "mysql"
+		}
+		return "postgres"
+	case "DB_PASSWORD":
+		if normalizeManagedInternalBridgeKind(kind) == "mysql" {
+			return "mysql"
+		}
+		return "postgres"
+	default:
+		return ""
 	}
 }
 

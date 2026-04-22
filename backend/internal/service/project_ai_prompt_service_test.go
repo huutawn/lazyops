@@ -110,3 +110,78 @@ func TestProjectAIPromptServiceBuildsProjectWidePrompt(t *testing.T) {
 		t.Fatalf("expected localhost findings, got %#v", record.MigrationFindings)
 	}
 }
+
+func TestProjectAIPromptServicePrefersExplicitAPIKindOverFrontendHeuristic(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:          "prj_456",
+		UserID:      "usr_123",
+		Name:        "BBB",
+		Slug:        "bbb",
+		RuntimeMode: "distributed-k3s",
+	})
+	projectEnvStore := newFakeProjectEnvBundleStore()
+	internalServiceStore := newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{})
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_456", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:        "be",
+			Kind:        "api",
+			Public:      true,
+			Path:        "apps/be",
+			TargetPort:  8080,
+			ServicePort: 8080,
+		},
+		{
+			Name:        "fe",
+			Kind:        "web",
+			Public:      true,
+			Path:        "apps/fe",
+			TargetPort:  3000,
+			ServicePort: 3000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_456", serviceModels); err != nil {
+		t.Fatalf("seed services: %v", err)
+	}
+
+	routesJSON, err := serializeRoutes([]models.RoutingRoute{
+		{Path: "/", Service: "be"},
+		{Path: "/fe", Service: "fe"},
+	})
+	if err != nil {
+		t.Fatalf("serialize routes: %v", err)
+	}
+	routingRepo := newFakeRoutingPolicyRepo()
+	routingRepo.policies["prj_456"] = &models.RoutingPolicy{
+		ProjectID:  "prj_456",
+		RoutesJSON: routesJSON,
+	}
+
+	envService := NewProjectEnvService(projectStore, projectEnvStore, internalServiceStore, "backend-secret-key").
+		WithServiceStore(serviceStore).
+		WithRoutingStore(routingRepo)
+	promptService := NewProjectAIPromptService(projectStore, serviceStore, envService, NewRoutingService(routingRepo, serviceStore))
+
+	record, err := promptService.Get("usr_123", RoleViewer, "prj_456")
+	if err != nil {
+		t.Fatalf("get ai prompt: %v", err)
+	}
+
+	snapshotByName := make(map[string]ProjectAIPromptServiceSnapshot, len(record.ServiceSnapshot))
+	for _, item := range record.ServiceSnapshot {
+		snapshotByName[item.Name] = item
+	}
+	if snapshotByName["be"].Role != "api" {
+		t.Fatalf("expected explicit api kind to win for be, got %#v", snapshotByName["be"])
+	}
+	if snapshotByName["fe"].Role != "frontend" {
+		t.Fatalf("expected fe to stay frontend, got %#v", snapshotByName["fe"])
+	}
+	if !strings.Contains(record.Prompt, "- be | role=api | kind=api") {
+		t.Fatalf("expected prompt to expose be as api, got %q", record.Prompt)
+	}
+}

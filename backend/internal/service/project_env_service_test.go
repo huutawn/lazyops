@@ -183,11 +183,94 @@ func TestProjectEnvServiceBuildsPostgresHelpersFromUnifiedServiceInventory(t *te
 	if pack.PlaceholderEnv["DATABASE_URL"] != "${DATABASE_URL}" {
 		t.Fatalf("expected placeholder env token, got %#v", pack.PlaceholderEnv)
 	}
+	if pack.PlaceholderEnv["DATABASE_NAME"] != "${DATABASE_NAME}" || pack.PlaceholderEnv["PGHOST"] != "${PGHOST}" {
+		t.Fatalf("expected decomposed placeholders to be present, got %#v", pack.PlaceholderEnv)
+	}
+	if !containsManagedKey(record.ManagedKeys, "PGHOST") || !containsManagedKey(record.ManagedKeys, "PGPASSWORD") {
+		t.Fatalf("expected decomposed managed keys, got %#v", record.ManagedKeys)
+	}
 	if !containsManagedKey(record.ManagedKeys, "DATABASE_URL") {
 		t.Fatalf("expected managed keys to include DATABASE_URL, got %#v", record.ManagedKeys)
 	}
 	if len(record.ProvisionedKeys) == 0 {
 		t.Fatalf("expected provisioned keys for managed defaults, got %#v", record)
+	}
+	if len(pack.RelatedServices) != 1 || pack.RelatedServices[0] != "db" {
+		t.Fatalf("expected db helper to keep related service ownership, got %#v", pack.RelatedServices)
+	}
+}
+
+func TestProjectEnvServiceBuildsMySQLHelpersFromUnifiedServiceInventory(t *testing.T) {
+	projects := newFakeProjectStore(&models.Project{
+		ID:          "prj_mysql",
+		UserID:      "usr_123",
+		Slug:        "demo",
+		RuntimeMode: "distributed-k3s",
+	})
+	bundles := newFakeProjectEnvBundleStore()
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_mysql", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:                    "api",
+			Path:                    "apps/api",
+			Kind:                    "api",
+			Public:                  true,
+			ConnectionTemplateKey:   "mysql.basic",
+			ConnectionTargetService: "mysql",
+		},
+		{
+			Name:       "mysql",
+			Kind:       "mysql",
+			SourceType: serviceSourceTypeInternal,
+			ConnectionTemplate: map[string]string{
+				"DB_URL":      "DATABASE_URL",
+				"DB_NAME":     "DB_NAME",
+				"DB_HOST":     "DB_HOST",
+				"DB_PORT":     "DB_PORT",
+				"DB_USERNAME": "DB_USERNAME",
+				"DB_PASSWORD": "DB_PASSWORD",
+			},
+			EnvBundle: map[string]string{
+				"MYSQL_DATABASE": "app",
+				"MYSQL_USER":     "mysql",
+				"MYSQL_PASSWORD": "supersecret",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_mysql", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+
+	service := NewProjectEnvService(projects, bundles, newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{}), "backend-secret-key").
+		WithServiceStore(serviceStore)
+	record, err := service.Get("usr_123", RoleOperator, "prj_mysql")
+	if err != nil {
+		t.Fatalf("get project env helpers: %v", err)
+	}
+	if len(record.HelperPacks) == 0 {
+		t.Fatalf("expected helper packs for mysql inventory, got %#v", record)
+	}
+	var mysqlPack *ProjectEnvHelperPack
+	for index := range record.HelperPacks {
+		if record.HelperPacks[index].SourceService == "mysql" && record.HelperPacks[index].Category == "database" {
+			mysqlPack = &record.HelperPacks[index]
+			break
+		}
+	}
+	if mysqlPack == nil {
+		t.Fatalf("expected mysql helper pack, got %#v", record.HelperPacks)
+	}
+	if mysqlPack.LocalExampleEnv["DATABASE_URL"] != "mysql://mysql:mysql@tcp(localhost:3306)/app" {
+		t.Fatalf("expected mysql local url example, got %#v", mysqlPack.LocalExampleEnv)
+	}
+	if !containsManagedKey(record.ManagedKeys, "DB_HOST") || !containsManagedKey(record.ManagedKeys, "DATABASE_URL") {
+		t.Fatalf("expected mysql managed keys to include url and decomposed keys, got %#v", record.ManagedKeys)
+	}
+	if len(mysqlPack.RelatedServices) != 2 || mysqlPack.RelatedServices[0] != "api" || mysqlPack.RelatedServices[1] != "mysql" {
+		t.Fatalf("expected mysql helper to include dependent service ownership, got %#v", mysqlPack.RelatedServices)
 	}
 }
 

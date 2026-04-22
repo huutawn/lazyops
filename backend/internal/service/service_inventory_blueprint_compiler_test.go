@@ -146,3 +146,97 @@ func TestServiceInventoryBlueprintCompilerRejectsEmptyInventory(t *testing.T) {
 		t.Fatalf("expected ErrNoProjectServicesConfigured, got %v", err)
 	}
 }
+
+func TestServiceInventoryBlueprintCompilerInjectsMySQLTemplatePerService(t *testing.T) {
+	project := models.Project{
+		ID:            "prj_mysql",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		NamespaceSlug: "acme-api",
+		RuntimeMode:   "distributed-k3s",
+	}
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_mysql", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:                    "api",
+			Path:                    "apps/api",
+			Kind:                    "api",
+			Public:                  true,
+			ConnectionTemplateKey:   "mysql.basic",
+			ConnectionTargetService: "mysql",
+		},
+		{
+			Name:       "mysql",
+			Kind:       "mysql",
+			SourceType: serviceSourceTypeInternal,
+			ConnectionTemplate: map[string]string{
+				"DB_URL":      "DATABASE_URL",
+				"DB_NAME":     "DB_NAME",
+				"DB_HOST":     "DB_HOST",
+				"DB_PORT":     "DB_PORT",
+				"DB_USERNAME": "DB_USERNAME",
+				"DB_PASSWORD": "DB_PASSWORD",
+			},
+			EnvBundle: map[string]string{
+				"MYSQL_DATABASE": "app",
+				"MYSQL_USER":     "mysql",
+				"MYSQL_PASSWORD": "supersecret",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_mysql", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+	repoLinkStore := newFakeProjectRepoLinkStore(&models.ProjectRepoLink{
+		ID:                   "prl_123",
+		ProjectID:            "prj_mysql",
+		GitHubInstallationID: "ghi_alpha",
+		GitHubRepoID:         42,
+		RepoOwner:            "lazyops",
+		RepoName:             "backend",
+		TrackedBranch:        "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:                      "bind_mysql",
+		ProjectID:               "prj_mysql",
+		Name:                    "Auto Primary",
+		TargetRef:               "auto-primary",
+		RuntimeMode:             "distributed-k3s",
+		TargetKind:              "cluster",
+		TargetID:                "clu_123",
+		CompatibilityPolicyJSON: `{"env_injection":true}`,
+		PlacementPolicyJSON:     `{}`,
+		DomainPolicyJSON:        `{}`,
+		ScaleToZeroPolicyJSON:   `{"enabled":false}`,
+	})
+	compiler := NewServiceInventoryBlueprintCompiler(repoLinkStore, bindingStore, serviceStore, newFakeBlueprintStore())
+
+	result, err := compiler.Compile(project, ServiceInventoryBlueprintCompileInput{TriggerKind: "manual"})
+	if err != nil {
+		t.Fatalf("compile hidden blueprint snapshot: %v", err)
+	}
+	if len(result.Blueprint.Compiled.DependencyBindings) != 1 || result.Blueprint.Compiled.DependencyBindings[0].Protocol != "mysql" {
+		t.Fatalf("expected one generated mysql dependency binding, got %#v", result.Blueprint.Compiled.DependencyBindings)
+	}
+
+	var apiSvc *BlueprintServiceContractRecord
+	for index := range result.Blueprint.Compiled.Services {
+		if result.Blueprint.Compiled.Services[index].Name == "api" {
+			apiSvc = &result.Blueprint.Compiled.Services[index]
+			break
+		}
+	}
+	if apiSvc == nil {
+		t.Fatalf("expected api service in compiled services, got %#v", result.Blueprint.Compiled.Services)
+	}
+	if apiSvc.EnvBundle["DB_HOST"] != "mysql" || apiSvc.EnvBundle["DB_PORT"] != "3306" {
+		t.Fatalf("expected mysql host/port injection, got %#v", apiSvc.EnvBundle)
+	}
+	if apiSvc.EnvBundle["DATABASE_URL"] != "mysql://mysql:supersecret@tcp(mysql:3306)/app" {
+		t.Fatalf("expected mysql DATABASE_URL to use internal dns host, got %#v", apiSvc.EnvBundle)
+	}
+}

@@ -504,8 +504,14 @@ func extractServiceContractMetadata(deployStrategy map[string]any, path string) 
 	placementNodeID := stringFromAny(deployStrategy[lazyopsServiceMetaPlacementNodeID])
 	connectionTemplateKey := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTemplateKey])
 	connectionTemplate := map[string]string{}
-	if sourceType == serviceSourceTypeInternal && strings.HasPrefix(strings.TrimSpace(path), reservedManagedInternalServicePathPrefix+"postgres") {
-		connectionTemplate = coercePostgresConnectionTemplate(deployStrategy[lazyopsServiceMetaConnectionTemplate])
+	if sourceType == serviceSourceTypeInternal {
+		trimmedPath := strings.TrimSpace(path)
+		switch {
+		case strings.HasPrefix(trimmedPath, reservedManagedInternalServicePathPrefix+"postgres"):
+			connectionTemplate = coerceConnectionTemplateForKind("postgres", deployStrategy[lazyopsServiceMetaConnectionTemplate])
+		case strings.HasPrefix(trimmedPath, reservedManagedInternalServicePathPrefix+"mysql"):
+			connectionTemplate = coerceConnectionTemplateForKind("mysql", deployStrategy[lazyopsServiceMetaConnectionTemplate])
+		}
 	}
 	connectionTargetService := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTargetService])
 	managedByLazyops := boolFromAny(deployStrategy[lazyopsServiceMetaManagedByLazyops]) || sourceType == serviceSourceTypeInternal

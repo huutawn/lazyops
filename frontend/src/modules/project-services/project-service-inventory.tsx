@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Boxes, Database, Globe, Lock, Network, Plus, Server } from 'lucide-react';
 import { Drawer } from '@/components/primitives/drawer';
 import { ErrorState } from '@/components/primitives/error-state';
@@ -19,6 +20,7 @@ import {
   formatPostgresConnectionTemplatePreview,
   normalizePostgresConnectionTemplate,
 } from '@/modules/project-services/postgres-connection-template';
+import { ServiceHelperModal } from '@/modules/project-services/service-helper-modal';
 import { INTERNAL_SERVICE_OPTIONS, type InternalServiceKind } from '@/modules/internal-services/internal-service-types';
 import { useProjectRuntime } from '@/modules/project-runtime/project-runtime-hooks';
 import type { ProjectRuntimeService } from '@/modules/project-runtime/project-runtime-types';
@@ -61,6 +63,9 @@ type RepoFormState = {
 type InternalFormState = {
   kind: InternalServiceKind;
   service_name: string;
+  database_name: string;
+  username: string;
+  password: string;
   connection_template: Record<string, string>;
 };
 
@@ -80,6 +85,7 @@ export function ProjectServiceInventory({
   compact = false,
   sourceFilter = 'all',
 }: ProjectServiceInventoryProps) {
+  const router = useRouter();
   const services = useProjectServices(projectId);
   const placementNodes = useProjectPlacementNodes(projectId);
   const runtime = useProjectRuntime(projectId);
@@ -89,6 +95,7 @@ export function ProjectServiceInventory({
   const [selectedService, setSelectedService] = useState<ProjectService | null>(null);
   const [repoForm, setRepoForm] = useState<RepoFormState>(defaultRepoForm());
   const [internalForm, setInternalForm] = useState<InternalFormState>(defaultInternalForm());
+  const [helperModalOpen, setHelperModalOpen] = useState(false);
   const [showRepoAdvanced, setShowRepoAdvanced] = useState(false);
   const [repoFormError, setRepoFormError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<{ serviceId: string; action: ProjectServiceAction } | null>(null);
@@ -104,8 +111,8 @@ export function ProjectServiceInventory({
     }
     return true;
   });
-  const internalPostgresTargets = items.filter(
-    (item) => item.source_type === 'internal' && item.kind === 'postgres' && !isLegacyInternalService(item),
+  const internalRelationalTargets = items.filter(
+    (item) => item.source_type === 'internal' && ['postgres', 'mysql'].includes(item.kind) && !isLegacyInternalService(item),
   );
   const placementNodeItems = placementNodes.data?.items ?? [];
   const readyPlacementNodes = placementNodeItems.filter((item) => item.is_ready);
@@ -147,6 +154,7 @@ export function ProjectServiceInventory({
     setSelectedService(null);
     setRepoForm(defaultRepoForm());
     setInternalForm(defaultInternalForm());
+    setHelperModalOpen(false);
     setShowRepoAdvanced(false);
     setDrawerMode('choose');
   };
@@ -192,7 +200,9 @@ export function ProjectServiceInventory({
       placement_mode: repoForm.placement_mode || 'shared_cluster',
       placement_node_id:
         repoForm.placement_mode === 'pinned_node' ? repoForm.placement_node_id.trim() : '',
-      connection_template_key: repoForm.connection_target_service ? 'postgres.basic' : '',
+      connection_template_key: resolveConnectionTemplateKey(
+        internalRelationalTargets.find((service) => service.name === repoForm.connection_target_service)?.kind,
+      ),
       connection_target_service: repoForm.connection_target_service.trim(),
       managed_by_lazyops: false,
       start_hint: selectedService?.start_hint || '',
@@ -216,7 +226,10 @@ export function ProjectServiceInventory({
   const submitInternalService = async () => {
     const kind = internalForm.kind;
     const serviceName = internalForm.service_name.trim() || defaultInternalServiceName(kind);
-    const existingEnv = selectedService?.env_bundle || {};
+    const existingEnv = {
+      ...(selectedService?.env_bundle || {}),
+      ...buildManagedInternalEnvBundle(internalForm),
+    };
     const existingPVC = selectedService?.pvc_spec || { size: '5Gi' };
     const defaultPort = defaultInternalServicePort(kind);
     const existingHealthcheck = selectedService?.healthcheck || { protocol: 'tcp', port: defaultPort };
@@ -239,7 +252,7 @@ export function ProjectServiceInventory({
       replicas: selectedService?.replicas || 1,
       env_bundle: existingEnv,
       pvc_spec: existingPVC,
-      connection_template: kind === 'postgres' ? normalizePostgresConnectionTemplate(internalForm.connection_template) : {},
+      connection_template: ['postgres', 'mysql'].includes(kind) ? normalizePostgresConnectionTemplate(internalForm.connection_template) : {},
       deploy_strategy: selectedService?.deploy_strategy || {},
       healthcheck: existingHealthcheck,
     };
@@ -282,12 +295,14 @@ export function ProjectServiceInventory({
               <Plus className="size-4" />
               Them service
             </button>
-            <Link
-              href={`/projects/${projectId}/deployments`}
-              className="rounded-xl border border-[#334155] px-6 py-2 text-base font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827]"
+            <button
+              type="button"
+              onClick={() => setHelperModalOpen(true)}
+              disabled={items.length === 0}
+              className="rounded-xl border border-[#334155] px-6 py-2 text-base font-semibold text-[#e2e8f0] transition-colors hover:bg-[#111827] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Xem deploy
-            </Link>
+              Xong
+            </button>
           </>
         }
       >
@@ -525,9 +540,9 @@ export function ProjectServiceInventory({
                   className={fieldClassName}
                 >
                   <option value="">Chưa dùng database</option>
-                  {internalPostgresTargets.map((service) => (
+                  {internalRelationalTargets.map((service) => (
                     <option key={service.id} value={service.name}>
-                      {service.name}
+                      {service.name} ({formatShortKind(service)})
                     </option>
                   ))}
                 </select>
@@ -652,6 +667,14 @@ export function ProjectServiceInventory({
                       current.service_name.trim() === '' || current.service_name === defaultInternalServiceName(current.kind)
                         ? defaultInternalServiceName(event.target.value as InternalServiceKind)
                         : current.service_name,
+                    database_name:
+                      current.database_name.trim() === '' || current.database_name === defaultInternalDatabaseName(current.kind)
+                        ? defaultInternalDatabaseName(event.target.value as InternalServiceKind)
+                        : current.database_name,
+                    username:
+                      current.username.trim() === '' || current.username === defaultInternalDatabaseUsername(current.kind)
+                        ? defaultInternalDatabaseUsername(event.target.value as InternalServiceKind)
+                        : current.username,
                   }))
                 }
                 className={fieldClassName}
@@ -687,39 +710,90 @@ export function ProjectServiceInventory({
                 .lazyops/internal/{internalForm.kind}/{internalForm.service_name.trim() || defaultInternalServiceName(internalForm.kind)}
               </div>
             </div>
-            {internalForm.kind === 'postgres' ? (
+            {['postgres', 'mysql'].includes(internalForm.kind) ? (
               <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6">
-                <div className="mb-3 text-base font-semibold text-white">Biến môi trường sẽ được inject</div>
+                <div className="mb-3 text-base font-semibold text-white">Thông tin quản trị database</div>
                 <p className="mb-3 text-base text-[#94a3b8]">
-                  LazyOps sẽ tự điền các biến này vào service dùng database này. Bạn không cần tự nối thủ công bằng localhost.
+                  LazyOps sẽ dùng thông tin này để tạo database managed và inject đúng key runtime cho app kết nối tới service này.
                 </p>
-                <div className="grid gap-4">
-                  {POSTGRES_CONNECTION_TEMPLATE_SLOTS.map((slot) => (
-                    <FieldLabel key={slot} label={`${slot} env name`}>
-                      <input
-                        value={internalForm.connection_template[slot] || ''}
-                        onChange={(event) =>
-                          setInternalForm((current) => ({
-                            ...current,
-                            connection_template: {
-                              ...current.connection_template,
-                              [slot]: event.target.value,
-                            },
-                          }))
-                        }
-                        className={fieldClassName}
-                        placeholder={slot}
-                        required
-                      />
-                    </FieldLabel>
-                  ))}
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FieldLabel label="Database name" help="Tên database logic sẽ được tạo trong engine.">
+                    <input
+                      value={internalForm.database_name}
+                      onChange={(event) =>
+                        setInternalForm((current) => ({
+                          ...current,
+                          database_name: event.target.value,
+                        }))
+                      }
+                      className={fieldClassName}
+                      placeholder={defaultInternalDatabaseName(internalForm.kind)}
+                      required
+                    />
+                  </FieldLabel>
+                  <FieldLabel label="Username" help="User ứng dụng sẽ dùng để kết nối database này.">
+                    <input
+                      value={internalForm.username}
+                      onChange={(event) =>
+                        setInternalForm((current) => ({
+                          ...current,
+                          username: event.target.value,
+                        }))
+                      }
+                      className={fieldClassName}
+                      placeholder={defaultInternalDatabaseUsername(internalForm.kind)}
+                      required
+                    />
+                  </FieldLabel>
+                  <FieldLabel label="Password" help="Mật khẩu runtime cho user ứng dụng.">
+                    <input
+                      type="password"
+                      value={internalForm.password}
+                      onChange={(event) =>
+                        setInternalForm((current) => ({
+                          ...current,
+                          password: event.target.value,
+                        }))
+                      }
+                      className={fieldClassName}
+                      placeholder="Nhập mật khẩu database"
+                      required
+                    />
+                  </FieldLabel>
                 </div>
-                <div className="mb-3 mt-5 text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">
-                  Xem trước biến môi trường
-                </div>
-                <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-6 text-base text-[#e2e8f0]">
-                  {formatPostgresConnectionTemplatePreview(internalForm.connection_template)}
-                </pre>
+                <details className="mt-5 rounded-2xl border border-[#1e293b] bg-[#020617] p-6">
+                  <summary className="cursor-pointer text-sm font-semibold text-white">Nâng cao: env key mapping cho app kết nối DB</summary>
+                  <div className="mt-4 grid gap-4">
+                    <p className="text-sm text-[#94a3b8]">
+                      Đây là bộ key helper sẽ hiện cho service repo kết nối database này. Mặc định đã đủ cho hầu hết framework và ngôn ngữ.
+                    </p>
+                    {POSTGRES_CONNECTION_TEMPLATE_SLOTS.map((slot) => (
+                      <FieldLabel key={slot} label={`${slot} env name`}>
+                        <input
+                          value={internalForm.connection_template[slot] || ''}
+                          onChange={(event) =>
+                            setInternalForm((current) => ({
+                              ...current,
+                              connection_template: {
+                                ...current.connection_template,
+                                [slot]: event.target.value,
+                              },
+                            }))
+                          }
+                          className={fieldClassName}
+                          placeholder={slot}
+                          required
+                        />
+                      </FieldLabel>
+                    ))}
+                  </div>
+                  <div className="mb-3 mt-5 text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">
+                    Xem trước `.env.example`
+                  </div>
+                  <pre className="overflow-x-auto rounded-2xl border border-[#1e293b] bg-[#020617] p-6 text-base text-[#e2e8f0]">
+                    {formatPostgresConnectionTemplatePreview(internalForm.connection_template)}
+                  </pre>
+                </details>
               </div>
             ) : (
               <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
@@ -766,6 +840,17 @@ export function ProjectServiceInventory({
           </div>
         ) : null}
       </Drawer>
+
+      <ServiceHelperModal
+        open={helperModalOpen}
+        onClose={() => setHelperModalOpen(false)}
+        onComplete={() => {
+          setHelperModalOpen(false);
+          router.push(`/projects/${projectId}`);
+        }}
+        projectId={projectId}
+        services={items}
+      />
     </>
   );
 }
@@ -834,6 +919,9 @@ function defaultInternalForm(service?: ProjectService): InternalFormState {
   return {
     kind,
     service_name: service?.name || defaultInternalServiceName(kind),
+    database_name: resolveInternalDatabaseName(kind, service?.env_bundle),
+    username: resolveInternalDatabaseUsername(kind, service?.env_bundle),
+    password: resolveInternalDatabasePassword(kind, service?.env_bundle),
     connection_template: normalizePostgresConnectionTemplate(service?.connection_template),
   };
 }
@@ -872,6 +960,57 @@ function defaultInternalServicePort(kind: InternalServiceKind) {
   }
 }
 
+function defaultInternalDatabaseName(kind: InternalServiceKind) {
+  switch (kind) {
+    case 'postgres':
+    case 'mysql':
+      return 'app';
+    default:
+      return '';
+  }
+}
+
+function defaultInternalDatabaseUsername(kind: InternalServiceKind) {
+  switch (kind) {
+    case 'postgres':
+      return 'postgres';
+    case 'mysql':
+      return 'mysql';
+    default:
+      return '';
+  }
+}
+
+function resolveInternalDatabaseName(kind: InternalServiceKind, env?: Record<string, string>) {
+  if (kind === 'postgres') {
+    return env?.POSTGRES_DB || defaultInternalDatabaseName(kind);
+  }
+  if (kind === 'mysql') {
+    return env?.MYSQL_DATABASE || defaultInternalDatabaseName(kind);
+  }
+  return '';
+}
+
+function resolveInternalDatabaseUsername(kind: InternalServiceKind, env?: Record<string, string>) {
+  if (kind === 'postgres') {
+    return env?.POSTGRES_USER || defaultInternalDatabaseUsername(kind);
+  }
+  if (kind === 'mysql') {
+    return env?.MYSQL_USER || defaultInternalDatabaseUsername(kind);
+  }
+  return '';
+}
+
+function resolveInternalDatabasePassword(kind: InternalServiceKind, env?: Record<string, string>) {
+  if (kind === 'postgres') {
+    return env?.POSTGRES_PASSWORD || '';
+  }
+  if (kind === 'mysql') {
+    return env?.MYSQL_PASSWORD || '';
+  }
+  return '';
+}
+
 function defaultInternalServiceImage(kind: InternalServiceKind) {
   switch (kind) {
     case 'postgres':
@@ -883,6 +1022,34 @@ function defaultInternalServiceImage(kind: InternalServiceKind) {
     case 'rabbitmq':
       return 'rabbitmq:3-management-alpine';
   }
+}
+
+function buildManagedInternalEnvBundle(form: InternalFormState) {
+  const out: Record<string, string> = {};
+  if (form.kind === 'postgres') {
+    out.POSTGRES_DB = form.database_name.trim();
+    out.POSTGRES_USER = form.username.trim();
+    out.POSTGRES_PASSWORD = form.password.trim();
+    return out;
+  }
+  if (form.kind === 'mysql') {
+    out.MYSQL_DATABASE = form.database_name.trim();
+    out.MYSQL_USER = form.username.trim();
+    out.MYSQL_PASSWORD = form.password.trim();
+    return out;
+  }
+  return out;
+}
+
+function resolveConnectionTemplateKey(kind?: string) {
+  const normalized = (kind || '').trim().toLowerCase();
+  if (normalized === 'postgres') {
+    return 'postgres.basic';
+  }
+  if (normalized === 'mysql') {
+    return 'mysql.basic';
+  }
+  return '';
 }
 
 function internalServiceLabel(kind: InternalServiceKind) {

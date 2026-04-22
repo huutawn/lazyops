@@ -16,6 +16,7 @@ type ProjectEnvHelperPackResponse struct {
 	Category         string                            `json:"category"`
 	Audience         string                            `json:"audience"`
 	SourceService    string                            `json:"source_service"`
+	RelatedServices  []string                          `json:"related_services"`
 	PrimaryKey       string                            `json:"primary_key"`
 	PublicPath       string                            `json:"public_path,omitempty"`
 	Managed          bool                              `json:"managed"`

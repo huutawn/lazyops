@@ -290,21 +290,28 @@ func (c *ServiceInventoryBlueprintCompiler) loadProjectServices(projectID string
 func (c *ServiceInventoryBlueprintCompiler) buildDependencyBindings(services []ProjectServiceRecord, runtimeMode string) []LazyopsYAMLDependencyBinding {
 	out := make([]LazyopsYAMLDependencyBinding, 0)
 	for _, service := range services {
-		if strings.TrimSpace(service.ConnectionTemplateKey) != postgresBasicConnectionTemplateKey {
+		templateKey := strings.TrimSpace(service.ConnectionTemplateKey)
+		if templateKey != postgresBasicConnectionTemplateKey && templateKey != mysqlBasicConnectionTemplateKey {
 			continue
 		}
 		targetService := strings.TrimSpace(service.ConnectionTargetService)
 		if targetService == "" {
 			continue
 		}
+		protocol := "postgres"
+		localEndpoint := "localhost:5432"
+		if templateKey == mysqlBasicConnectionTemplateKey {
+			protocol = "mysql"
+			localEndpoint = "localhost:3306"
+		}
 		binding := LazyopsYAMLDependencyBinding{
 			Service:       service.Name,
 			Alias:         targetService,
 			TargetService: targetService,
-			Protocol:      "postgres",
+			Protocol:      protocol,
 		}
 		if strings.TrimSpace(runtimeMode) != "distributed-k3s" {
-			binding.LocalEndpoint = "localhost:5432"
+			binding.LocalEndpoint = localEndpoint
 		}
 		out = append(out, binding)
 	}
@@ -329,10 +336,11 @@ func (c *ServiceInventoryBlueprintCompiler) buildServiceContracts(services []Pro
 	out := make([]BlueprintServiceContractRecord, 0, len(services))
 	for _, service := range services {
 		envBundle := cloneStringMap(service.EnvBundle)
-		if strings.TrimSpace(service.ConnectionTemplateKey) == postgresBasicConnectionTemplateKey && strings.TrimSpace(service.ConnectionTargetService) != "" {
+		templateKey := strings.TrimSpace(service.ConnectionTemplateKey)
+		if (templateKey == postgresBasicConnectionTemplateKey || templateKey == mysqlBasicConnectionTemplateKey) && strings.TrimSpace(service.ConnectionTargetService) != "" {
 			target, ok := serviceIndex[strings.TrimSpace(service.ConnectionTargetService)]
-			if ok && target.SourceType == serviceSourceTypeInternal && strings.EqualFold(strings.TrimSpace(target.Kind), "postgres") {
-				for envName, value := range buildPostgresConnectionTemplateEnv(target, projectEnv, runtimeMode) {
+			if ok && target.SourceType == serviceSourceTypeInternal && templateKey == relationalConnectionTemplateKeyForKind(target.Kind) {
+				for envName, value := range buildRelationalConnectionTemplateEnv(target, projectEnv, runtimeMode) {
 					fillIfBlank(envBundle, envName, value)
 				}
 			}

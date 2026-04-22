@@ -352,6 +352,7 @@ func ToProjectEnvBundleResponse(record service.ProjectEnvBundleRecord) responsed
 			Category:         item.Category,
 			Audience:         item.Audience,
 			SourceService:    item.SourceService,
+			RelatedServices:  append([]string{}, item.RelatedServices...),
 			PrimaryKey:       item.PrimaryKey,
 			PublicPath:       item.PublicPath,
 			Managed:          item.Managed,

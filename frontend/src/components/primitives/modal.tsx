@@ -8,7 +8,7 @@ type ModalProps = {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
 };
 
 export function Modal({ open, onClose, title, children, size = 'md' }: ModalProps) {
@@ -18,6 +18,8 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
     sm: 'max-w-md',
     md: 'max-w-lg',
     lg: 'max-w-2xl',
+    xl: 'max-w-5xl',
+    full: 'max-w-[min(96vw,1440px)]',
   };
 
   return (
@@ -25,7 +27,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         className={cn(
-          'relative w-full rounded-xl border border-lazyops-border bg-lazyops-bg-accent shadow-2xl backdrop-blur-sm',
+          'relative flex max-h-[calc(100vh-3rem)] w-full flex-col overflow-hidden rounded-xl border border-lazyops-border bg-lazyops-bg-accent shadow-2xl backdrop-blur-sm',
           sizeClasses[size],
         )}
       >
@@ -43,7 +45,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: ModalProp
             </svg>
           </button>
         </div>
-        <div className="px-6 py-6">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{children}</div>
       </div>
     </div>
   );

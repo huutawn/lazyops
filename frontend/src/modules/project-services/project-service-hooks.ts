@@ -48,6 +48,8 @@ export function useConfigureProjectServices(projectId: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: projectServicesQueryKey(projectId) });
       void queryClient.invalidateQueries({ queryKey: ['project-env', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['project-ai-prompt', projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['project-routing', projectId] });
       void queryClient.invalidateQueries({ queryKey: ['bootstrap-status', projectId] });
     },
   });
