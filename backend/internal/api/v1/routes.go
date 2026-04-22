@@ -22,6 +22,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	projectDomainController := controller.NewProjectDomainController(app.ProjectDomainSvc)
 	projectInternalServiceController := controller.NewProjectInternalServiceController(app.ProjectInternalSvc, app.ProjectService)
 	projectEnvController := controller.NewProjectEnvController(app.ProjectEnvSvc)
+	projectAIPromptController := controller.NewProjectAIPromptController(app.ProjectAIPromptSvc)
 	routingController := controller.NewRoutingController(app.RoutingSvc)
 	bootstrapController := controller.NewBootstrapController(app.BootstrapOrchestrator, app.InstanceService, app.InstanceSSHInstallSvc)
 	deploymentBindingController := controller.NewDeploymentBindingController(app.DeploymentBindingSvc)
@@ -116,6 +117,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			)
 			userProtected.POST("/projects/:id/repo-link", projectController.LinkRepo)
 			userProtected.GET("/projects/:id/env", projectEnvController.Get)
+			userProtected.GET("/projects/:id/ai-migration-prompt", projectAIPromptController.Get)
 			userProtected.PUT("/projects/:id/env",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator, service.RoleViewer),
 				projectEnvController.Upsert,

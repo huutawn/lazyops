@@ -7,6 +7,7 @@ import { useProjectRouting } from '@/modules/project-routing/project-routing-hoo
 import { useProjectServices } from '@/modules/project-services/project-service-hooks';
 import { validateLazyopsYaml } from '@/modules/validate-lazyops/validate-api';
 import type { ValidateLazyopsResponse, LazyopsYAMLDraft } from '@/modules/validate-lazyops/validate-types';
+import { ProjectAIPromptCard } from '@/modules/project-ai-prompt/project-ai-prompt-card';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
 import { StatusBadge } from '@/components/primitives/status-badge';
@@ -187,13 +188,13 @@ export default function ValidateContractPage() {
       )}
 
       {validationResult && (
-        <ValidationSummary result={validationResult} />
+        <ValidationSummary projectId={projectId} result={validationResult} />
       )}
     </div>
   );
 }
 
-function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
+function ValidationSummary({ projectId, result }: { projectId: string; result: ValidateLazyopsResponse }) {
   const { project, deployment_binding, target_summary, schema } = result;
 
   return (
@@ -290,6 +291,14 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
             <p className="text-sm text-lazyops-muted">No effective public path is configured for the current draft.</p>
           )}
         </div>
+      </SectionCard>
+
+      <SectionCard title="AI migration prompt" description="Copy prompt này để AI dựa trên service/path/env guidance hiện tại mà đề xuất code + config changes.">
+        <ProjectAIPromptCard
+          projectId={projectId}
+          contextLabel="Validate page"
+          description="Prompt này hợp với lúc đang review migration findings và muốn AI đề xuất file/config nào phải sửa tiếp theo."
+        />
       </SectionCard>
 
       <SectionCard title="Migration findings" description="Warnings when the draft still looks local-only or when custom public paths require client updates.">

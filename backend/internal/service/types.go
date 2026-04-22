@@ -935,6 +935,37 @@ type ProjectEnvHelperPack struct {
 	LanguageSnippets []ProjectEnvHelperSnippet
 }
 
+type ProjectAIPromptServiceSnapshot struct {
+	Name           string
+	Kind           string
+	Role           string
+	RuntimeProfile string
+	SourceType     string
+	Public         bool
+	Managed        bool
+	WebSocket      bool
+	PublicPath     string
+	InternalURL    string
+}
+
+type ProjectAIPromptSourceSection struct {
+	Key         string
+	Title       string
+	Description string
+	ItemCount   int
+}
+
+type ProjectAIPromptRecord struct {
+	Title                string
+	Summary              string
+	Prompt               string
+	ServiceSnapshot      []ProjectAIPromptServiceSnapshot
+	EffectivePublicPaths []RoutingGuidanceRouteRecord
+	ManagedKeys          []string
+	MigrationFindings    []MigrationFindingRecord
+	SourceSections       []ProjectAIPromptSourceSection
+}
+
 type CreateProjectRepoLinkCommand struct {
 	RequesterUserID      string
 	RequesterRole        string

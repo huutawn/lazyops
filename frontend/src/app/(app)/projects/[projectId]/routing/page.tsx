@@ -10,6 +10,7 @@ import { FormButton, FormField, FormInput } from '@/components/forms/form-fields
 import { useProjectRouting, useUpdateProjectRouting } from '@/modules/project-routing/project-routing-hooks';
 import type { RoutingGuidanceRoute, RoutingRoute } from '@/modules/project-routing/project-routing-types';
 import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
+import { ProjectAIPromptCard } from '@/modules/project-ai-prompt/project-ai-prompt-card';
 
 export default function RoutingPage() {
   const params = useParams();
@@ -261,6 +262,14 @@ export default function RoutingPage() {
         title="Suggested Paths"
         description="Convention-first defaults. Nếu bạn custom route, browser/API/WS snippets nên theo effective path chứ không theo convention."
       >
+        <div className="mb-4">
+          <ProjectAIPromptCard
+            projectId={projectId}
+            contextLabel="Routing page"
+            description="Prompt này nhấn mạnh effective public path hiện tại để AI không vô tình kéo project về /api hoặc /ws mặc định khi bạn đã custom route."
+          />
+        </div>
+
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-[#1e293b] bg-[#0B1120]/30 p-6">
             <h3 className="text-base font-semibold text-white">Convention suggestions</h3>

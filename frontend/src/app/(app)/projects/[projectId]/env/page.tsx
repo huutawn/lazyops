@@ -11,6 +11,7 @@ import { FormButton } from '@/components/forms/form-fields';
 import { useProjects } from '@/modules/projects/project-hooks';
 import { useDeleteProjectEnv, useProjectEnv, useUpsertProjectEnv } from '@/modules/project-env/project-env-hooks';
 import type { ProjectEnvHelperPack } from '@/modules/project-env/project-env-types';
+import { ProjectAIPromptCard } from '@/modules/project-ai-prompt/project-ai-prompt-card';
 
 function envMapToText(value: Record<string, string>) {
   return Object.entries(value)
@@ -279,6 +280,14 @@ export default function ProjectEnvPage() {
             : 'LazyOps hiển thị placeholder an toàn và local examples. Runtime keys do hệ thống quản lý chỉ được materialize khi deploy.'
         }
       >
+        <div className="mb-4">
+          <ProjectAIPromptCard
+            projectId={projectId}
+            contextLabel="Env page"
+            description="Copy một prompt project-wide để AI giúp thay localhost bằng managed env placeholders, internal service DNS, và public path đúng."
+          />
+        </div>
+
         <div className="grid gap-4 lg:grid-cols-2">
           {helperPacks.length > 0 ? helperPacks.map((pack) => {
             const copyKey = `${pack.category}:${pack.alias}`;

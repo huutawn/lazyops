@@ -56,6 +56,7 @@ type Application struct {
 	ProjectDomainSvc        *service.ProjectDomainService
 	ProjectInternalSvc      *service.ProjectInternalServiceService
 	ProjectEnvSvc           *service.ProjectEnvService
+	ProjectAIPromptSvc      *service.ProjectAIPromptService
 	ProjectRepoLinkSvc      *service.ProjectRepoLinkService
 	ProjectServiceActionSvc *service.ProjectServiceActionService
 	ProjectRuntimeSvc       *service.ProjectRuntimeService
@@ -177,6 +178,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		cfg.PublicDomain,
 	)
 	routingSvc := service.NewRoutingService(routingPolicyRepo, serviceRepo).WithProjectDomains(projectDomainSvc)
+	projectAIPromptSvc := service.NewProjectAIPromptService(projectRepo, serviceRepo, projectEnvSvc, routingSvc)
 	publicDomainResolver := service.NewPublicDomainResolver(instanceRepo, clusterRepo, projectDomainSvc, routingSvc)
 	bootstrapOrchestrator := service.NewBootstrapOrchestrator(
 		projectRepo,
@@ -343,6 +345,7 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		ProjectDomainSvc:        projectDomainSvc,
 		ProjectInternalSvc:      projectInternalSvc,
 		ProjectEnvSvc:           projectEnvSvc,
+		ProjectAIPromptSvc:      projectAIPromptSvc,
 		ProjectRepoLinkSvc:      projectRepoLinkSvc,
 		ProjectServiceActionSvc: projectServiceActionSvc,
 		ProjectRuntimeSvc:       projectRuntimeSvc,
