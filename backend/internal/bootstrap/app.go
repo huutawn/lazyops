@@ -162,7 +162,8 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	projectService := service.NewProjectService(projectRepo, projectInternalSvcRepo).WithServiceStore(serviceRepo)
 	projectInternalSvc := service.NewProjectInternalServiceService(projectRepo, projectInternalSvcRepo)
 	projectEnvSvc := service.NewProjectEnvService(projectRepo, projectEnvRepo, projectInternalSvcRepo, cfg.Secrets.EncryptionKey).
-		WithServiceStore(serviceRepo)
+		WithServiceStore(serviceRepo).
+		WithRoutingStore(routingPolicyRepo)
 	projectRepoLinkSvc := service.NewProjectRepoLinkService(projectRepo, githubInstallRepo, projectRepoLinkRepo)
 	buildJobSvc := service.NewBuildJobService(projectRepoLinkRepo, buildJobRepo).WithServiceStore(serviceRepo)
 	deploymentBindingSvc := service.NewDeploymentBindingService(projectRepo, deploymentBindingRepo, instanceRepo, meshNetworkRepo, clusterRepo)

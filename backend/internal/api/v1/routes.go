@@ -104,14 +104,8 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/projects/:id/placement-nodes", projectController.ListPlacementNodes)
 			userProtected.GET("/projects/:id/repo-link", projectController.GetRepoLink)
 			userProtected.GET("/projects/:id/domain", projectDomainController.Get)
-			userProtected.POST("/projects/:id/domain",
-				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
-				projectDomainController.Allocate,
-			)
-			userProtected.PATCH("/projects/:id/domain",
-				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),
-				projectDomainController.Rename,
-			)
+			userProtected.POST("/projects/:id/domain", projectDomainController.Allocate)
+			userProtected.PATCH("/projects/:id/domain", projectDomainController.Rename)
 			userProtected.PUT("/projects/:id/services",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator, service.RoleViewer),
 				projectController.ConfigureServices,

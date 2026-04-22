@@ -334,21 +334,47 @@ func ToProjectRuntimeSummaryResponse(result service.ProjectRuntimeSummaryResult)
 }
 
 func ToProjectEnvBundleResponse(record service.ProjectEnvBundleRecord) responsedto.ProjectEnvBundleResponse {
-	helperSnippets := make([]responsedto.ProjectEnvHelperSnippetResponse, 0, len(record.HelperSnippets))
-	for _, item := range record.HelperSnippets {
-		helperSnippets = append(helperSnippets, responsedto.ProjectEnvHelperSnippetResponse{
-			ServiceKind: item.ServiceKind,
-			Alias:       item.Alias,
-			Env:         item.Env,
+	helperPacks := make([]responsedto.ProjectEnvHelperPackResponse, 0, len(record.HelperPacks))
+	for _, item := range record.HelperPacks {
+		snippets := make([]responsedto.ProjectEnvHelperSnippetResponse, 0, len(item.LanguageSnippets))
+		for _, snippet := range item.LanguageSnippets {
+			snippets = append(snippets, responsedto.ProjectEnvHelperSnippetResponse{
+				Language:  snippet.Language,
+				Framework: snippet.Framework,
+				Kind:      snippet.Kind,
+				Title:     snippet.Title,
+				Content:   snippet.Content,
+			})
+		}
+		helperPacks = append(helperPacks, responsedto.ProjectEnvHelperPackResponse{
+			ServiceKind:      item.ServiceKind,
+			Alias:            item.Alias,
+			Category:         item.Category,
+			Audience:         item.Audience,
+			SourceService:    item.SourceService,
+			PrimaryKey:       item.PrimaryKey,
+			PublicPath:       item.PublicPath,
+			Managed:          item.Managed,
+			RuntimeInjected:  item.RuntimeInjected,
+			PlaceholderEnv:   item.PlaceholderEnv,
+			EnvExample:       item.EnvExample,
+			LocalExampleEnv:  item.LocalExampleEnv,
+			RuntimeKeys:      append([]string{}, item.RuntimeKeys...),
+			ProvisionedKeys:  append([]string{}, item.ProvisionedKeys...),
+			Notes:            append([]string{}, item.Notes...),
+			LanguageSnippets: snippets,
 		})
 	}
 
 	return responsedto.ProjectEnvBundleResponse{
-		Configured:     record.Configured,
-		UpdatedAt:      record.UpdatedAt,
-		Fingerprint:    record.Fingerprint,
-		Keys:           record.Keys,
-		ParseWarnings:  record.ParseWarnings,
-		HelperSnippets: helperSnippets,
+		Configured:      record.Configured,
+		UpdatedAt:       record.UpdatedAt,
+		Fingerprint:     record.Fingerprint,
+		Keys:            append([]string{}, record.Keys...),
+		UserKeys:        append([]string{}, record.UserKeys...),
+		ManagedKeys:     append([]string{}, record.ManagedKeys...),
+		ProvisionedKeys: append([]string{}, record.ProvisionedKeys...),
+		ParseWarnings:   append([]string{}, record.ParseWarnings...),
+		HelperPacks:     helperPacks,
 	}
 }

@@ -14,9 +14,21 @@ type LazyopsYAMLSchemaResponse struct {
 	ForbiddenFieldNames         []string `json:"forbidden_field_names"`
 }
 
+type MigrationFindingResponse struct {
+	Category         string `json:"category"`
+	Severity         string `json:"severity"`
+	ServiceName      string `json:"service_name,omitempty"`
+	CurrentValue     string `json:"current_value,omitempty"`
+	RecommendedValue string `json:"recommended_value,omitempty"`
+	Message          string `json:"message"`
+}
+
 type ValidateLazyopsYAMLResponse struct {
-	Project           ProjectSummaryResponse    `json:"project"`
-	DeploymentBinding DeploymentBindingResponse `json:"deployment_binding"`
-	TargetSummary     InitTargetSummaryResponse `json:"target_summary"`
-	Schema            LazyopsYAMLSchemaResponse `json:"schema"`
+	Project              ProjectSummaryResponse         `json:"project"`
+	DeploymentBinding    DeploymentBindingResponse      `json:"deployment_binding"`
+	TargetSummary        InitTargetSummaryResponse      `json:"target_summary"`
+	Schema               LazyopsYAMLSchemaResponse      `json:"schema"`
+	SuggestedRoutes      []RoutingGuidanceRouteResponse `json:"suggested_routes"`
+	EffectivePublicPaths []RoutingGuidanceRouteResponse `json:"effective_public_paths"`
+	MigrationFindings    []MigrationFindingResponse     `json:"migration_findings"`
 }

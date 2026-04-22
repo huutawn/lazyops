@@ -18,12 +18,37 @@ func ToProjectRoutingResponse(result service.ProjectRoutingResult) responsedto.P
 		})
 	}
 
+	suggested := make([]responsedto.RoutingGuidanceRouteResponse, 0, len(result.SuggestedRoutes))
+	for _, route := range result.SuggestedRoutes {
+		suggested = append(suggested, responsedto.RoutingGuidanceRouteResponse{
+			Path:      route.Path,
+			Service:   route.Service,
+			Audience:  route.Audience,
+			Source:    route.Source,
+			WebSocket: route.WebSocket,
+		})
+	}
+
+	effective := make([]responsedto.RoutingGuidanceRouteResponse, 0, len(result.EffectivePublicPaths))
+	for _, route := range result.EffectivePublicPaths {
+		effective = append(effective, responsedto.RoutingGuidanceRouteResponse{
+			Path:      route.Path,
+			Service:   route.Service,
+			Audience:  route.Audience,
+			Source:    route.Source,
+			WebSocket: route.WebSocket,
+		})
+	}
+
 	return responsedto.ProjectRoutingResponse{
 		RoutingPolicy: responsedto.RoutingPolicyResponse{
 			SharedDomain: result.RoutingPolicy.SharedDomain,
 			Routes:       routes,
 		},
-		AvailableServices: result.AvailableServices,
+		AvailableServices:    result.AvailableServices,
+		SuggestedRoutes:      suggested,
+		EffectivePublicPaths: effective,
+		Warnings:             append([]string{}, result.Warnings...),
 	}
 }
 

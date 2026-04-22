@@ -20,6 +20,7 @@ type ProjectEnvService struct {
 	bundles          ProjectEnvBundleStore
 	internalServices ProjectInternalServiceStore
 	services         ProjectServiceStore
+	routingStore     RoutingPolicyStore
 	encryptionKey    string
 }
 
@@ -37,6 +38,14 @@ func (s *ProjectEnvService) WithServiceStore(services ProjectServiceStore) *Proj
 		return s
 	}
 	s.services = services
+	return s
+}
+
+func (s *ProjectEnvService) WithRoutingStore(store RoutingPolicyStore) *ProjectEnvService {
+	if s == nil {
+		return s
+	}
+	s.routingStore = store
 	return s
 }
 
@@ -154,13 +163,19 @@ func (s *ProjectEnvService) getForProject(projectID string) (*ProjectEnvBundleRe
 	if err != nil {
 		return nil, err
 	}
+	annotateProvisionedHelperPacks(helperSnippets, nil)
+	userKeys := []string{}
 	record := &ProjectEnvBundleRecord{
-		Configured:     bundle != nil,
-		Keys:           []string{},
-		ParseWarnings:  []string{},
-		HelperSnippets: helperSnippets,
+		Configured:      bundle != nil,
+		Keys:            []string{},
+		UserKeys:        []string{},
+		ManagedKeys:     collectManagedKeys(helperSnippets),
+		ProvisionedKeys: []string{},
+		ParseWarnings:   []string{},
+		HelperPacks:     helperSnippets,
 	}
 	if bundle == nil {
+		record.ProvisionedKeys = collectProvisionedKeys(helperSnippets, nil)
 		return record, nil
 	}
 	if !bundle.UpdatedAt.IsZero() {
@@ -171,13 +186,18 @@ func (s *ProjectEnvService) getForProject(projectID string) (*ProjectEnvBundleRe
 	if record.Keys, err = decodeStringArray(bundle.KeyNamesJSON); err != nil {
 		return nil, fmt.Errorf("decode env keys: %w", err)
 	}
+	userKeys = append(userKeys, record.Keys...)
+	record.UserKeys = append(record.UserKeys, record.Keys...)
 	if record.ParseWarnings, err = decodeStringArray(bundle.ParseWarningsJSON); err != nil {
 		return nil, fmt.Errorf("decode env warnings: %w", err)
 	}
+	annotateProvisionedHelperPacks(helperSnippets, userKeys)
+	record.ManagedKeys = collectManagedKeys(helperSnippets)
+	record.ProvisionedKeys = collectProvisionedKeys(helperSnippets, userKeys)
 	return record, nil
 }
 
-func (s *ProjectEnvService) loadHelperSnippets(projectID string) ([]ProjectEnvHelperSnippet, error) {
+func (s *ProjectEnvService) loadHelperSnippets(projectID string) ([]ProjectEnvHelperPack, error) {
 	runtimeMode := ""
 	if s.projects != nil {
 		project, err := s.projects.GetByID(projectID)
@@ -206,7 +226,11 @@ func (s *ProjectEnvService) loadHelperSnippets(projectID string) ([]ProjectEnvHe
 				}
 				records = append(records, record)
 			}
-			return buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode, records, runtimeEnv), nil
+			effectiveRouting, err := s.resolveEffectiveRouting(projectID, records)
+			if err != nil {
+				return nil, err
+			}
+			return buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode, records, runtimeEnv, effectiveRouting), nil
 		}
 	}
 	internalServices := []models.ProjectInternalService{}
@@ -356,27 +380,57 @@ func projectEnvFingerprint(serialized string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []ProjectEnvHelperSnippet {
-	items := make([]ProjectEnvHelperSnippet, 0, len(services))
+func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []ProjectEnvHelperPack {
+	items := make([]ProjectEnvHelperPack, 0, len(services))
 	for _, item := range services {
 		host, port := splitProjectEnvHostPort(item.LocalEndpoint)
 		if host == "" || port == "" {
 			continue
 		}
 		aliasKey := sanitizeProjectEnvAlias(item.Alias)
-		entry := ProjectEnvHelperSnippet{
-			ServiceKind: item.Kind,
-			Alias:       item.Alias,
-			Env: map[string]string{
+		runtimeKeys := []string{aliasKey + "_HOST", aliasKey + "_PORT", aliasKey + "_URL"}
+		entry := ProjectEnvHelperPack{
+			ServiceKind:     item.Kind,
+			Alias:           item.Alias,
+			Category:        "service_dependency",
+			Audience:        "backend",
+			SourceService:   item.Alias,
+			PrimaryKey:      aliasKey + "_URL",
+			Managed:         false,
+			RuntimeInjected: false,
+			PlaceholderEnv: map[string]string{
+				aliasKey + "_HOST": "${" + aliasKey + "_HOST}",
+				aliasKey + "_PORT": "${" + aliasKey + "_PORT}",
+				aliasKey + "_URL":  "${" + aliasKey + "_URL}",
+			},
+			EnvExample: map[string]string{
+				aliasKey + "_HOST": "",
+				aliasKey + "_PORT": "",
+				aliasKey + "_URL":  "",
+			},
+			LocalExampleEnv: map[string]string{
 				aliasKey + "_HOST": host,
 				aliasKey + "_PORT": port,
 				aliasKey + "_URL":  projectEnvDependencyURL(item.Protocol, host, port),
 			},
+			RuntimeKeys: runtimeKeys,
+			Notes: []string{
+				"Local development can keep a local endpoint; production should use the service dependency URL or the managed runtime contract.",
+			},
+			LanguageSnippets: buildLanguageSnippets(aliasKey+"_URL", aliasKey+"_HOST", "Service Dependency"),
 		}
 		if strings.EqualFold(item.Kind, "postgres") {
-			entry.Env["DB_HOST"] = host
-			entry.Env["DB_PORT"] = port
-			entry.Env["DB_NAME"] = "app"
+			entry.Category = "database"
+			entry.PrimaryKey = "DATABASE_URL"
+			entry.PlaceholderEnv = map[string]string{"DATABASE_URL": "${DATABASE_URL}"}
+			entry.EnvExample = map[string]string{"DATABASE_URL": ""}
+			entry.LocalExampleEnv = map[string]string{"DATABASE_URL": "postgres://postgres:postgres@localhost:5432/app?sslmode=disable"}
+			entry.RuntimeKeys = []string{"DATABASE_URL"}
+			entry.Notes = []string{
+				"Prefer a single DATABASE_URL in application config.",
+				"LazyOps will inject the real runtime value for managed database keys during distributed-k3s deploys.",
+			}
+			entry.LanguageSnippets = buildLanguageSnippets("DATABASE_URL", "", "Database")
 		}
 		items = append(items, entry)
 	}
@@ -389,25 +443,327 @@ func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []P
 	return items
 }
 
-func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord, projectEnv map[string]string) []ProjectEnvHelperSnippet {
-	items := make([]ProjectEnvHelperSnippet, 0)
+func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord, projectEnv map[string]string, effectiveRouting RoutingPolicyRecord) []ProjectEnvHelperPack {
+	items := make([]ProjectEnvHelperPack, 0)
+	serviceIndex := make(map[string]ProjectServiceRecord, len(services))
+	for _, item := range services {
+		serviceIndex[item.Name] = item
+	}
 	for _, item := range services {
 		if item.SourceType != serviceSourceTypeInternal || !strings.EqualFold(strings.TrimSpace(item.Kind), "postgres") {
 			continue
 		}
-		items = append(items, ProjectEnvHelperSnippet{
-			ServiceKind: item.Kind,
-			Alias:       item.Name,
-			Env:         buildPostgresConnectionTemplateEnv(item, projectEnv, runtimeMode),
+		template := coercePostgresConnectionTemplate(item.ConnectionTemplate)
+		primaryKey := firstNonEmpty(template["DB_URL"], "DATABASE_URL")
+		runtimeKeys := sortedEnvKeys(buildPostgresConnectionTemplateEnv(item, projectEnv, runtimeMode))
+		items = append(items, ProjectEnvHelperPack{
+			ServiceKind:     item.Kind,
+			Alias:           item.Name,
+			Category:        "database",
+			Audience:        "backend",
+			SourceService:   item.Name,
+			PrimaryKey:      primaryKey,
+			Managed:         true,
+			RuntimeInjected: true,
+			PlaceholderEnv:  map[string]string{primaryKey: "${" + primaryKey + "}"},
+			EnvExample:      map[string]string{primaryKey: ""},
+			LocalExampleEnv: map[string]string{primaryKey: "postgres://postgres:postgres@localhost:5432/app?sslmode=disable"},
+			RuntimeKeys:     runtimeKeys,
+			Notes: []string{
+				"Prefer a single database URL in code and framework config.",
+				"LazyOps injects managed database keys for distributed-k3s; user-defined env values win when already present.",
+			},
+			LanguageSnippets: buildLanguageSnippets(primaryKey, "", "Database"),
 		})
 	}
+
+	for _, route := range effectiveRouting.Routes {
+		service, ok := serviceIndex[route.Service]
+		if !ok {
+			continue
+		}
+		publicPath := normalizedPublicPath(route.Path)
+		if route.WebSocket {
+			items = append(items, ProjectEnvHelperPack{
+				ServiceKind:     service.Kind,
+				Alias:           route.Service,
+				Category:        "websocket",
+				Audience:        "frontend-browser",
+				SourceService:   route.Service,
+				PrimaryKey:      "WS_URL",
+				PublicPath:      publicPath,
+				Managed:         false,
+				RuntimeInjected: false,
+				PlaceholderEnv:  map[string]string{"WS_URL": "${WS_URL}"},
+				EnvExample:      map[string]string{"WS_URL": ""},
+				LocalExampleEnv: map[string]string{"WS_URL": localWebSocketExample(service, publicPath)},
+				RuntimeKeys:     []string{},
+				Notes: []string{
+					"Browser clients should connect via the public WebSocket path, not an internal service DNS name.",
+					"When using a custom route, update client snippets to match the effective public path shown here.",
+				},
+				LanguageSnippets: buildLanguageSnippets("WS_URL", "", "WebSocket"),
+			})
+			continue
+		}
+		if publicPath == "/" && isFrontendDescriptor(routingDescriptor{Name: service.Name, Kind: service.Kind, RuntimeProfile: service.RuntimeProfile, Public: service.Public}) {
+			continue
+		}
+		items = append(items, ProjectEnvHelperPack{
+			ServiceKind:     service.Kind,
+			Alias:           route.Service,
+			Category:        "browser_api",
+			Audience:        "frontend-browser",
+			SourceService:   route.Service,
+			PrimaryKey:      "API_BASE_URL",
+			PublicPath:      publicPath,
+			Managed:         false,
+			RuntimeInjected: false,
+			PlaceholderEnv:  map[string]string{"API_BASE_URL": "${API_BASE_URL}"},
+			EnvExample:      map[string]string{"API_BASE_URL": ""},
+			LocalExampleEnv: map[string]string{"API_BASE_URL": localHTTPExample(service, publicPath)},
+			RuntimeKeys:     []string{},
+			Notes: []string{
+				"Browser code should use the public path below or a same-origin base URL.",
+				"Do not point browser code at internal Kubernetes service DNS names.",
+			},
+			LanguageSnippets: buildLanguageSnippets("API_BASE_URL", "", "Public API"),
+		})
+		internalBaseURL := internalHTTPURL(service)
+		if internalBaseURL != "" {
+			items = append(items, ProjectEnvHelperPack{
+				ServiceKind:     service.Kind,
+				Alias:           route.Service + "-internal",
+				Category:        "server_api",
+				Audience:        "frontend-server",
+				SourceService:   route.Service,
+				PrimaryKey:      "API_INTERNAL_URL",
+				PublicPath:      publicPath,
+				Managed:         false,
+				RuntimeInjected: false,
+				PlaceholderEnv:  map[string]string{"API_INTERNAL_URL": "${API_INTERNAL_URL}"},
+				EnvExample:      map[string]string{"API_INTERNAL_URL": ""},
+				LocalExampleEnv: map[string]string{"API_INTERNAL_URL": internalBaseURL},
+				RuntimeKeys:     []string{},
+				Notes: []string{
+					"Server-side services can call the internal service URL when they run inside the cluster.",
+					"Browser-side code should keep using the public path instead.",
+				},
+				LanguageSnippets: buildLanguageSnippets("API_INTERNAL_URL", "", "Internal API"),
+			})
+		}
+	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].ServiceKind == items[j].ServiceKind {
+		if items[i].Category == items[j].Category {
 			return items[i].Alias < items[j].Alias
 		}
-		return items[i].ServiceKind < items[j].ServiceKind
+		return items[i].Category < items[j].Category
 	})
 	return items
+}
+
+func (s *ProjectEnvService) resolveEffectiveRouting(projectID string, services []ProjectServiceRecord) (RoutingPolicyRecord, error) {
+	descriptors := make([]routingDescriptor, 0, len(services))
+	serviceIndex := make(map[string]ProjectServiceRecord, len(services))
+	for _, item := range services {
+		serviceIndex[item.Name] = item
+		descriptors = append(descriptors, routingDescriptor{
+			Name:           item.Name,
+			Kind:           item.Kind,
+			RuntimeProfile: item.RuntimeProfile,
+			Public:         item.Public,
+		})
+	}
+	suggested := buildDefaultRoutingPolicy("", descriptors)
+	if s == nil || s.routingStore == nil || strings.TrimSpace(projectID) == "" {
+		return suggested, nil
+	}
+	policy, err := s.routingStore.GetByProjectID(projectID)
+	if err != nil {
+		return RoutingPolicyRecord{}, err
+	}
+	if policy == nil {
+		return suggested, nil
+	}
+	routes, err := parseRoutes(policy.RoutesJSON)
+	if err != nil {
+		return RoutingPolicyRecord{}, err
+	}
+	if len(routes) == 0 {
+		return suggested, nil
+	}
+	out := RoutingPolicyRecord{
+		SharedDomain: strings.TrimSpace(policy.SharedDomain),
+		Routes:       make([]RoutingRouteRecord, 0, len(routes)),
+	}
+	for _, route := range routes {
+		if _, ok := serviceIndex[route.Service]; !ok {
+			continue
+		}
+		out.Routes = append(out.Routes, RoutingRouteRecord{
+			Path:        route.Path,
+			Service:     route.Service,
+			Port:        route.Port,
+			WebSocket:   route.WebSocket,
+			StripPrefix: route.StripPrefix,
+			CreatedAt:   policy.CreatedAt,
+		})
+	}
+	if len(out.Routes) == 0 {
+		return suggested, nil
+	}
+	return out, nil
+}
+
+func collectManagedKeys(packs []ProjectEnvHelperPack) []string {
+	keys := make(map[string]struct{})
+	for _, pack := range packs {
+		if !pack.Managed {
+			continue
+		}
+		for _, key := range pack.RuntimeKeys {
+			keys[key] = struct{}{}
+		}
+	}
+	return sortedEnvKeySet(keys)
+}
+
+func collectProvisionedKeys(packs []ProjectEnvHelperPack, userKeys []string) []string {
+	userKeySet := make(map[string]struct{}, len(userKeys))
+	for _, key := range userKeys {
+		userKeySet[key] = struct{}{}
+	}
+	keys := make(map[string]struct{})
+	for _, pack := range packs {
+		if !pack.Managed {
+			continue
+		}
+		for _, key := range pack.RuntimeKeys {
+			if _, overridden := userKeySet[key]; overridden {
+				continue
+			}
+			keys[key] = struct{}{}
+		}
+	}
+	return sortedEnvKeySet(keys)
+}
+
+func annotateProvisionedHelperPacks(packs []ProjectEnvHelperPack, userKeys []string) {
+	userKeySet := make(map[string]struct{}, len(userKeys))
+	for _, key := range userKeys {
+		userKeySet[key] = struct{}{}
+	}
+	for index := range packs {
+		provisioned := make([]string, 0, len(packs[index].RuntimeKeys))
+		for _, key := range packs[index].RuntimeKeys {
+			if _, overridden := userKeySet[key]; overridden {
+				continue
+			}
+			provisioned = append(provisioned, key)
+		}
+		packs[index].ProvisionedKeys = provisioned
+		packs[index].RuntimeInjected = packs[index].Managed && len(provisioned) > 0
+	}
+}
+
+func sortedEnvKeySet(items map[string]struct{}) []string {
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func buildLanguageSnippets(primaryKey, secondaryKey, title string) []ProjectEnvHelperSnippet {
+	envTitle := title
+	if strings.TrimSpace(envTitle) == "" {
+		envTitle = "Runtime Config"
+	}
+	secondaryComment := ""
+	if strings.TrimSpace(secondaryKey) != "" {
+		secondaryComment = "\n# Optional fallback key: " + secondaryKey
+	}
+	return []ProjectEnvHelperSnippet{
+		{
+			Language:  "nodejs",
+			Framework: "native",
+			Kind:      "code",
+			Title:     envTitle + " / Node.js",
+			Content:   "const value = process.env." + primaryKey + " ?? '';\nif (!value) throw new Error('" + primaryKey + " is required');",
+		},
+		{
+			Language:  "python",
+			Framework: "native",
+			Kind:      "code",
+			Title:     envTitle + " / Python",
+			Content:   "import os\nvalue = os.getenv('" + primaryKey + "', '')\nif not value:\n    raise RuntimeError('" + primaryKey + " is required')",
+		},
+		{
+			Language:  "java",
+			Framework: "spring",
+			Kind:      "config_file",
+			Title:     envTitle + " / Spring application.yml",
+			Content:   "app:\n  value: ${" + primaryKey + ":}" + secondaryComment,
+		},
+		{
+			Language:  "java",
+			Framework: "native",
+			Kind:      "code",
+			Title:     envTitle + " / Java",
+			Content:   "String value = System.getenv(\"" + primaryKey + "\");\nif (value == null || value.isBlank()) throw new IllegalStateException(\"" + primaryKey + " is required\");",
+		},
+		{
+			Language:  "csharp",
+			Framework: ".net",
+			Kind:      "code",
+			Title:     envTitle + " / C#",
+			Content:   "var value = Environment.GetEnvironmentVariable(\"" + primaryKey + "\") ?? string.Empty;\nif (string.IsNullOrWhiteSpace(value)) throw new InvalidOperationException(\"" + primaryKey + " is required\");",
+		},
+		{
+			Language:  "go",
+			Framework: "native",
+			Kind:      "code",
+			Title:     envTitle + " / Go",
+			Content:   "value := os.Getenv(\"" + primaryKey + "\")\nif value == \"\" {\n\tlog.Fatal(\"" + primaryKey + " is required\")\n}",
+		},
+		{
+			Language:  "php",
+			Framework: "native",
+			Kind:      "code",
+			Title:     envTitle + " / PHP",
+			Content:   "$value = getenv('" + primaryKey + "') ?: '';\nif ($value === '') {\n    throw new RuntimeException('" + primaryKey + " is required');\n}",
+		},
+	}
+}
+
+func normalizedPublicPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "/" + trimmed
+	}
+	return trimmed
+}
+
+func internalHTTPURL(service ProjectServiceRecord) string {
+	port := firstPositive(service.ServicePort, service.TargetPort)
+	if port <= 0 {
+		return ""
+	}
+	return "http://" + strings.TrimSpace(service.Name) + ":" + strconv.Itoa(port)
+}
+
+func localHTTPExample(service ProjectServiceRecord, publicPath string) string {
+	port := firstPositive(service.ServicePort, service.TargetPort, 8080)
+	return "http://localhost:" + strconv.Itoa(port) + publicPath
+}
+
+func localWebSocketExample(service ProjectServiceRecord, publicPath string) string {
+	port := firstPositive(service.ServicePort, service.TargetPort, 8080)
+	return "ws://localhost:" + strconv.Itoa(port) + publicPath
 }
 
 func projectEnvDependencyURL(protocol, host, port string) string {

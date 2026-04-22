@@ -26,8 +26,8 @@ func (f *fakeServiceRepo) ListByProject(projectID string) ([]models.Service, err
 }
 
 type fakeRoutingPolicyRepo struct {
-	policies map[string]*models.RoutingPolicy
-	getErr   error
+	policies  map[string]*models.RoutingPolicy
+	getErr    error
 	upsertErr error
 }
 
@@ -77,8 +77,8 @@ func TestRoutingServiceGetRoutingEmpty(t *testing.T) {
 func TestRoutingServiceGetRoutingWithPolicy(t *testing.T) {
 	repo := newFakeRoutingPolicyRepo()
 	svcRepo := newFakeServiceRepo([]models.Service{
-		{ProjectID: "prj_123", Name: "frontend"},
-		{ProjectID: "prj_123", Name: "backend"},
+		{ProjectID: "prj_123", Name: "frontend", Public: true, Kind: "frontend"},
+		{ProjectID: "prj_123", Name: "backend", Public: true, Kind: "api"},
 	})
 	svc := NewRoutingService(repo, svcRepo)
 
@@ -106,6 +106,9 @@ func TestRoutingServiceGetRoutingWithPolicy(t *testing.T) {
 	}
 	if len(result.AvailableServices) != 2 {
 		t.Fatalf("expected 2 available services, got %d", len(result.AvailableServices))
+	}
+	if len(result.SuggestedRoutes) != 2 {
+		t.Fatalf("expected suggested routes to be populated, got %#v", result.SuggestedRoutes)
 	}
 }
 
@@ -215,6 +218,28 @@ func TestRoutingServiceUpdateRoutingRejectsEmptyPath(t *testing.T) {
 	_, err := svc.UpdateRouting(cmd)
 	if err == nil {
 		t.Fatalf("expected error for empty path")
+	}
+}
+
+func TestRoutingServiceUpdateRoutingRejectsDuplicateRoot(t *testing.T) {
+	repo := newFakeRoutingPolicyRepo()
+	svcRepo := newFakeServiceRepo([]models.Service{
+		{ProjectID: "prj_123", Name: "frontend"},
+		{ProjectID: "prj_123", Name: "backend"},
+	})
+	svc := NewRoutingService(repo, svcRepo)
+
+	_, err := svc.UpdateRouting(UpdateRoutingCommand{
+		UserID:    "usr_123",
+		Role:      RoleOperator,
+		ProjectID: "prj_123",
+		Routes: []RoutingRouteRecord{
+			{Path: "/", Service: "frontend"},
+			{Path: "/", Service: "backend"},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected duplicate root to fail")
 	}
 }
 

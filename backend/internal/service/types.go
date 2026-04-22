@@ -516,10 +516,13 @@ type LazyopsYAMLSchemaSummary struct {
 }
 
 type ValidateLazyopsYAMLResult struct {
-	Project           ProjectSummary
-	DeploymentBinding DeploymentBindingRecord
-	TargetSummary     InitTargetSummary
-	Schema            LazyopsYAMLSchemaSummary
+	Project              ProjectSummary
+	DeploymentBinding    DeploymentBindingRecord
+	TargetSummary        InitTargetSummary
+	Schema               LazyopsYAMLSchemaSummary
+	SuggestedRoutes      []RoutingGuidanceRouteRecord
+	EffectivePublicPaths []RoutingGuidanceRouteRecord
+	MigrationFindings    []MigrationFindingRecord
 }
 
 type BlueprintArtifactMetadata struct {
@@ -894,18 +897,42 @@ type UpsertProjectEnvCommand struct {
 }
 
 type ProjectEnvHelperSnippet struct {
-	ServiceKind string
-	Alias       string
-	Env         map[string]string
+	Language  string
+	Framework string
+	Kind      string
+	Title     string
+	Content   string
 }
 
 type ProjectEnvBundleRecord struct {
-	Configured     bool
-	UpdatedAt      *time.Time
-	Fingerprint    string
-	Keys           []string
-	ParseWarnings  []string
-	HelperSnippets []ProjectEnvHelperSnippet
+	Configured      bool
+	UpdatedAt       *time.Time
+	Fingerprint     string
+	Keys            []string
+	UserKeys        []string
+	ManagedKeys     []string
+	ProvisionedKeys []string
+	ParseWarnings   []string
+	HelperPacks     []ProjectEnvHelperPack
+}
+
+type ProjectEnvHelperPack struct {
+	ServiceKind      string
+	Alias            string
+	Category         string
+	Audience         string
+	SourceService    string
+	PrimaryKey       string
+	PublicPath       string
+	Managed          bool
+	RuntimeInjected  bool
+	PlaceholderEnv   map[string]string
+	EnvExample       map[string]string
+	LocalExampleEnv  map[string]string
+	RuntimeKeys      []string
+	ProvisionedKeys  []string
+	Notes            []string
+	LanguageSnippets []ProjectEnvHelperSnippet
 }
 
 type CreateProjectRepoLinkCommand struct {

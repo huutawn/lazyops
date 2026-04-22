@@ -96,6 +96,67 @@ func TestInitContractServiceRejectsUnknownTargetRef(t *testing.T) {
 	}
 }
 
+func TestInitContractServiceBuildsMigrationFindingsAndSuggestedRoutes(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_123",
+		UserID:        "usr_123",
+		Name:          "Acme API",
+		Slug:          "acme-api",
+		DefaultBranch: "main",
+	})
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:          "bind_123",
+		ProjectID:   "prj_123",
+		Name:        "Production Binding",
+		TargetRef:   "prod-main",
+		RuntimeMode: "standalone",
+		TargetKind:  "instance",
+		TargetID:    "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:     "inst_123",
+		UserID: "usr_123",
+		Name:   "edge-sg-1",
+		Status: "online",
+	})
+	service := NewInitContractService(projectStore, bindingStore, instanceStore, newFakeMeshNetworkStore(), newFakeClusterStore())
+
+	raw := []byte(`{
+		"project_slug":"acme-api",
+		"runtime_mode":"standalone",
+		"deployment_binding":{"target_ref":"prod-main"},
+		"services":[
+			{"name":"frontend","path":"apps/web","public":true},
+			{"name":"api","path":"apps/api","public":true},
+			{"name":"db","path":"apps/db"}
+		],
+		"dependency_bindings":[
+			{"service":"api","alias":"db","target_service":"db","protocol":"tcp","local_endpoint":"localhost:5432"}
+		],
+		"compatibility_policy":{"env_injection":true,"managed_credentials":true,"localhost_rescue":true},
+		"routing_policy":{"routes":[{"path":"/backend","service":"api"}]}
+	}`)
+
+	result, err := service.ValidateLazyopsYAML(ValidateLazyopsYAMLCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleOperator,
+		ProjectID:       "prj_123",
+		RawDocument:     raw,
+	})
+	if err != nil {
+		t.Fatalf("validate lazyops yaml: %v", err)
+	}
+	if len(result.SuggestedRoutes) == 0 {
+		t.Fatalf("expected suggested routes, got %#v", result)
+	}
+	if len(result.MigrationFindings) == 0 {
+		t.Fatalf("expected migration findings, got %#v", result)
+	}
+	if result.MigrationFindings[0].CurrentValue != "localhost:5432" {
+		t.Fatalf("expected localhost finding, got %#v", result.MigrationFindings[0])
+	}
+}
+
 func TestInitContractServiceRejectsInvalidDependencyMapping(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_123",

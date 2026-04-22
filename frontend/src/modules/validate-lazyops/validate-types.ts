@@ -33,11 +33,31 @@ export type ValidateLazyopsSchema = {
   forbidden_field_names: string[];
 };
 
+export type ValidateRoutingGuidanceRoute = {
+  path: string;
+  service: string;
+  audience?: string;
+  source?: string;
+  websocket?: boolean;
+};
+
+export type ValidateMigrationFinding = {
+  category: string;
+  severity: string;
+  service_name?: string;
+  current_value?: string;
+  recommended_value?: string;
+  message: string;
+};
+
 export type ValidateLazyopsResponse = {
   project: ValidateLazyopsProject;
   deployment_binding: ValidateLazyopsBinding;
   target_summary: ValidateLazyopsTarget;
   schema: ValidateLazyopsSchema;
+  suggested_routes: ValidateRoutingGuidanceRoute[];
+  effective_public_paths: ValidateRoutingGuidanceRoute[];
+  migration_findings: ValidateMigrationFinding[];
 };
 
 export type LazyopsYAMLService = {
@@ -90,4 +110,14 @@ export type LazyopsYAMLDraft = {
   magic_domain_policy: LazyopsYAMLMagicDomainPolicy;
   preview_policy: LazyopsYAMLPreviewPolicy;
   scale_to_zero_policy: LazyopsYAMLScaleToZeroPolicy;
+  routing_policy?: {
+    shared_domain?: string;
+    routes: Array<{
+      path: string;
+      service: string;
+      port?: number;
+      websocket?: boolean;
+      strip_prefix?: boolean;
+    }>;
+  };
 };

@@ -158,6 +158,9 @@ func (s *InitContractService) ValidateLazyopsYAML(cmd ValidateLazyopsYAMLCommand
 	if err != nil {
 		return nil, err
 	}
+	descriptors := routingDescriptorsFromLazyopsServices(document.Services)
+	suggestedRouting := buildDefaultRoutingPolicy("", descriptors)
+	effectiveRouting := resolveDocumentRoutingPolicy(document, suggestedRouting)
 
 	return &ValidateLazyopsYAMLResult{
 		Project:           ToProjectSummary(*project),
@@ -171,6 +174,9 @@ func (s *InitContractService) ValidateLazyopsYAML(cmd ValidateLazyopsYAMLCommand
 			},
 			ForbiddenFieldNames: lazyopsForbiddenFieldNameList(),
 		},
+		SuggestedRoutes:      buildRoutingGuidanceRoutes(suggestedRouting, descriptors, "suggested"),
+		EffectivePublicPaths: buildRoutingGuidanceRoutes(effectiveRouting, descriptors, "configured"),
+		MigrationFindings:    buildMigrationFindings(document, descriptors, effectiveRouting),
 	}, nil
 }
 
@@ -224,6 +230,99 @@ func (s *InitContractService) resolveTargetSummary(binding models.DeploymentBind
 	default:
 		return InitTargetSummary{}, ErrInvalidInput
 	}
+}
+
+func routingDescriptorsFromLazyopsServices(items []LazyopsYAMLService) []routingDescriptor {
+	out := make([]routingDescriptor, 0, len(items))
+	for _, item := range items {
+		out = append(out, routingDescriptor{
+			Name:   item.Name,
+			Public: item.Public,
+		})
+	}
+	return out
+}
+
+func resolveDocumentRoutingPolicy(document LazyopsYAMLDocument, suggested RoutingPolicyRecord) RoutingPolicyRecord {
+	if len(document.RoutingPolicy.Routes) == 0 {
+		return suggested
+	}
+	routes := make([]RoutingRouteRecord, 0, len(document.RoutingPolicy.Routes))
+	for _, route := range document.RoutingPolicy.Routes {
+		routes = append(routes, RoutingRouteRecord{
+			Path:        normalizedPublicPath(route.Path),
+			Service:     route.Service,
+			Port:        route.Port,
+			WebSocket:   route.WebSocket,
+			StripPrefix: route.StripPrefix,
+		})
+	}
+	return RoutingPolicyRecord{
+		SharedDomain: strings.TrimSpace(document.RoutingPolicy.SharedDomain),
+		Routes:       routes,
+	}
+}
+
+func buildMigrationFindings(document LazyopsYAMLDocument, descriptors []routingDescriptor, effective RoutingPolicyRecord) []MigrationFindingRecord {
+	findings := make([]MigrationFindingRecord, 0)
+	for _, binding := range document.DependencyBindings {
+		lower := strings.ToLower(strings.TrimSpace(binding.LocalEndpoint))
+		switch {
+		case strings.HasPrefix(lower, "localhost:"),
+			strings.HasPrefix(lower, "127.0.0.1:"),
+			strings.Contains(lower, "://localhost"),
+			strings.Contains(lower, "://127.0.0.1"):
+			category := "server_http_internal"
+			recommended := binding.TargetService
+			switch strings.ToLower(strings.TrimSpace(binding.Protocol)) {
+			case "tcp":
+				category = "database_internal"
+				recommended = binding.TargetService
+			case "http", "https", "grpc":
+				recommended = "http://" + binding.TargetService
+			}
+			findings = append(findings, MigrationFindingRecord{
+				Category:         category,
+				Severity:         "warning",
+				ServiceName:      binding.Service,
+				CurrentValue:     binding.LocalEndpoint,
+				RecommendedValue: recommended,
+				Message:          fmt.Sprintf("Service %q still references localhost for dependency %q. Replace it with a managed env key or the target service address before distributed-k3s deploys.", binding.Service, binding.Alias),
+			})
+		}
+	}
+	for _, route := range effective.Routes {
+		normalizedPath := normalizedPublicPath(route.Path)
+		if route.WebSocket && normalizedPath != "/ws" {
+			findings = append(findings, MigrationFindingRecord{
+				Category:         "websocket",
+				Severity:         "info",
+				ServiceName:      route.Service,
+				CurrentValue:     normalizedPath,
+				RecommendedValue: "/ws",
+				Message:          fmt.Sprintf("WebSocket service %q uses custom public path %q. Update browser snippets and docs to use the effective path.", route.Service, normalizedPath),
+			})
+			continue
+		}
+		descriptor := routingDescriptor{}
+		for _, item := range descriptors {
+			if item.Name == route.Service {
+				descriptor = item
+				break
+			}
+		}
+		if (isAPIDescriptor(descriptor) || isBackendDescriptor(descriptor)) && normalizedPath != "/api" && normalizedPath != "/" {
+			findings = append(findings, MigrationFindingRecord{
+				Category:         "browser_api",
+				Severity:         "info",
+				ServiceName:      route.Service,
+				CurrentValue:     normalizedPath,
+				RecommendedValue: "/api",
+				Message:          fmt.Sprintf("API service %q uses custom public path %q. Browser clients should follow the effective route, not assume /api.", route.Service, normalizedPath),
+			})
+		}
+	}
+	return findings
 }
 
 func resolveProjectForAccess(projects ProjectStore, requesterUserID, requesterRole, projectID string) (*models.Project, error) {

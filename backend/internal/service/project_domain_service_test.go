@@ -140,3 +140,97 @@ func TestProjectDomainServiceRenameRejectsTakenLabel(t *testing.T) {
 		t.Fatalf("expected ErrProjectDomainLabelTaken, got %v", err)
 	}
 }
+
+func TestProjectDomainServiceAllocateAllowsViewerProjectOwner(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", []models.Service{{
+		ID:        "svc_123",
+		ProjectID: "prj_123",
+		Name:      "frontend",
+		Public:    true,
+		Kind:      "frontend",
+		Path:      "frontend",
+	}}); err != nil {
+		t.Fatalf("seed services: %v", err)
+	}
+	bindingStore := newFakeDeploymentBindingStore(&models.DeploymentBinding{
+		ID:         "bind_123",
+		ProjectID:  "prj_123",
+		TargetRef:  "auto-primary",
+		TargetKind: "instance",
+		TargetID:   "inst_123",
+	})
+	instanceStore := newFakeInstanceStore(&models.Instance{
+		ID:       "inst_123",
+		UserID:   "usr_123",
+		Name:     "edge-1",
+		PublicIP: ptrString("203.0.113.10"),
+	})
+	domainStore := newFakeProjectDomainStore()
+
+	service := NewProjectDomainService(
+		projectStore,
+		domainStore,
+		serviceStore,
+		bindingStore,
+		instanceStore,
+		newFakeClusterStore(),
+		config.PublicDomainConfig{BaseDomain: "lazyops.cloud", Provider: "cloudflare", CloudflareProxied: true},
+	).WithDNSClient(&NoopProjectDomainDNSClient{})
+
+	record, err := service.Allocate(AllocateProjectDomainCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleViewer,
+		ProjectID:       "prj_123",
+	})
+	if err != nil {
+		t.Fatalf("expected viewer owner to allocate domain, got %v", err)
+	}
+	if !strings.HasSuffix(record.Hostname, ".lazyops.cloud") {
+		t.Fatalf("expected managed hostname, got %#v", record)
+	}
+}
+
+func TestProjectDomainServiceAllocateRejectsViewerWithoutProjectAccess(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:     "prj_123",
+		UserID: "usr_123",
+		Name:   "Acme API",
+		Slug:   "acme-api",
+	})
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_123", []models.Service{{
+		ID:        "svc_123",
+		ProjectID: "prj_123",
+		Name:      "frontend",
+		Public:    true,
+		Kind:      "frontend",
+		Path:      "frontend",
+	}}); err != nil {
+		t.Fatalf("seed services: %v", err)
+	}
+	service := NewProjectDomainService(
+		projectStore,
+		newFakeProjectDomainStore(),
+		serviceStore,
+		newFakeDeploymentBindingStore(),
+		newFakeInstanceStore(),
+		newFakeClusterStore(),
+		config.PublicDomainConfig{BaseDomain: "lazyops.cloud", Provider: "cloudflare", CloudflareProxied: true},
+	).WithDNSClient(&NoopProjectDomainDNSClient{})
+
+	_, err := service.Allocate(AllocateProjectDomainCommand{
+		RequesterUserID: "usr_other",
+		RequesterRole:   RoleViewer,
+		ProjectID:       "prj_123",
+	})
+	if !errors.Is(err, ErrProjectAccessDenied) {
+		t.Fatalf("expected ErrProjectAccessDenied, got %v", err)
+	}
+}

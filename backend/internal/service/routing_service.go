@@ -63,17 +63,23 @@ func (s *RoutingService) GetRouting(userID, role, projectID string) (*ProjectRou
 		availableServices = append(availableServices, svc.Name)
 	}
 	sort.Strings(availableServices)
+	descriptors := routingDescriptorsFromModels(services)
 
 	policy, err := s.store.GetByProjectID(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load routing policy: %w", err)
 	}
 	sharedDomain := s.resolveManagedSharedDomain(projectID)
+	suggested := buildDefaultRoutingPolicy(sharedDomain, descriptors)
 
 	if policy == nil {
+		effectivePaths := buildRoutingGuidanceRoutes(suggested, descriptors, "convention")
 		return &ProjectRoutingResult{
-			RoutingPolicy:     buildDefaultRoutingPolicy(sharedDomain, routingDescriptorsFromModels(services)),
-			AvailableServices: availableServices,
+			RoutingPolicy:        suggested,
+			AvailableServices:    availableServices,
+			SuggestedRoutes:      buildRoutingGuidanceRoutes(suggested, descriptors, "suggested"),
+			EffectivePublicPaths: effectivePaths,
+			Warnings:             buildRoutingWarnings(suggested, suggested, descriptors),
 		}, nil
 	}
 
@@ -96,17 +102,25 @@ func (s *RoutingService) GetRouting(userID, role, projectID string) (*ProjectRou
 
 	resolvedSharedDomain := firstRuntimeNonEmpty(policy.SharedDomain, sharedDomain)
 	if len(routeRecords) == 0 {
+		effective := buildDefaultRoutingPolicy(resolvedSharedDomain, descriptors)
 		return &ProjectRoutingResult{
-			RoutingPolicy:     buildDefaultRoutingPolicy(resolvedSharedDomain, routingDescriptorsFromModels(services)),
-			AvailableServices: availableServices,
+			RoutingPolicy:        effective,
+			AvailableServices:    availableServices,
+			SuggestedRoutes:      buildRoutingGuidanceRoutes(buildDefaultRoutingPolicy(resolvedSharedDomain, descriptors), descriptors, "suggested"),
+			EffectivePublicPaths: buildRoutingGuidanceRoutes(effective, descriptors, "convention"),
+			Warnings:             buildRoutingWarnings(buildDefaultRoutingPolicy(resolvedSharedDomain, descriptors), effective, descriptors),
 		}, nil
 	}
+	effective := RoutingPolicyRecord{
+		SharedDomain: resolvedSharedDomain,
+		Routes:       routeRecords,
+	}
 	return &ProjectRoutingResult{
-		RoutingPolicy: RoutingPolicyRecord{
-			SharedDomain: resolvedSharedDomain,
-			Routes:       routeRecords,
-		},
-		AvailableServices: availableServices,
+		RoutingPolicy:        effective,
+		AvailableServices:    availableServices,
+		SuggestedRoutes:      buildRoutingGuidanceRoutes(buildDefaultRoutingPolicy(resolvedSharedDomain, descriptors), descriptors, "suggested"),
+		EffectivePublicPaths: buildRoutingGuidanceRoutes(effective, descriptors, "configured"),
+		Warnings:             buildRoutingWarnings(buildDefaultRoutingPolicy(resolvedSharedDomain, descriptors), effective, descriptors),
 	}, nil
 }
 
@@ -123,6 +137,8 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 	}
 
 	serviceNames := make(map[string]bool)
+	exactPaths := make(map[string]int)
+	rootCount := 0
 	for _, svc := range services {
 		serviceNames[svc.Name] = true
 	}
@@ -137,6 +153,17 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 		if !serviceNames[route.Service] {
 			return nil, fmt.Errorf("route %d: service %q not found", i+1, route.Service)
 		}
+		normalizedPath := normalizedPublicPath(route.Path)
+		exactPaths[normalizedPath]++
+		if exactPaths[normalizedPath] > 1 {
+			return nil, fmt.Errorf("route %d: path %q is already assigned to another service", i+1, normalizedPath)
+		}
+		if normalizedPath == "/" {
+			rootCount++
+		}
+	}
+	if rootCount > 1 {
+		return nil, fmt.Errorf("only one service can own the root path \"/\"; move backend traffic to /api or use a separate domain")
 	}
 
 	// Check for overlapping path prefixes
@@ -179,9 +206,11 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 	}
 
 	availableServices := make([]string, 0, len(services))
+	descriptors := routingDescriptorsFromModels(services)
 	for _, svc := range services {
 		availableServices = append(availableServices, svc.Name)
 	}
+	sort.Strings(availableServices)
 
 	routeRecords := make([]RoutingRouteRecord, 0, len(modelRoutes))
 	for _, r := range modelRoutes {
@@ -194,13 +223,18 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 			CreatedAt:   now,
 		})
 	}
+	effective := RoutingPolicyRecord{
+		SharedDomain: cmd.SharedDomain,
+		Routes:       routeRecords,
+	}
+	suggested := buildDefaultRoutingPolicy(cmd.SharedDomain, descriptors)
 
 	return &ProjectRoutingResult{
-		RoutingPolicy: RoutingPolicyRecord{
-			SharedDomain: cmd.SharedDomain,
-			Routes:       routeRecords,
-		},
-		AvailableServices: availableServices,
+		RoutingPolicy:        effective,
+		AvailableServices:    availableServices,
+		SuggestedRoutes:      buildRoutingGuidanceRoutes(suggested, descriptors, "suggested"),
+		EffectivePublicPaths: buildRoutingGuidanceRoutes(effective, descriptors, "configured"),
+		Warnings:             buildRoutingWarnings(suggested, effective, descriptors),
 	}, nil
 }
 
@@ -390,6 +424,84 @@ func buildDefaultRoutingPolicy(sharedDomain string, services []routingDescriptor
 		SharedDomain: strings.TrimSpace(sharedDomain),
 		Routes:       routes,
 	}
+}
+
+func buildRoutingGuidanceRoutes(policy RoutingPolicyRecord, services []routingDescriptor, source string) []RoutingGuidanceRouteRecord {
+	serviceIndex := make(map[string]routingDescriptor, len(services))
+	for _, item := range services {
+		serviceIndex[item.Name] = item
+	}
+	out := make([]RoutingGuidanceRouteRecord, 0, len(policy.Routes))
+	for _, route := range policy.Routes {
+		descriptor := serviceIndex[route.Service]
+		audience := "frontend-browser"
+		if route.WebSocket {
+			audience = "websocket"
+		} else if route.Path == "/" && isFrontendDescriptor(descriptor) {
+			audience = "frontend-root"
+		} else if isAPIDescriptor(descriptor) || isBackendDescriptor(descriptor) {
+			audience = "browser-api"
+		}
+		out = append(out, RoutingGuidanceRouteRecord{
+			Path:      route.Path,
+			Service:   route.Service,
+			Audience:  audience,
+			Source:    source,
+			WebSocket: route.WebSocket,
+		})
+	}
+	return out
+}
+
+func buildRoutingWarnings(suggested, effective RoutingPolicyRecord, services []routingDescriptor) []string {
+	if len(effective.Routes) == 0 {
+		return nil
+	}
+	serviceIndex := make(map[string]routingDescriptor, len(services))
+	for _, item := range services {
+		serviceIndex[item.Name] = item
+	}
+	suggestedByService := make(map[string]RoutingRouteRecord, len(suggested.Routes))
+	for _, route := range suggested.Routes {
+		key := route.Service + fmt.Sprintf("|%t", route.WebSocket)
+		suggestedByService[key] = route
+	}
+	warnings := make([]string, 0)
+	rootRoute := ""
+	for _, route := range effective.Routes {
+		if normalizedPublicPath(route.Path) == "/" {
+			rootRoute = route.Service
+		}
+		key := route.Service + fmt.Sprintf("|%t", route.WebSocket)
+		suggestedRoute, ok := suggestedByService[key]
+		if !ok {
+			continue
+		}
+		if normalizedPublicPath(suggestedRoute.Path) != normalizedPublicPath(route.Path) {
+			descriptor := serviceIndex[route.Service]
+			switch {
+			case route.WebSocket:
+				warnings = append(warnings, fmt.Sprintf("WebSocket service %q now uses %q instead of the default /ws. Update browser clients and snippets to match.", route.Service, normalizedPublicPath(route.Path)))
+			case isAPIDescriptor(descriptor) || isBackendDescriptor(descriptor):
+				warnings = append(warnings, fmt.Sprintf("API service %q now uses %q instead of the default /api. Browser and client examples must use the effective path.", route.Service, normalizedPublicPath(route.Path)))
+			case isFrontendDescriptor(descriptor):
+				warnings = append(warnings, fmt.Sprintf("Frontend service %q now uses %q instead of the default /. Make sure the primary app URL and docs follow the custom path.", route.Service, normalizedPublicPath(route.Path)))
+			default:
+				warnings = append(warnings, fmt.Sprintf("Public service %q uses custom path %q. Update any client configuration to match the effective route.", route.Service, normalizedPublicPath(route.Path)))
+			}
+		}
+	}
+	frontendRoot := ""
+	for _, descriptor := range services {
+		if descriptor.Public && isFrontendDescriptor(descriptor) {
+			frontendRoot = descriptor.Name
+			break
+		}
+	}
+	if frontendRoot != "" && rootRoute != "" && rootRoute != frontendRoot {
+		warnings = append(warnings, fmt.Sprintf("Root path / currently points to %q, not the detected frontend service %q. This is valid custom mode, but browser entrypoints and docs should use the effective route.", rootRoute, frontendRoot))
+	}
+	return warnings
 }
 
 func pathExists(path string, seen map[string]struct{}) bool {

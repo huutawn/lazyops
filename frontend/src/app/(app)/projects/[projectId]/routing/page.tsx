@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
@@ -8,7 +8,7 @@ import { ErrorState } from '@/components/primitives/error-state';
 import { SkeletonPage } from '@/components/primitives/skeleton';
 import { FormButton, FormField, FormInput } from '@/components/forms/form-fields';
 import { useProjectRouting, useUpdateProjectRouting } from '@/modules/project-routing/project-routing-hooks';
-import type { RoutingRoute } from '@/modules/project-routing/project-routing-types';
+import type { RoutingGuidanceRoute, RoutingRoute } from '@/modules/project-routing/project-routing-types';
 import { useProjectExpertRouteGuard } from '@/modules/projects/project-flow-hooks';
 
 export default function RoutingPage() {
@@ -24,6 +24,14 @@ export default function RoutingPage() {
     data?.routing_policy?.routes ?? [],
   );
   const [isDirty, setIsDirty] = useState(false);
+
+  useEffect(() => {
+    if (!data || isDirty) {
+      return;
+    }
+    setSharedDomain(data.routing_policy?.shared_domain ?? '');
+    setRoutes(data.routing_policy?.routes ?? []);
+  }, [data, isDirty]);
 
   if (shouldBlock) {
     return <SkeletonPage title cards={2} />;
@@ -98,6 +106,8 @@ export default function RoutingPage() {
     }
     return false;
   })();
+  const rootOwners = routes.filter((route) => route.path.trim() === '/');
+  const hasMultipleRoots = rootOwners.length > 1;
 
   return (
     <div className="flex flex-col gap-6">
@@ -150,6 +160,11 @@ export default function RoutingPage() {
             {hasOverlappingPaths && (
               <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-6 py-3 text-base text-amber-400">
                 <strong>Warning:</strong> Some path prefixes overlap. This may cause routing conflicts.
+              </div>
+            )}
+            {hasMultipleRoots && (
+              <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 px-6 py-3 text-base text-rose-300">
+                <strong>Conflict:</strong> Chỉ một service được giữ root path <code>/</code>. Nếu backend cần public thì nên chuyển sang <code>/api</code> hoặc tách domain riêng.
               </div>
             )}
 
@@ -242,6 +257,57 @@ export default function RoutingPage() {
         )}
       </SectionCard>
 
+      <SectionCard
+        title="Suggested Paths"
+        description="Convention-first defaults. Nếu bạn custom route, browser/API/WS snippets nên theo effective path chứ không theo convention."
+      >
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-[#1e293b] bg-[#0B1120]/30 p-6">
+            <h3 className="text-base font-semibold text-white">Convention suggestions</h3>
+            <div className="mt-4 space-y-3">
+              {(data?.suggested_routes ?? []).map((route) => (
+                <div key={`suggested:${route.service}:${route.path}`} className="rounded-lg border border-[#1e293b] bg-[#020617] px-4 py-3">
+                  <p className="text-sm font-semibold text-white">{route.service}</p>
+                  <p className="text-sm text-lazyops-muted">Path: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#cbd5e1]">{route.path}</code>{route.websocket ? ' · WebSocket' : ''}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#1e293b] bg-[#0B1120]/30 p-6">
+            <h3 className="text-base font-semibold text-white">Effective public paths</h3>
+            <div className="mt-4 space-y-3">
+              {(data?.effective_public_paths ?? []).map((route) => (
+                <div key={`effective:${route.service}:${route.path}`} className="rounded-lg border border-[#1e293b] bg-[#020617] px-4 py-3">
+                  <p className="text-sm font-semibold text-white">{route.service}</p>
+                  <p className="text-sm text-lazyops-muted">Path: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#cbd5e1]">{route.path}</code>{route.websocket ? ' · WebSocket' : ''}</p>
+                  <p className="mt-1 text-xs uppercase tracking-wide text-lazyops-muted">{route.source} · {route.audience ?? 'public'}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {(data?.warnings?.length ?? 0) > 0 ? (
+          <div className="mt-4 space-y-2">
+            {data?.warnings.map((warning) => (
+              <div key={warning} className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+                {warning}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </SectionCard>
+
+      <SectionCard
+        title="Client Preview"
+        description="Preview nhanh cho browser/API/WS snippets theo effective route đang active."
+      >
+        <pre className="overflow-x-auto rounded-xl bg-[#0B1120]/60 p-6 text-sm font-mono text-[#94a3b8]">
+          {generateClientRoutePreview(data?.effective_public_paths ?? [])}
+        </pre>
+      </SectionCard>
+
       <SectionCard title="Caddyfile Preview" description="Preview of the generated Caddy configuration">
         <pre className="overflow-x-auto rounded-xl bg-[#0B1120]/60 p-6 text-sm font-mono text-[#94a3b8]">
           {generateCaddyfilePreview(sharedDomain, routes)}
@@ -253,7 +319,7 @@ export default function RoutingPage() {
           <FormButton
             type="button"
             onClick={handleSave}
-            disabled={!isDirty || hasErrors || hasOverlappingPaths || update.isPending}
+            disabled={!isDirty || hasErrors || hasOverlappingPaths || hasMultipleRoots || update.isPending}
             loading={update.isPending}
           >
             {isDirty ? 'Save Changes' : 'No Changes'}
@@ -307,4 +373,28 @@ function generateCaddyfilePreview(sharedDomain: string, routes: RoutingRoute[]):
 
   caddyfile += `}\n`;
   return caddyfile;
+}
+
+function generateClientRoutePreview(routes: RoutingGuidanceRoute[]): string {
+  if (routes.length === 0) {
+    return '# No effective public paths yet\n# Mark a service public or save a routing policy to see client guidance';
+  }
+  const lines: string[] = [];
+  for (const route of routes) {
+    if (route.websocket) {
+      lines.push(`WS_URL=${route.path}`);
+      lines.push(`Browser WebSocket example: new WebSocket(window.location.origin.replace(/^http/, 'ws') + '${route.path}')`);
+      lines.push('');
+      continue;
+    }
+    if (route.path === '/') {
+      lines.push(`Frontend root: ${route.service} serves /`);
+      lines.push('');
+      continue;
+    }
+    lines.push(`API_BASE_URL=${route.path}`);
+    lines.push(`Browser fetch example: fetch('${route.path}/health')`);
+    lines.push('');
+  }
+  return lines.join('\n').trim();
 }

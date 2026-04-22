@@ -11,9 +11,20 @@ export interface RoutingRoute {
   strip_prefix?: boolean;
 }
 
+export interface RoutingGuidanceRoute {
+  path: string;
+  service: string;
+  audience?: string;
+  source?: string;
+  websocket?: boolean;
+}
+
 export interface ProjectRoutingResponse {
   routing_policy: RoutingPolicy;
   available_services: string[];
+  suggested_routes: RoutingGuidanceRoute[];
+  effective_public_paths: RoutingGuidanceRoute[];
+  warnings: string[];
 }
 
 export interface UpdateRoutingPolicyRequest {

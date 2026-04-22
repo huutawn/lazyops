@@ -12,13 +12,33 @@ type RoutingRouteRecord struct {
 }
 
 type RoutingPolicyRecord struct {
-	SharedDomain string                 `json:"shared_domain,omitempty"`
-	Routes       []RoutingRouteRecord   `json:"routes"`
+	SharedDomain string               `json:"shared_domain,omitempty"`
+	Routes       []RoutingRouteRecord `json:"routes"`
+}
+
+type RoutingGuidanceRouteRecord struct {
+	Path      string `json:"path"`
+	Service   string `json:"service"`
+	Audience  string `json:"audience,omitempty"`
+	Source    string `json:"source,omitempty"`
+	WebSocket bool   `json:"websocket,omitempty"`
+}
+
+type MigrationFindingRecord struct {
+	Category         string `json:"category"`
+	Severity         string `json:"severity"`
+	ServiceName      string `json:"service_name,omitempty"`
+	CurrentValue     string `json:"current_value,omitempty"`
+	RecommendedValue string `json:"recommended_value,omitempty"`
+	Message          string `json:"message"`
 }
 
 type ProjectRoutingResult struct {
-	RoutingPolicy     RoutingPolicyRecord `json:"routing_policy"`
-	AvailableServices []string            `json:"available_services"`
+	RoutingPolicy        RoutingPolicyRecord          `json:"routing_policy"`
+	AvailableServices    []string                     `json:"available_services"`
+	SuggestedRoutes      []RoutingGuidanceRouteRecord `json:"suggested_routes"`
+	EffectivePublicPaths []RoutingGuidanceRouteRecord `json:"effective_public_paths"`
+	Warnings             []string                     `json:"warnings"`
 }
 
 type UpdateRoutingCommand struct {

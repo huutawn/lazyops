@@ -92,11 +92,11 @@ func TestProjectEnvServiceUpsertAndLoadRuntimeEnv(t *testing.T) {
 	if record.UpdatedAt == nil || record.UpdatedAt.IsZero() {
 		t.Fatal("expected updated_at to be populated")
 	}
-	if len(record.HelperSnippets) != 1 {
-		t.Fatalf("expected one helper snippet, got %#v", record.HelperSnippets)
+	if len(record.HelperPacks) != 1 {
+		t.Fatalf("expected one helper pack, got %#v", record.HelperPacks)
 	}
-	if _, ok := record.HelperSnippets[0].Env["DB_PASSWORD"]; ok {
-		t.Fatalf("expected helper snippet to omit DB_PASSWORD, got %#v", record.HelperSnippets[0].Env)
+	if record.HelperPacks[0].LocalExampleEnv["DATABASE_URL"] == "" {
+		t.Fatalf("expected safe local example, got %#v", record.HelperPacks[0])
 	}
 
 	envMap, err := service.LoadRuntimeEnv("prj_123")
@@ -170,14 +170,32 @@ func TestProjectEnvServiceBuildsPostgresHelpersFromUnifiedServiceInventory(t *te
 	if err != nil {
 		t.Fatalf("get project env helpers: %v", err)
 	}
-	if len(record.HelperSnippets) != 1 {
-		t.Fatalf("expected one postgres helper snippet, got %#v", record.HelperSnippets)
+	if len(record.HelperPacks) != 1 {
+		t.Fatalf("expected one postgres helper pack, got %#v", record.HelperPacks)
 	}
-	snippet := record.HelperSnippets[0]
-	if snippet.Env["PGHOST"] != "db" {
-		t.Fatalf("expected K3s internal dns host db, got %#v", snippet.Env)
+	pack := record.HelperPacks[0]
+	if pack.PrimaryKey != "DATABASE_URL" {
+		t.Fatalf("expected primary key DATABASE_URL, got %#v", pack)
 	}
-	if snippet.Env["DATABASE_URL"] != "postgres://postgres:supersecret@db:5432/app?sslmode=disable" {
-		t.Fatalf("expected postgres helper URL to use internal dns, got %#v", snippet.Env)
+	if pack.EnvExample["DATABASE_URL"] != "" {
+		t.Fatalf("expected .env example to stay blank, got %#v", pack.EnvExample)
 	}
+	if pack.PlaceholderEnv["DATABASE_URL"] != "${DATABASE_URL}" {
+		t.Fatalf("expected placeholder env token, got %#v", pack.PlaceholderEnv)
+	}
+	if !containsManagedKey(record.ManagedKeys, "DATABASE_URL") {
+		t.Fatalf("expected managed keys to include DATABASE_URL, got %#v", record.ManagedKeys)
+	}
+	if len(record.ProvisionedKeys) == 0 {
+		t.Fatalf("expected provisioned keys for managed defaults, got %#v", record)
+	}
+}
+
+func containsManagedKey(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }

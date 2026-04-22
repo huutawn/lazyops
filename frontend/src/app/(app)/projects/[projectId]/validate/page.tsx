@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useDeploymentBindings } from '@/modules/deployment-bindings/binding-hooks';
+import { useProjectRouting } from '@/modules/project-routing/project-routing-hooks';
+import { useProjectServices } from '@/modules/project-services/project-service-hooks';
 import { validateLazyopsYaml } from '@/modules/validate-lazyops/validate-api';
 import type { ValidateLazyopsResponse, LazyopsYAMLDraft } from '@/modules/validate-lazyops/validate-types';
 import { PageHeader } from '@/components/primitives/page-header';
@@ -23,22 +25,14 @@ const EXPLANATION = {
   ],
 };
 
-const FORBIDDEN_FIELDS = [
-  'ssh', 'ssh_key', 'private_key', 'password', 'pat', 'token',
-  'agent_token', 'github_token', 'secret', 'kubeconfig',
-  'kubeconfig_secret_ref', 'public_ip', 'private_ip', 'server_ip',
-  'project_id', 'deployment_binding_id', 'target_id', 'target_kind',
-  'instance_id', 'mesh_network_id', 'cluster_id', 'deploy_command',
-];
-
-const ALLOWED_PROTOCOLS = ['http', 'https', 'tcp', 'grpc'];
-
 export default function ValidateContractPage() {
   const params = useParams();
   const projectId = params?.projectId as string;
   const { shouldBlock } = useProjectExpertRouteGuard(projectId);
 
   const { data: bindingsData, isLoading: bindingsLoading } = useDeploymentBindings(projectId);
+  const services = useProjectServices(projectId);
+  const routing = useProjectRouting(projectId);
   const [validationResult, setValidationResult] = useState<ValidateLazyopsResponse | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -57,16 +51,35 @@ export default function ValidateContractPage() {
     setIsValidating(true);
     setValidationError(null);
 
+    const servicesDraft = (services.data?.items ?? []).map((service) => {
+      const healthPath = typeof service.healthcheck?.['path'] === 'string' ? service.healthcheck['path'] : '';
+      const healthPort = typeof service.healthcheck?.['port'] === 'number' ? service.healthcheck['port'] : 0;
+      return {
+        name: service.name,
+        path: service.path,
+        start_hint: service.start_hint || undefined,
+        public: service.public,
+        healthcheck: healthPath && healthPort > 0 ? {
+          path: healthPath,
+          port: healthPort,
+        } : undefined,
+      };
+    });
+
     const draft: LazyopsYAMLDraft = {
       project_slug: '',
       runtime_mode: binding.runtime_mode,
       deployment_binding: { target_ref: binding.target_ref },
-      services: [],
+      services: servicesDraft,
       dependency_bindings: [],
       compatibility_policy: { env_injection: false, managed_credentials: false, localhost_rescue: false },
       magic_domain_policy: { enabled: false, provider: '' },
       preview_policy: { enabled: false },
       scale_to_zero_policy: { enabled: binding.scale_to_zero_policy?.enabled === true },
+      routing_policy: {
+        shared_domain: routing.data?.routing_policy?.shared_domain,
+        routes: routing.data?.routing_policy?.routes ?? [],
+      },
     };
 
     try {
@@ -83,7 +96,7 @@ export default function ValidateContractPage() {
     }
   };
 
-  if (bindingsLoading) {
+  if (bindingsLoading || services.isLoading || routing.isLoading) {
     return <LoadingPage label="Loading bindings…" />;
   }
 
@@ -102,8 +115,6 @@ export default function ValidateContractPage() {
       </div>
     );
   }
-
-  const selectedBinding = bindings[selectedBindingIdx];
 
   return (
     <div className="flex flex-col gap-6">
@@ -252,6 +263,50 @@ function ValidationSummary({ result }: { result: ValidateLazyopsResponse }) {
               ))}
             </div>
           </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Suggested public paths" description="Convention-first preview based on current services and routing policy.">
+        <div className="space-y-3">
+          {result.suggested_routes.length > 0 ? result.suggested_routes.map((route) => (
+            <div key={`suggested:${route.service}:${route.path}`} className="rounded-lg border border-[#1e293b] bg-[#0B1120]/30 px-4 py-3">
+              <p className="text-base font-medium text-lazyops-text">{route.service}</p>
+              <p className="text-sm text-lazyops-muted">Suggested path: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">{route.path}</code>{route.websocket ? ' · WebSocket' : ''}</p>
+            </div>
+          )) : (
+            <p className="text-sm text-lazyops-muted">No public services were detected in the current draft.</p>
+          )}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Effective public paths" description="These are the public paths clients should actually use.">
+        <div className="space-y-3">
+          {result.effective_public_paths.length > 0 ? result.effective_public_paths.map((route) => (
+            <div key={`effective:${route.service}:${route.path}`} className="rounded-lg border border-[#1e293b] bg-[#0B1120]/30 px-4 py-3">
+              <p className="text-base font-medium text-lazyops-text">{route.service}</p>
+              <p className="text-sm text-lazyops-muted">Effective path: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5 text-[#38BDF8]">{route.path}</code>{route.websocket ? ' · WebSocket' : ''}</p>
+            </div>
+          )) : (
+            <p className="text-sm text-lazyops-muted">No effective public path is configured for the current draft.</p>
+          )}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Migration findings" description="Warnings when the draft still looks local-only or when custom public paths require client updates.">
+        <div className="space-y-3">
+          {result.migration_findings.length > 0 ? result.migration_findings.map((finding) => (
+            <div key={`${finding.category}:${finding.service_name}:${finding.current_value}`} className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+              <p className="text-base font-medium text-amber-200">{finding.message}</p>
+              {finding.current_value ? (
+                <p className="mt-1 text-sm text-amber-100/80">Current: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5">{finding.current_value}</code></p>
+              ) : null}
+              {finding.recommended_value ? (
+                <p className="mt-1 text-sm text-amber-100/80">Recommended: <code className="rounded bg-[#0B1120]/60 px-1.5 py-0.5">{finding.recommended_value}</code></p>
+              ) : null}
+            </div>
+          )) : (
+            <p className="text-sm text-lazyops-muted">No localhost or custom-path migration findings were detected in the current draft.</p>
+          )}
         </div>
       </SectionCard>
     </div>
