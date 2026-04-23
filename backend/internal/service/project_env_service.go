@@ -422,15 +422,43 @@ func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []P
 		if strings.EqualFold(item.Kind, "postgres") {
 			entry.Category = "database"
 			entry.PrimaryKey = "DATABASE_URL"
-			entry.PlaceholderEnv = map[string]string{"DATABASE_URL": "${DATABASE_URL}"}
-			entry.EnvExample = map[string]string{"DATABASE_URL": ""}
-			entry.LocalExampleEnv = map[string]string{"DATABASE_URL": "postgres://postgres:postgres@localhost:5432/app?sslmode=disable"}
-			entry.RuntimeKeys = []string{"DATABASE_URL"}
+			entry.PlaceholderEnv = map[string]string{
+				"DATABASE_URL":      "${DATABASE_URL}",
+				"POSTGRES_DB":       "${POSTGRES_DB}",
+				"POSTGRES_HOST":     "${POSTGRES_HOST}",
+				"POSTGRES_PORT":     "${POSTGRES_PORT}",
+				"POSTGRES_USER":     "${POSTGRES_USER}",
+				"POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
+			}
+			entry.EnvExample = map[string]string{
+				"DATABASE_URL":      "",
+				"POSTGRES_DB":       "",
+				"POSTGRES_HOST":     "",
+				"POSTGRES_PORT":     "",
+				"POSTGRES_USER":     "",
+				"POSTGRES_PASSWORD": "",
+			}
+			entry.LocalExampleEnv = map[string]string{
+				"DATABASE_URL":      "postgres://postgres:postgres@localhost:5432/app?sslmode=disable",
+				"POSTGRES_DB":       "app",
+				"POSTGRES_HOST":     "localhost",
+				"POSTGRES_PORT":     "5432",
+				"POSTGRES_USER":     "postgres",
+				"POSTGRES_PASSWORD": "postgres",
+			}
+			entry.RuntimeKeys = []string{
+				"DATABASE_URL",
+				"POSTGRES_DB",
+				"POSTGRES_HOST",
+				"POSTGRES_PORT",
+				"POSTGRES_USER",
+				"POSTGRES_PASSWORD",
+			}
 			entry.Notes = []string{
-				"Prefer a single DATABASE_URL in application config.",
+				"Prefer DATABASE_URL when the app accepts a single DSN, or use the decomposed POSTGRES_* keys for framework-specific config.",
 				"LazyOps will inject the real runtime value for managed database keys during distributed-k3s deploys.",
 			}
-			entry.LanguageSnippets = buildLanguageSnippets("DATABASE_URL", "", "Database")
+			entry.LanguageSnippets = buildLanguageSnippets("DATABASE_URL", "POSTGRES_HOST", "Database")
 		}
 		items = append(items, entry)
 	}
@@ -763,7 +791,7 @@ func pickPrimaryDependencyEnvKey(runtimeEnv map[string]string) string {
 }
 
 func pickSecondaryDependencyHostKey(runtimeEnv map[string]string) string {
-	for _, key := range []string{"DB_HOST", "MONGODB_HOST", "REDIS_HOST", "KAFKA_HOST", "EUREKA_HOST"} {
+	for _, key := range []string{"POSTGRES_HOST", "DB_HOST", "MONGODB_HOST", "REDIS_HOST", "KAFKA_HOST", "EUREKA_HOST"} {
 		if strings.TrimSpace(runtimeEnv[key]) != "" {
 			return key
 		}

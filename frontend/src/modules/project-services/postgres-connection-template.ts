@@ -12,10 +12,14 @@ export type PostgresConnectionTemplateSlot = (typeof POSTGRES_CONNECTION_TEMPLAT
 export type PostgresConnectionTemplate = Record<PostgresConnectionTemplateSlot, string>;
 
 export function createDefaultPostgresConnectionTemplate(): PostgresConnectionTemplate {
-  return POSTGRES_CONNECTION_TEMPLATE_SLOTS.reduce((acc, slot) => {
-    acc[slot] = slot;
-    return acc;
-  }, {} as PostgresConnectionTemplate);
+  return {
+    DB_URL: 'DATABASE_URL',
+    DB_NAME: 'POSTGRES_DB',
+    DB_HOST: 'POSTGRES_HOST',
+    DB_PORT: 'POSTGRES_PORT',
+    DB_USERNAME: 'POSTGRES_USER',
+    DB_PASSWORD: 'POSTGRES_PASSWORD',
+  };
 }
 
 export function normalizePostgresConnectionTemplate(

@@ -43,10 +43,20 @@ func defaultConnectionTemplateForKind(kind string) map[string]string {
 }
 
 func defaultPostgresConnectionTemplate() map[string]string {
-	return defaultConnectionTemplateForKind("postgres")
+	return map[string]string{
+		"DB_URL":      "DATABASE_URL",
+		"DB_NAME":     "POSTGRES_DB",
+		"DB_HOST":     "POSTGRES_HOST",
+		"DB_PORT":     "POSTGRES_PORT",
+		"DB_USERNAME": "POSTGRES_USER",
+		"DB_PASSWORD": "POSTGRES_PASSWORD",
+	}
 }
 
 func postgresConnectionTemplateForKind(kind string) map[string]string {
+	if normalizeManagedInternalBridgeKind(kind) == "postgres" {
+		return defaultPostgresConnectionTemplate()
+	}
 	return defaultConnectionTemplateForKind(kind)
 }
 
