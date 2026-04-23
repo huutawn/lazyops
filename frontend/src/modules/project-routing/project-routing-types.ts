@@ -9,6 +9,7 @@ export interface RoutingRoute {
   port?: number;
   websocket?: boolean;
   strip_prefix?: boolean;
+  strip_prefix_mode?: 'auto' | 'always' | 'never';
 }
 
 export interface RoutingGuidanceRoute {

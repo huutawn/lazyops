@@ -262,9 +262,46 @@ func TestBuildDefaultRoutingPolicyStripsDefaultAPIPrefix(t *testing.T) {
 		t.Fatalf("expected two routes, got %#v", policy.Routes)
 	}
 	for _, route := range policy.Routes {
-		if route.Service == "be" && route.Path == "/api" && !route.StripPrefix {
-			t.Fatalf("expected default /api route to strip prefix, got %#v", route)
+		if route.Service == "be" && route.Path == "/api" {
+			if !route.StripPrefix {
+				t.Fatalf("expected default /api route to strip prefix, got %#v", route)
+			}
+			if route.StripPrefixMode != routingStripPrefixModeAuto {
+				t.Fatalf("expected default /api route to use auto strip prefix mode, got %#v", route)
+			}
 		}
+	}
+}
+
+func TestBuildDefaultRoutingPolicyUsesAPIPrefixForSinglePublicBackend(t *testing.T) {
+	policy := buildDefaultRoutingPolicy("", []routingDescriptor{
+		{Name: "backend", Kind: "api", Public: true},
+	})
+	if len(policy.Routes) != 1 {
+		t.Fatalf("expected one route, got %#v", policy.Routes)
+	}
+	route := policy.Routes[0]
+	if route.Path != "/api" {
+		t.Fatalf("expected single public backend to use /api, got %#v", route)
+	}
+	if !route.StripPrefix {
+		t.Fatalf("expected single public backend /api route to strip prefix, got %#v", route)
+	}
+	if route.StripPrefixMode != routingStripPrefixModeAuto {
+		t.Fatalf("expected single public backend /api route to use auto strip prefix mode, got %#v", route)
+	}
+}
+
+func TestBuildDefaultRoutingPolicyUsesWebSocketPrefixForSinglePublicRealtimeService(t *testing.T) {
+	policy := buildDefaultRoutingPolicy("", []routingDescriptor{
+		{Name: "socket", Kind: "app", Public: true},
+	})
+	if len(policy.Routes) != 1 {
+		t.Fatalf("expected one route, got %#v", policy.Routes)
+	}
+	route := policy.Routes[0]
+	if route.Path != "/ws" || !route.WebSocket {
+		t.Fatalf("expected single websocket service to use /ws, got %#v", route)
 	}
 }
 

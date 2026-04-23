@@ -831,12 +831,13 @@ func (s *ProjectEnvService) resolveEffectiveRouting(projectID string, services [
 			continue
 		}
 		record := RoutingRouteRecord{
-			Path:        route.Path,
-			Service:     route.Service,
-			Port:        route.Port,
-			WebSocket:   route.WebSocket,
-			StripPrefix: route.StripPrefix,
-			CreatedAt:   policy.CreatedAt,
+			Path:            route.Path,
+			Service:         route.Service,
+			Port:            route.Port,
+			WebSocket:       route.WebSocket,
+			StripPrefix:     route.StripPrefix,
+			StripPrefixMode: route.StripPrefixMode,
+			CreatedAt:       policy.CreatedAt,
 		}
 		out.Routes = append(out.Routes, normalizeRoutingRoute(record, routingDescriptor{
 			Name:           serviceIndex[route.Service].Name,

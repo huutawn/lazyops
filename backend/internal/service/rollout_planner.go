@@ -381,11 +381,12 @@ func routingPolicyRecordToLazyops(policy RoutingPolicyRecord) LazyopsYAMLRouting
 	}
 	for _, route := range policy.Routes {
 		out.Routes = append(out.Routes, LazyopsYAMLRoute{
-			Path:        route.Path,
-			Service:     route.Service,
-			Port:        route.Port,
-			WebSocket:   route.WebSocket,
-			StripPrefix: route.StripPrefix,
+			Path:            route.Path,
+			Service:         route.Service,
+			Port:            route.Port,
+			WebSocket:       route.WebSocket,
+			StripPrefix:     route.StripPrefix,
+			StripPrefixMode: route.StripPrefixMode,
 		})
 	}
 	return out

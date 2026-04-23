@@ -250,11 +250,12 @@ func resolveDocumentRoutingPolicy(document LazyopsYAMLDocument, suggested Routin
 	routes := make([]RoutingRouteRecord, 0, len(document.RoutingPolicy.Routes))
 	for _, route := range document.RoutingPolicy.Routes {
 		routes = append(routes, RoutingRouteRecord{
-			Path:        normalizedPublicPath(route.Path),
-			Service:     route.Service,
-			Port:        route.Port,
-			WebSocket:   route.WebSocket,
-			StripPrefix: route.StripPrefix,
+			Path:            normalizedPublicPath(route.Path),
+			Service:         route.Service,
+			Port:            route.Port,
+			WebSocket:       route.WebSocket,
+			StripPrefix:     route.StripPrefix,
+			StripPrefixMode: route.StripPrefixMode,
 		})
 	}
 	return RoutingPolicyRecord{

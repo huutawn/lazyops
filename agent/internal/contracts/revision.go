@@ -84,12 +84,19 @@ type RoutingPolicyPayload struct {
 	Routes       []RoutePayload `json:"routes,omitempty"`
 }
 
+const (
+	RouteStripPrefixModeAuto   = "auto"
+	RouteStripPrefixModeAlways = "always"
+	RouteStripPrefixModeNever  = "never"
+)
+
 type RoutePayload struct {
-	Path        string `json:"path"`
-	Service     string `json:"service"`
-	Port        int    `json:"port,omitempty"`
-	WebSocket   bool   `json:"websocket,omitempty"`
-	StripPrefix bool   `json:"strip_prefix,omitempty"`
+	Path            string `json:"path"`
+	Service         string `json:"service"`
+	Port            int    `json:"port,omitempty"`
+	WebSocket       bool   `json:"websocket,omitempty"`
+	StripPrefix     bool   `json:"strip_prefix,omitempty"`
+	StripPrefixMode string `json:"strip_prefix_mode,omitempty"`
 }
 
 type MagicDomainPolicy struct {

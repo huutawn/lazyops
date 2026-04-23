@@ -82,7 +82,15 @@ export default function RoutingPage() {
 
   const handleRouteChange = (index: number, field: keyof RoutingRoute, value: string | number | boolean) => {
     setRoutes((prev) =>
-      prev.map((route, i) => (i === index ? { ...route, [field]: value } : route)),
+      prev.map((route, i) => {
+        if (i !== index) {
+          return route;
+        }
+        if (field === 'strip_prefix') {
+          return { ...route, strip_prefix: Boolean(value), strip_prefix_mode: undefined };
+        }
+        return { ...route, [field]: value };
+      }),
     );
     setIsDirty(true);
   };

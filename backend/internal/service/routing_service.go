@@ -95,12 +95,13 @@ func (s *RoutingService) GetRouting(userID, role, projectID string) (*ProjectRou
 	}
 	for _, r := range routes {
 		route := RoutingRouteRecord{
-			Path:        r.Path,
-			Service:     r.Service,
-			Port:        r.Port,
-			WebSocket:   r.WebSocket,
-			StripPrefix: r.StripPrefix,
-			CreatedAt:   policy.CreatedAt,
+			Path:            r.Path,
+			Service:         r.Service,
+			Port:            r.Port,
+			WebSocket:       r.WebSocket,
+			StripPrefix:     r.StripPrefix,
+			StripPrefixMode: r.StripPrefixMode,
+			CreatedAt:       policy.CreatedAt,
 		}
 		routeRecords = append(routeRecords, normalizeRoutingRoute(route, serviceIndex[route.Service]))
 	}
@@ -193,11 +194,12 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 	for _, r := range cmd.Routes {
 		normalizedRoute := normalizeRoutingRoute(r, serviceIndex[strings.TrimSpace(r.Service)])
 		modelRoutes = append(modelRoutes, models.RoutingRoute{
-			Path:        normalizedRoute.Path,
-			Service:     normalizedRoute.Service,
-			Port:        normalizedRoute.Port,
-			WebSocket:   normalizedRoute.WebSocket,
-			StripPrefix: normalizedRoute.StripPrefix,
+			Path:            normalizedRoute.Path,
+			Service:         normalizedRoute.Service,
+			Port:            normalizedRoute.Port,
+			WebSocket:       normalizedRoute.WebSocket,
+			StripPrefix:     normalizedRoute.StripPrefix,
+			StripPrefixMode: normalizedRoute.StripPrefixMode,
 		})
 	}
 
@@ -283,11 +285,12 @@ func (s *RoutingService) ResolveEffectiveRouting(projectID string, services []Bl
 	}
 	for _, route := range routes {
 		record := RoutingRouteRecord{
-			Path:        route.Path,
-			Service:     route.Service,
-			Port:        route.Port,
-			WebSocket:   route.WebSocket,
-			StripPrefix: route.StripPrefix,
+			Path:            route.Path,
+			Service:         route.Service,
+			Port:            route.Port,
+			WebSocket:       route.WebSocket,
+			StripPrefix:     route.StripPrefix,
+			StripPrefixMode: route.StripPrefixMode,
 		}
 		records = append(records, normalizeRoutingRoute(record, serviceIndex[record.Service]))
 	}
@@ -359,7 +362,7 @@ func buildDefaultRoutingPolicy(sharedDomain string, services []routingDescriptor
 		}
 	}
 	if len(publicServices) == 1 {
-		rootRoute := normalizeRoutingRoute(RoutingRouteRecord{Path: "/", Service: publicServices[0].Name}, publicServices[0])
+		rootRoute := defaultRouteForSinglePublicService(publicServices[0])
 		return RoutingPolicyRecord{
 			SharedDomain: strings.TrimSpace(sharedDomain),
 			Routes: []RoutingRouteRecord{
@@ -473,6 +476,28 @@ func buildRoutingGuidanceRoutes(policy RoutingPolicyRecord, services []routingDe
 	return out
 }
 
+func defaultRouteForSinglePublicService(service routingDescriptor) RoutingRouteRecord {
+	switch {
+	case isWebSocketDescriptor(service):
+		return normalizeRoutingRoute(RoutingRouteRecord{
+			Path:      "/ws",
+			Service:   service.Name,
+			WebSocket: true,
+		}, service)
+	case isAPIDescriptor(service) || isBackendDescriptor(service):
+		return normalizeRoutingRoute(RoutingRouteRecord{
+			Path:            "/api",
+			Service:         service.Name,
+			StripPrefixMode: routingStripPrefixModeAuto,
+		}, service)
+	default:
+		return normalizeRoutingRoute(RoutingRouteRecord{
+			Path:    "/",
+			Service: service.Name,
+		}, service)
+	}
+}
+
 func buildRoutingWarnings(suggested, effective RoutingPolicyRecord, services []routingDescriptor) []string {
 	if len(effective.Routes) == 0 {
 		return nil
@@ -526,16 +551,53 @@ func buildRoutingWarnings(suggested, effective RoutingPolicyRecord, services []r
 
 func normalizeRoutingRoute(route RoutingRouteRecord, descriptor routingDescriptor) RoutingRouteRecord {
 	route.Path = normalizedPublicPath(route.Path)
-	if shouldAutoStripPrefix(route, descriptor) {
-		route.StripPrefix = true
+	route.StripPrefixMode = normalizeStripPrefixMode(route.StripPrefixMode)
+	if route.StripPrefixMode == "" {
+		route.StripPrefixMode = defaultStripPrefixMode(route, descriptor)
 	}
+	route.StripPrefix = resolveEffectiveStripPrefix(route, descriptor)
 	return route
 }
 
-func shouldAutoStripPrefix(route RoutingRouteRecord, descriptor routingDescriptor) bool {
+func normalizeStripPrefixMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case routingStripPrefixModeAuto:
+		return routingStripPrefixModeAuto
+	case routingStripPrefixModeAlways:
+		return routingStripPrefixModeAlways
+	case routingStripPrefixModeNever:
+		return routingStripPrefixModeNever
+	default:
+		return ""
+	}
+}
+
+func defaultStripPrefixMode(route RoutingRouteRecord, descriptor routingDescriptor) string {
+	if route.WebSocket {
+		return ""
+	}
+	if normalizedPublicPath(route.Path) == "/api" && (isAPIDescriptor(descriptor) || isBackendDescriptor(descriptor)) {
+		return routingStripPrefixModeAuto
+	}
+	return ""
+}
+
+func resolveEffectiveStripPrefix(route RoutingRouteRecord, descriptor routingDescriptor) bool {
+	switch route.StripPrefixMode {
+	case routingStripPrefixModeAlways:
+		return true
+	case routingStripPrefixModeNever:
+		return false
+	case routingStripPrefixModeAuto:
+		return shouldDefaultAutoStripPrefix(route, descriptor)
+	}
 	if route.StripPrefix {
 		return true
 	}
+	return shouldDefaultAutoStripPrefix(route, descriptor)
+}
+
+func shouldDefaultAutoStripPrefix(route RoutingRouteRecord, descriptor routingDescriptor) bool {
 	if route.WebSocket {
 		return false
 	}

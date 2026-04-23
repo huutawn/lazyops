@@ -10,11 +10,12 @@ func ToProjectRoutingResponse(result service.ProjectRoutingResult) responsedto.P
 	routes := make([]responsedto.RoutingRouteResponse, 0, len(result.RoutingPolicy.Routes))
 	for _, r := range result.RoutingPolicy.Routes {
 		routes = append(routes, responsedto.RoutingRouteResponse{
-			Path:        r.Path,
-			Service:     r.Service,
-			Port:        r.Port,
-			WebSocket:   r.WebSocket,
-			StripPrefix: r.StripPrefix,
+			Path:            r.Path,
+			Service:         r.Service,
+			Port:            r.Port,
+			WebSocket:       r.WebSocket,
+			StripPrefix:     r.StripPrefix,
+			StripPrefixMode: r.StripPrefixMode,
 		})
 	}
 
@@ -56,11 +57,12 @@ func ToUpdateRoutingCommand(userID, role, projectID string, req requestdto.Updat
 	routes := make([]service.RoutingRouteRecord, 0, len(req.Routes))
 	for _, r := range req.Routes {
 		routes = append(routes, service.RoutingRouteRecord{
-			Path:        r.Path,
-			Service:     r.Service,
-			Port:        r.Port,
-			WebSocket:   r.WebSocket,
-			StripPrefix: r.StripPrefix,
+			Path:            r.Path,
+			Service:         r.Service,
+			Port:            r.Port,
+			WebSocket:       r.WebSocket,
+			StripPrefix:     r.StripPrefix,
+			StripPrefixMode: r.StripPrefixMode,
 		})
 	}
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -91,7 +92,7 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 
 	version := gatewayVersion(runtimeCtx)
 	paths := m.renderPaths(layout, runtimeCtx, version)
-	plan, err := m.buildPlan(runtimeCtx, version)
+	plan, err := m.buildPlan(ctx, runtimeCtx, version)
 	if err != nil {
 		return GatewayRenderResult{}, err
 	}
@@ -281,7 +282,7 @@ func (m *GatewayManager) RenderGatewayConfig(ctx context.Context, runtimeCtx Run
 	return renderResult, nil
 }
 
-func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) (GatewayPlan, error) {
+func (m *GatewayManager) buildPlan(ctx context.Context, runtimeCtx RuntimeContext, version string) (GatewayPlan, error) {
 	primaryProvider, fallbackProvider := preferredMagicProviders()
 	hostToken := gatewayHostToken(runtimeCtx)
 	resolver, err := newRuntimeDependencyResolver(m.runtimeRoot, runtimeCtx)
@@ -319,6 +320,7 @@ func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) (G
 		return routes[i].ServiceName < routes[j].ServiceName
 	})
 	sort.Strings(publicServices)
+	routingPolicy := m.resolveAutoStripPrefixRoutes(ctx, runtimeCtx.RoutingPolicy(), routes, runtimeCtx.Services)
 
 	return GatewayPlan{
 		Version:              version,
@@ -332,9 +334,204 @@ func (m *GatewayManager) buildPlan(runtimeCtx RuntimeContext, version string) (G
 		RouteFingerprint:     resolver.RouteFingerprint(),
 		InvalidationRules:    resolver.InvalidationRules(),
 		Routes:               routes,
-		RoutingPolicy:        runtimeCtx.RoutingPolicy(),
+		RoutingPolicy:        routingPolicy,
 		Services:             runtimeCtx.Services,
 	}, nil
+}
+
+func (m *GatewayManager) resolveAutoStripPrefixRoutes(
+	ctx context.Context,
+	policy contracts.RoutingPolicyPayload,
+	routes []GatewayRoute,
+	services []ServiceRuntimeContext,
+) contracts.RoutingPolicyPayload {
+	if len(policy.Routes) == 0 {
+		return policy
+	}
+
+	serviceIndex := make(map[string]*ServiceRuntimeContext, len(services))
+	for i := range services {
+		serviceIndex[services[i].Name] = &services[i]
+	}
+	upstreamIndex := make(map[string]string, len(routes))
+	for _, route := range routes {
+		upstreamIndex[route.ServiceName] = strings.TrimSpace(route.Upstream)
+	}
+
+	resolvedRoutes := make([]contracts.RoutePayload, 0, len(policy.Routes))
+	for _, route := range policy.Routes {
+		mode := normalizeRouteStripPrefixMode(route.StripPrefixMode)
+		if mode == "" {
+			resolvedRoutes = append(resolvedRoutes, route)
+			continue
+		}
+		route.StripPrefixMode = mode
+		switch mode {
+		case contracts.RouteStripPrefixModeAlways:
+			route.StripPrefix = true
+		case contracts.RouteStripPrefixModeNever:
+			route.StripPrefix = false
+		case contracts.RouteStripPrefixModeAuto:
+			route = m.resolveAutoStripPrefixRoute(ctx, route, serviceIndex[route.Service], upstreamIndex[route.Service])
+		}
+		resolvedRoutes = append(resolvedRoutes, route)
+	}
+	policy.Routes = resolvedRoutes
+	return policy
+}
+
+func (m *GatewayManager) resolveAutoStripPrefixRoute(
+	ctx context.Context,
+	route contracts.RoutePayload,
+	service *ServiceRuntimeContext,
+	upstream string,
+) contracts.RoutePayload {
+	if route.WebSocket || service == nil || strings.TrimSpace(upstream) == "" {
+		return route
+	}
+
+	protocol := strings.ToLower(strings.TrimSpace(service.HealthCheck.Protocol))
+	if protocol == "" {
+		protocol = "http"
+	}
+	if protocol != "http" && protocol != "https" {
+		return route
+	}
+
+	withStripPath, withoutStripPath, ok := routeStripPrefixProbePaths(route.Path, service.HealthCheck.Path)
+	if !ok {
+		return route
+	}
+
+	timeout := 1500 * time.Millisecond
+	stripSuccess, stripStatus, stripMessage := gatewayRouteProbeOnce(ctx, protocol, upstream, withStripPath, timeout)
+	noStripSuccess, noStripStatus, noStripMessage := gatewayRouteProbeOnce(ctx, protocol, upstream, withoutStripPath, timeout)
+
+	switch {
+	case stripSuccess && !noStripSuccess:
+		if !route.StripPrefix && m != nil && m.logger != nil {
+			m.logger.Info("auto-resolved gateway strip prefix",
+				"service", route.Service,
+				"path", route.Path,
+				"strip_prefix", true,
+				"mode", route.StripPrefixMode,
+				"probe_with_strip_path", withStripPath,
+				"probe_without_strip_path", withoutStripPath,
+				"with_strip_status", stripStatus,
+				"without_strip_status", noStripStatus,
+				"with_strip_message", stripMessage,
+				"without_strip_message", noStripMessage,
+			)
+		}
+		route.StripPrefix = true
+	case !stripSuccess && noStripSuccess:
+		if route.StripPrefix && m != nil && m.logger != nil {
+			m.logger.Info("auto-resolved gateway strip prefix",
+				"service", route.Service,
+				"path", route.Path,
+				"strip_prefix", false,
+				"mode", route.StripPrefixMode,
+				"probe_with_strip_path", withStripPath,
+				"probe_without_strip_path", withoutStripPath,
+				"with_strip_status", stripStatus,
+				"without_strip_status", noStripStatus,
+				"with_strip_message", stripMessage,
+				"without_strip_message", noStripMessage,
+			)
+		}
+		route.StripPrefix = false
+	}
+	return route
+}
+
+func normalizeRouteStripPrefixMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case contracts.RouteStripPrefixModeAuto:
+		return contracts.RouteStripPrefixModeAuto
+	case contracts.RouteStripPrefixModeAlways:
+		return contracts.RouteStripPrefixModeAlways
+	case contracts.RouteStripPrefixModeNever:
+		return contracts.RouteStripPrefixModeNever
+	default:
+		return ""
+	}
+}
+
+func routeStripPrefixProbePaths(routePath, healthPath string) (string, string, bool) {
+	routePath = normalizeGatewayPublicPath(routePath)
+	healthPath = strings.TrimSpace(healthPath)
+	if routePath == "" || routePath == "/" || healthPath == "" {
+		return "", "", false
+	}
+	if !strings.HasPrefix(healthPath, "/") {
+		healthPath = "/" + healthPath
+	}
+
+	withStripPath := healthPath
+	withoutStripPath := joinGatewayRoutePath(routePath, healthPath)
+	if healthPath == routePath || strings.HasPrefix(healthPath, routePath+"/") {
+		trimmed := strings.TrimPrefix(healthPath, routePath)
+		if trimmed == "" {
+			trimmed = "/"
+		}
+		withStripPath = normalizeGatewayPublicPath(trimmed)
+		withoutStripPath = healthPath
+	}
+	if withStripPath == withoutStripPath {
+		return "", "", false
+	}
+	return withStripPath, withoutStripPath, true
+}
+
+func joinGatewayRoutePath(prefix, suffix string) string {
+	prefix = normalizeGatewayPublicPath(prefix)
+	suffix = strings.TrimSpace(suffix)
+	if suffix == "" || suffix == "/" {
+		return prefix
+	}
+	if !strings.HasPrefix(suffix, "/") {
+		suffix = "/" + suffix
+	}
+	if prefix == "/" {
+		return suffix
+	}
+	return strings.TrimRight(prefix, "/") + suffix
+}
+
+func normalizeGatewayPublicPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	if len(trimmed) > 1 {
+		trimmed = strings.TrimRight(trimmed, "/")
+		if trimmed == "" {
+			return "/"
+		}
+	}
+	return trimmed
+}
+
+func gatewayRouteProbeOnce(ctx context.Context, protocol, address, path string, timeout time.Duration) (bool, int, string) {
+	if strings.TrimSpace(path) == "" {
+		path = "/"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s://%s%s", protocol, address, path), nil)
+	if err != nil {
+		return false, 0, err.Error()
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, 0, err.Error()
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	success := (resp.StatusCode >= 200 && resp.StatusCode < 400) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
+	return success, resp.StatusCode, fmt.Sprintf("gateway route probe returned status %d", resp.StatusCode)
 }
 
 func (m *GatewayManager) renderPaths(layout WorkspaceLayout, runtimeCtx RuntimeContext, version string) gatewayRenderPaths {

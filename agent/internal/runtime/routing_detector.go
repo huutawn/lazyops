@@ -10,24 +10,25 @@ import (
 // RoutingSuggestion holds a suggested routing configuration
 // based on automatic detection of service patterns.
 type RoutingSuggestion struct {
-	SharedDomain       string           `json:"shared_domain"`
-	Routes             []SuggestedRoute `json:"routes"`
-	Confidence         float64          `json:"confidence"`  // 0.0-1.0
-	Reason             string           `json:"reason"`
-	WebSocketDetected  bool             `json:"websocket_detected"`
-	APIDetected        bool             `json:"api_detected"`
-	FrontendDetected   bool             `json:"frontend_detected"`
+	SharedDomain      string           `json:"shared_domain"`
+	Routes            []SuggestedRoute `json:"routes"`
+	Confidence        float64          `json:"confidence"` // 0.0-1.0
+	Reason            string           `json:"reason"`
+	WebSocketDetected bool             `json:"websocket_detected"`
+	APIDetected       bool             `json:"api_detected"`
+	FrontendDetected  bool             `json:"frontend_detected"`
 }
 
 // SuggestedRoute is a suggested route for the Caddy config
 type SuggestedRoute struct {
-	Path        string `json:"path"`
-	Service     string `json:"service"`
-	Port        int    `json:"port"`
-	WebSocket   bool   `json:"websocket"`
-	StripPrefix bool   `json:"strip_prefix"`
-	Confidence  float64 `json:"confidence"`
-	Reason      string `json:"reason"`
+	Path            string  `json:"path"`
+	Service         string  `json:"service"`
+	Port            int     `json:"port"`
+	WebSocket       bool    `json:"websocket"`
+	StripPrefix     bool    `json:"strip_prefix"`
+	StripPrefixMode string  `json:"strip_prefix_mode,omitempty"`
+	Confidence      float64 `json:"confidence"`
+	Reason          string  `json:"reason"`
 }
 
 // RoutingDetector analyzes services and suggests routing configuration
@@ -115,23 +116,25 @@ func (d *RoutingDetector) Detect() *RoutingSuggestion {
 		// API route
 		if hasAPI {
 			suggestion.Routes = append(suggestion.Routes, SuggestedRoute{
-				Path:        "/api",
-				Service:     apiService,
-				Port:        apiPort,
-				WebSocket:   false,
-				StripPrefix: false,
-				Confidence:  0.9,
-				Reason:      fmt.Sprintf("Service %q detected as API service, routing /api to it", apiService),
+				Path:            "/api",
+				Service:         apiService,
+				Port:            apiPort,
+				WebSocket:       false,
+				StripPrefix:     true,
+				StripPrefixMode: contracts.RouteStripPrefixModeAuto,
+				Confidence:      0.9,
+				Reason:          fmt.Sprintf("Service %q detected as API service, routing /api to it", apiService),
 			})
 		} else if hasBackend {
 			suggestion.Routes = append(suggestion.Routes, SuggestedRoute{
-				Path:        "/api",
-				Service:     backendService,
-				Port:        backendPort,
-				WebSocket:   false,
-				StripPrefix: false,
-				Confidence:  0.7,
-				Reason:      fmt.Sprintf("Service %q detected as backend service, routing /api to it", backendService),
+				Path:            "/api",
+				Service:         backendService,
+				Port:            backendPort,
+				WebSocket:       false,
+				StripPrefix:     true,
+				StripPrefixMode: contracts.RouteStripPrefixModeAuto,
+				Confidence:      0.7,
+				Reason:          fmt.Sprintf("Service %q detected as backend service, routing /api to it", backendService),
 			})
 		}
 
@@ -215,11 +218,12 @@ func (s *RoutingSuggestion) ToRoutingPolicy() contracts.RoutingPolicyPayload {
 
 	for _, route := range s.Routes {
 		policy.Routes = append(policy.Routes, contracts.RoutePayload{
-			Path:        route.Path,
-			Service:     route.Service,
-			Port:        route.Port,
-			WebSocket:   route.WebSocket,
-			StripPrefix: route.StripPrefix,
+			Path:            route.Path,
+			Service:         route.Service,
+			Port:            route.Port,
+			WebSocket:       route.WebSocket,
+			StripPrefix:     route.StripPrefix,
+			StripPrefixMode: route.StripPrefixMode,
 		})
 	}
 

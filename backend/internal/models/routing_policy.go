@@ -15,9 +15,10 @@ type RoutingPolicy struct {
 
 // RoutingRoute is a single route entry within a RoutingPolicy.
 type RoutingRoute struct {
-	Path        string `json:"path"`
-	Service     string `json:"service"`
-	Port        int    `json:"port,omitempty"`
-	WebSocket   bool   `json:"websocket,omitempty"`
-	StripPrefix bool   `json:"strip_prefix,omitempty"`
+	Path            string `json:"path"`
+	Service         string `json:"service"`
+	Port            int    `json:"port,omitempty"`
+	WebSocket       bool   `json:"websocket,omitempty"`
+	StripPrefix     bool   `json:"strip_prefix,omitempty"`
+	StripPrefixMode string `json:"strip_prefix_mode,omitempty"`
 }
