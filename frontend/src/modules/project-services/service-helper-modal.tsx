@@ -397,8 +397,11 @@ function formatServiceKind(service: ProjectService) {
   if (service.source_type === 'internal') {
     if (kind === 'postgres') return 'PostgreSQL nội bộ';
     if (kind === 'mysql') return 'MySQL nội bộ';
+    if (kind === 'mongodb') return 'MongoDB nội bộ';
     if (kind === 'redis') return 'Redis nội bộ';
     if (kind === 'rabbitmq') return 'RabbitMQ nội bộ';
+    if (kind === 'kafka') return 'Kafka nội bộ';
+    if (kind === 'eureka-server') return 'Eureka Server nội bộ';
   }
   if (kind === 'api') return 'API / backend';
   if (kind === 'web') return 'Frontend web';
@@ -409,6 +412,9 @@ function formatServiceKind(service: ProjectService) {
 function formatDatabaseTarget(service: ProjectService) {
   if (service.source_type === 'internal') {
     return 'Tự là dịch vụ hạ tầng';
+  }
+  if (service.dependencies?.length) {
+    return service.dependencies.map((item) => item.target_service).join(', ');
   }
   return service.connection_target_service || 'Chưa kết nối';
 }

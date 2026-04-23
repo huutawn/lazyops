@@ -446,58 +446,67 @@ func buildProjectEnvHelperSnippets(services []models.ProjectInternalService) []P
 func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, services []ProjectServiceRecord, projectEnv map[string]string, effectiveRouting RoutingPolicyRecord) []ProjectEnvHelperPack {
 	items := make([]ProjectEnvHelperPack, 0)
 	serviceIndex := make(map[string]ProjectServiceRecord, len(services))
-	relationalDependents := make(map[string][]string)
+	dependentsByTarget := make(map[string][]string)
 	for _, item := range services {
 		serviceIndex[item.Name] = item
-		if strings.TrimSpace(item.ConnectionTargetService) == "" {
-			continue
-		}
-		targetName := strings.TrimSpace(item.ConnectionTargetService)
-		relationalDependents[targetName] = append(relationalDependents[targetName], item.Name)
-	}
-	for _, item := range services {
-		if item.SourceType != serviceSourceTypeInternal || !isRelationalDatabaseKind(item.Kind) {
-			continue
-		}
-		template := coerceConnectionTemplateForKind(item.Kind, item.ConnectionTemplate)
-		primaryKey := firstNonEmpty(template["DB_URL"], "DATABASE_URL")
-		runtimeValues := buildRelationalConnectionRuntimeValues(item, projectEnv, runtimeMode)
-		runtimeEnv := buildRelationalConnectionTemplateEnv(item, projectEnv, runtimeMode)
-		runtimeKeys := sortedEnvKeys(runtimeEnv)
-		envExample := make(map[string]string, len(template))
-		placeholderEnv := make(map[string]string, len(template))
-		localExampleEnv := make(map[string]string, len(template))
-		for _, slot := range relationalConnectionTemplateSlots {
-			envName := strings.TrimSpace(template[slot])
-			if envName == "" {
+		for _, dependency := range item.Dependencies {
+			targetName := strings.TrimSpace(dependency.TargetService)
+			if targetName == "" {
 				continue
 			}
-			envExample[envName] = ""
-			placeholderEnv[envName] = "${" + envName + "}"
-			localExampleEnv[envName] = localRelationalExampleValue(item.Kind, slot)
+			dependentsByTarget[targetName] = append(dependentsByTarget[targetName], item.Name)
 		}
-		relatedServices := append([]string{item.Name}, relationalDependents[item.Name]...)
+	}
+
+	for _, item := range services {
+		if item.SourceType != serviceSourceTypeInternal {
+			continue
+		}
+		runtimeEnv := buildInternalServiceHelperRuntimeEnv(item, projectEnv, runtimeMode)
+		if len(runtimeEnv) == 0 {
+			continue
+		}
+		relatedServices := append([]string{item.Name}, dependentsByTarget[item.Name]...)
 		sort.Strings(relatedServices)
-		items = append(items, ProjectEnvHelperPack{
-			ServiceKind:     item.Kind,
-			Alias:           item.Name,
-			Category:        "database",
-			Audience:        "backend",
-			SourceService:   item.Name,
-			RelatedServices: relatedServices,
-			PrimaryKey:      primaryKey,
-			Managed:         true,
-			RuntimeInjected: true,
-			PlaceholderEnv:  placeholderEnv,
-			EnvExample:      envExample,
-			LocalExampleEnv: localExampleEnv,
-			RuntimeKeys:     runtimeKeys,
-			Notes: []string{
-				"Prefer a single database URL in code and framework config.",
-				"LazyOps injects managed database keys for distributed-k3s; user-defined env values win when already present.",
-			},
-			LanguageSnippets: buildRelationalLanguageSnippets(primaryKey, template["DB_HOST"], runtimeValues),
-		})
+		items = append(items, buildManagedDependencyHelperPackWithRelated(item, item, runtimeEnv, relatedServices))
+	}
+
+	for _, item := range services {
+		if item.SourceType == serviceSourceTypeInternal {
+			continue
+		}
+		countsByKind := make(map[string]int)
+		relationalCount := 0
+		for _, dependency := range item.Dependencies {
+			target, ok := serviceIndex[strings.TrimSpace(dependency.TargetService)]
+			if !ok || target.SourceType != serviceSourceTypeInternal {
+				continue
+			}
+			kind := normalizeManagedInternalBridgeKind(target.Kind)
+			countsByKind[kind]++
+			if isRelationalDatabaseKind(kind) {
+				relationalCount++
+			}
+		}
+		for _, dependency := range item.Dependencies {
+			target, ok := serviceIndex[strings.TrimSpace(dependency.TargetService)]
+			if !ok || target.SourceType != serviceSourceTypeInternal {
+				continue
+			}
+			kind := normalizeManagedInternalBridgeKind(target.Kind)
+			runtimeEnv := buildDependencyBindingEnv(
+				dependency,
+				target,
+				projectEnv,
+				runtimeMode,
+				countsByKind[kind],
+				relationalCount,
+			)
+			if len(runtimeEnv) == 0 {
+				continue
+			}
+			items = append(items, buildManagedDependencyHelperPack(item, target, runtimeEnv))
+		}
 	}
 
 	for _, route := range effectiveRouting.Routes {
@@ -586,6 +595,201 @@ func buildProjectEnvHelperSnippetsFromServiceInventory(runtimeMode string, servi
 		return items[i].Category < items[j].Category
 	})
 	return items
+}
+
+func buildManagedDependencyHelperPack(service ProjectServiceRecord, target ProjectServiceRecord, runtimeEnv map[string]string) ProjectEnvHelperPack {
+	return buildManagedDependencyHelperPackWithRelated(service, target, runtimeEnv, []string{service.Name, target.Name})
+}
+
+func buildManagedDependencyHelperPackWithRelated(
+	service ProjectServiceRecord,
+	target ProjectServiceRecord,
+	runtimeEnv map[string]string,
+	relatedServices []string,
+) ProjectEnvHelperPack {
+	placeholderEnv := make(map[string]string, len(runtimeEnv))
+	envExample := make(map[string]string, len(runtimeEnv))
+	for key := range runtimeEnv {
+		placeholderEnv[key] = "${" + key + "}"
+		envExample[key] = ""
+	}
+	primaryKey := pickPrimaryDependencyEnvKey(runtimeEnv)
+	hostKey := pickSecondaryDependencyHostKey(runtimeEnv)
+	kind := normalizeManagedInternalBridgeKind(target.Kind)
+	return ProjectEnvHelperPack{
+		ServiceKind:     target.Kind,
+		Alias:           target.Name,
+		Category:        dependencyHelperCategory(kind),
+		Audience:        "backend",
+		SourceService:   target.Name,
+		RelatedServices: relatedServices,
+		PrimaryKey:      primaryKey,
+		Managed:         true,
+		RuntimeInjected: true,
+		PlaceholderEnv:  placeholderEnv,
+		EnvExample:      envExample,
+		LocalExampleEnv: buildDependencyLocalExampleEnv(target, runtimeEnv),
+		RuntimeKeys:     sortedEnvKeys(runtimeEnv),
+		Notes:           dependencyHelperNotes(kind),
+		LanguageSnippets: buildLanguageSnippets(
+			primaryKey,
+			hostKey,
+			dependencySnippetTitle(kind),
+		),
+	}
+}
+
+func buildInternalServiceHelperRuntimeEnv(target ProjectServiceRecord, projectEnv map[string]string, runtimeMode string) map[string]string {
+	kind := normalizeManagedInternalBridgeKind(target.Kind)
+	if isRelationalDatabaseKind(kind) {
+		return buildRelationalConnectionTemplateEnv(target, projectEnv, runtimeMode)
+	}
+	return buildDependencyRuntimeEnv(target, projectEnv, runtimeMode)
+}
+
+func buildDependencyLocalExampleEnv(target ProjectServiceRecord, runtimeEnv map[string]string) map[string]string {
+	if isRelationalDatabaseKind(target.Kind) {
+		template := coerceConnectionTemplateForKind(target.Kind, target.ConnectionTemplate)
+		out := make(map[string]string, len(template))
+		for _, slot := range relationalConnectionTemplateSlots {
+			envName := strings.TrimSpace(template[slot])
+			if envName == "" {
+				continue
+			}
+			out[envName] = localRelationalExampleValue(target.Kind, slot)
+		}
+		return out
+	}
+	out := cloneStringMap(runtimeEnv)
+	if len(out) == 0 {
+		return map[string]string{}
+	}
+	host := strings.TrimSpace(target.Name)
+	port := strconv.Itoa(firstPositive(target.ServicePort, target.TargetPort, defaultConfiguredTargetPort(target.Kind)))
+	if host == "" || port == "0" {
+		return out
+	}
+	for key, value := range out {
+		next := strings.TrimSpace(value)
+		keyUpper := strings.ToUpper(strings.TrimSpace(key))
+		if next == host && strings.Contains(keyUpper, "HOST") {
+			out[key] = "localhost"
+			continue
+		}
+		next = strings.ReplaceAll(next, "://"+host+":"+port, "://localhost:"+port)
+		next = strings.ReplaceAll(next, host+":"+port, "localhost:"+port)
+		if next == host && strings.Contains(keyUpper, "HOST") {
+			next = "localhost"
+		}
+		out[key] = next
+	}
+	return out
+}
+
+func dependencyHelperCategory(kind string) string {
+	switch normalizeManagedInternalBridgeKind(kind) {
+	case "postgres", "mysql", "mongodb":
+		return "database"
+	case "redis":
+		return "cache"
+	case "kafka":
+		return "message_broker"
+	case "eureka-server":
+		return "service_discovery"
+	default:
+		return "service_dependency"
+	}
+}
+
+func dependencySnippetTitle(kind string) string {
+	switch normalizeManagedInternalBridgeKind(kind) {
+	case "postgres":
+		return "PostgreSQL"
+	case "mysql":
+		return "MySQL"
+	case "mongodb":
+		return "MongoDB"
+	case "redis":
+		return "Redis"
+	case "kafka":
+		return "Kafka"
+	case "eureka-server":
+		return "Eureka"
+	default:
+		return "Service Dependency"
+	}
+}
+
+func dependencyHelperNotes(kind string) []string {
+	switch normalizeManagedInternalBridgeKind(kind) {
+	case "postgres", "mysql", "mongodb":
+		return []string{
+			"Prefer a single connection URL in backend config when possible.",
+			"LazyOps injects these managed keys for distributed-k3s unless the project env already overrides them.",
+		}
+	case "redis":
+		return []string{
+			"Use the managed Redis URL for caches, sessions, and queue backends.",
+			"LazyOps only fills missing keys; existing project env values still win.",
+		}
+	case "kafka":
+		return []string{
+			"Prefer a bootstrap-servers style config in app code; host and port helpers are included for framework compatibility.",
+			"LazyOps only injects missing Kafka keys so manual overrides remain respected.",
+		}
+	case "eureka-server":
+		return []string{
+			"Use the Eureka URL when registering or discovering services inside the cluster.",
+			"Host and port helpers are provided for frameworks that do not accept a single URL variable.",
+		}
+	default:
+		return []string{
+			"LazyOps injects these managed dependency keys during distributed-k3s deploys.",
+		}
+	}
+}
+
+func pickPrimaryDependencyEnvKey(runtimeEnv map[string]string) string {
+	for _, key := range []string{"DATABASE_URL", "DB_URL", "MONGODB_URL", "REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS", "EUREKA_URL"} {
+		if strings.TrimSpace(runtimeEnv[key]) != "" {
+			return key
+		}
+	}
+	keys := sortedEnvKeys(runtimeEnv)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+func pickSecondaryDependencyHostKey(runtimeEnv map[string]string) string {
+	for _, key := range []string{"DB_HOST", "MONGODB_HOST", "REDIS_HOST", "KAFKA_HOST", "EUREKA_HOST"} {
+		if strings.TrimSpace(runtimeEnv[key]) != "" {
+			return key
+		}
+	}
+	keys := sortedEnvKeys(runtimeEnv)
+	if len(keys) > 1 {
+		return keys[1]
+	}
+	return ""
+}
+
+func buildKafkaLocalExampleEnv(kind string, runtimeEnv map[string]string) map[string]string {
+	out := make(map[string]string, 4)
+	for _, key := range []string{"KAFKA_BOOTSTRAP_SERVERS", "KAFKA_BROKERS", "KAFKA_HOST", "KAFKA_PORT"} {
+		if value := strings.TrimSpace(runtimeEnv[key]); value != "" {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		port := strconv.Itoa(defaultConfiguredTargetPort(kind))
+		out["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:" + port
+		out["KAFKA_BROKERS"] = "localhost:" + port
+		out["KAFKA_HOST"] = "localhost"
+		out["KAFKA_PORT"] = port
+	}
+	return out
 }
 
 func (s *ProjectEnvService) resolveEffectiveRouting(projectID string, services []ProjectServiceRecord) (RoutingPolicyRecord, error) {

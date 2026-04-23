@@ -108,11 +108,13 @@ func (s *ProjectRuntimeService) Get(ctx context.Context, requesterUserID, reques
 	}
 
 	for i := range serviceRecords {
-		targetName := strings.TrimSpace(serviceList.Items[i].ConnectionTargetService)
-		if targetName == "" {
-			continue
+		for _, dependency := range serviceList.Items[i].Dependencies {
+			targetName := strings.TrimSpace(dependency.TargetService)
+			if targetName == "" {
+				continue
+			}
+			serviceRecords[i].Dependencies = append(serviceRecords[i].Dependencies, buildRuntimeDependency(targetName, runtimeByName, serviceList.Items, firstRuntimeNonEmpty(project.NamespaceSlug, project.Slug)))
 		}
-		serviceRecords[i].Dependencies = append(serviceRecords[i].Dependencies, buildRuntimeDependency(targetName, runtimeByName, serviceList.Items, firstRuntimeNonEmpty(project.NamespaceSlug, project.Slug)))
 	}
 
 	result := &ProjectRuntimeSummaryResult{

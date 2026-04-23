@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ADMIN_PROJECT_TABS, GUIDED_PROJECT_TABS } from '@/components/primitives/project-tabs';
+import { INTERNAL_SERVICE_OPTIONS } from '@/modules/internal-services/internal-service-types';
+import { PROJECT_OBSERVABILITY_TABS, resolveProjectObservabilityTab } from '@/modules/observability/project-observability-tabs';
 import { formatBootstrapStateLabelVN, resolveProjectNextAction } from '@/modules/bootstrap/bootstrap-ui';
 import { formatActionResult, formatPlacementValue, resolvePlacementHint, resolvePrimaryServiceAction, resolveServiceDisplayStatus } from '@/modules/project-services/project-service-inventory';
 import { resolveGuidedProjectFlow, resolveProjectExpertRoute } from '@/modules/projects/project-flow-hooks';
@@ -20,6 +22,17 @@ describe('service-first navigation', () => {
     expect(resolveGuidedProjectFlow(true, 'operator')).toBe(true);
     expect(resolveProjectExpertRoute('prj_123', true)).toBe('/projects/prj_123');
     expect(resolveProjectExpertRoute('prj_123', false)).toBeNull();
+  });
+
+  it('keeps project observability focused on monitoring with a runtime fallback', () => {
+    expect(PROJECT_OBSERVABILITY_TABS.map((tab) => tab.label)).toEqual(['Monitoring', 'Runtime']);
+    expect(resolveProjectObservabilityTab({})).toBe('monitoring');
+    expect(resolveProjectObservabilityTab({ service: 'api' })).toBe('runtime');
+    expect(resolveProjectObservabilityTab({ tab: 'runtime' })).toBe('runtime');
+  });
+
+  it('lists kafka as a first-class managed internal service', () => {
+    expect(INTERNAL_SERVICE_OPTIONS.map((item) => item.kind)).toContain('kafka');
   });
 });
 

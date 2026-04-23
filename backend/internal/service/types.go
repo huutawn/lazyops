@@ -597,6 +597,12 @@ type K3sServiceSpecRecord struct {
 	DeployStrategy  map[string]any              `json:"deploy_strategy,omitempty"`
 }
 
+type ProjectServiceDependencyBinding struct {
+	TargetService         string
+	ConnectionTemplateKey string
+	ConnectionTemplate    map[string]string
+}
+
 type ProjectServiceRecord struct {
 	ID                      string
 	ProjectID               string
@@ -608,6 +614,7 @@ type ProjectServiceRecord struct {
 	RuntimeProfile          string
 	PlacementMode           string
 	PlacementNodeID         string
+	Dependencies            []ProjectServiceDependencyBinding
 	ConnectionTemplateKey   string
 	ConnectionTemplate      map[string]string
 	ConnectionTargetService string
@@ -730,6 +737,7 @@ type ConfigureProjectServiceItem struct {
 	RuntimeProfile          string
 	PlacementMode           string
 	PlacementNodeID         string
+	Dependencies            []ProjectServiceDependencyBinding
 	ConnectionTemplateKey   string
 	ConnectionTemplate      map[string]string
 	ConnectionTargetService string
@@ -764,6 +772,7 @@ type BlueprintServiceContractRecord struct {
 	RuntimeProfile          string
 	PlacementMode           string
 	PlacementNodeID         string
+	Dependencies            []ProjectServiceDependencyBinding
 	ConnectionTemplateKey   string
 	ConnectionTemplate      map[string]string
 	ConnectionTargetService string

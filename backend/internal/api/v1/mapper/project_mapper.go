@@ -18,6 +18,7 @@ func ToCreateProjectCommand(userID string, req requestdto.CreateProjectRequest) 
 			RuntimeProfile:          item.RuntimeProfile,
 			PlacementMode:           item.PlacementMode,
 			PlacementNodeID:         item.PlacementNodeID,
+			Dependencies:            toProjectServiceDependencyBindings(item.Dependencies),
 			ConnectionTemplateKey:   item.ConnectionTemplateKey,
 			ConnectionTemplate:      item.ConnectionTemplate,
 			ConnectionTargetService: item.ConnectionTargetService,
@@ -73,6 +74,7 @@ func ToConfigureProjectServicesCommand(userID, role, projectID string, req reque
 			RuntimeProfile:          item.RuntimeProfile,
 			PlacementMode:           item.PlacementMode,
 			PlacementNodeID:         item.PlacementNodeID,
+			Dependencies:            toProjectServiceDependencyBindings(item.Dependencies),
 			ConnectionTemplateKey:   item.ConnectionTemplateKey,
 			ConnectionTemplate:      item.ConnectionTemplate,
 			ConnectionTargetService: item.ConnectionTargetService,
@@ -204,6 +206,7 @@ func ToProjectServiceListResponse(result service.ProjectServiceListResult) respo
 			RuntimeProfile:          item.RuntimeProfile,
 			PlacementMode:           item.PlacementMode,
 			PlacementNodeID:         item.PlacementNodeID,
+			Dependencies:            toProjectServiceDependencyBindingResponses(item.Dependencies),
 			ConnectionTemplateKey:   item.ConnectionTemplateKey,
 			ConnectionTemplate:      item.ConnectionTemplate,
 			ConnectionTargetService: item.ConnectionTargetService,
@@ -225,6 +228,36 @@ func ToProjectServiceListResponse(result service.ProjectServiceListResult) respo
 	}
 
 	return responsedto.ProjectServiceListResponse{Items: items}
+}
+
+func toProjectServiceDependencyBindings(items []requestdto.ProjectServiceDependencyBindingRequest) []service.ProjectServiceDependencyBinding {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]service.ProjectServiceDependencyBinding, 0, len(items))
+	for _, item := range items {
+		out = append(out, service.ProjectServiceDependencyBinding{
+			TargetService:         item.TargetService,
+			ConnectionTemplateKey: item.ConnectionTemplateKey,
+			ConnectionTemplate:    item.ConnectionTemplate,
+		})
+	}
+	return out
+}
+
+func toProjectServiceDependencyBindingResponses(items []service.ProjectServiceDependencyBinding) []responsedto.ProjectServiceDependencyBindingResponse {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]responsedto.ProjectServiceDependencyBindingResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, responsedto.ProjectServiceDependencyBindingResponse{
+			TargetService:         item.TargetService,
+			ConnectionTemplateKey: item.ConnectionTemplateKey,
+			ConnectionTemplate:    item.ConnectionTemplate,
+		})
+	}
+	return out
 }
 
 func ToPlacementNodeListResponse(result service.PlacementNodeListResult) responsedto.PlacementNodeListResponse {

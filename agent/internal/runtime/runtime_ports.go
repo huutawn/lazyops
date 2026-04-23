@@ -34,10 +34,16 @@ func effectiveRuntimePort(service ServiceRuntimeContext) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "mongodb":
+		return 27017
 	case "redis":
 		return 6379
 	case "rabbitmq":
 		return 5672
+	case "kafka":
+		return 9092
+	case "eureka-server":
+		return 8761
 	default:
 		return 8080
 	}

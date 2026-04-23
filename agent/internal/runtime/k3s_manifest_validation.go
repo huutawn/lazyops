@@ -191,7 +191,7 @@ func requiresPVCForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
-	case "postgres", "mysql", "redis", "rabbitmq", "internal-db":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "internal-db":
 		return true
 	default:
 		return false
@@ -230,7 +230,7 @@ func validateK3sServicePorts(spec contracts.K3sServiceSpecPayload) error {
 
 func requiresResolvedImageForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
 	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
-	case "postgres", "mysql", "redis", "rabbitmq", "internal-db":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "eureka-server", "internal-db":
 		return false
 	default:
 		return true
@@ -239,7 +239,7 @@ func requiresResolvedImageForK3sSpec(spec contracts.K3sServiceSpecPayload) bool 
 
 func requiresResolvedPortForK3sSpec(spec contracts.K3sServiceSpecPayload) bool {
 	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
-	case "postgres", "mysql", "redis", "rabbitmq", "internal-db":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "eureka-server", "internal-db":
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(spec.RuntimeProfile), "worker") && !spec.Public && k3sHealthcheckPort(spec.HealthCheck) <= 0 {

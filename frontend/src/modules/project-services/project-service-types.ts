@@ -1,3 +1,9 @@
+export type ProjectServiceDependencyBinding = {
+  target_service: string;
+  connection_template_key?: string;
+  connection_template?: Record<string, string>;
+};
+
 export type ProjectService = {
   id: string;
   project_id: string;
@@ -9,6 +15,7 @@ export type ProjectService = {
   runtime_profile: string;
   placement_mode: string;
   placement_node_id?: string;
+  dependencies?: ProjectServiceDependencyBinding[];
   connection_template_key?: string;
   connection_template?: Record<string, string>;
   connection_target_service?: string;
@@ -56,6 +63,7 @@ export type ProjectServiceDraft = {
   runtime_profile?: string;
   placement_mode?: string;
   placement_node_id?: string;
+  dependencies?: ProjectServiceDependencyBinding[];
   connection_template_key?: string;
   connection_template?: Record<string, string>;
   connection_target_service?: string;

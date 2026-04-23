@@ -690,7 +690,7 @@ func k3sHealthGateProtocol(spec contracts.K3sServiceSpecPayload) string {
 		return protocol
 	}
 	switch strings.ToLower(strings.TrimSpace(spec.Kind)) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "eureka-server":
 		return "tcp"
 	default:
 		return "http"
@@ -703,10 +703,16 @@ func defaultK3sServicePort(kind string) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "mongodb":
+		return 27017
 	case "redis":
 		return 6379
 	case "rabbitmq":
 		return 5672
+	case "kafka":
+		return 9092
+	case "eureka-server":
+		return 8761
 	default:
 		return 8080
 	}

@@ -1,4 +1,4 @@
-import { ProjectRuntimeWorkspace } from '@/modules/project-runtime/project-runtime-workspace';
+import { ProjectObservabilityWorkspace } from '@/modules/observability/project-observability-workspace';
 
 type ProjectObservabilityPageProps = {
   params: Promise<{ projectId: string }>;
@@ -7,5 +7,5 @@ type ProjectObservabilityPageProps = {
 export default async function ProjectObservabilityPage({ params }: ProjectObservabilityPageProps) {
   const { projectId } = await params;
 
-  return <ProjectRuntimeWorkspace projectId={projectId} />;
+  return <ProjectObservabilityWorkspace projectId={projectId} />;
 }

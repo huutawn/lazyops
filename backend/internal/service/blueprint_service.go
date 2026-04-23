@@ -246,6 +246,7 @@ func compileProjectServices(projectID string, services []LazyopsYAMLService) ([]
 			Public:         item.Public,
 			RuntimeProfile: runtimeProfile,
 			PlacementMode:  servicePlacementModeSharedCluster,
+			Dependencies:   nil,
 			StartHint:      model.StartHint,
 			Replicas:       1,
 			Healthcheck:    healthcheck,
@@ -258,6 +259,7 @@ func compileProjectServices(projectID string, services []LazyopsYAMLService) ([]
 			Public:         item.Public,
 			RuntimeProfile: runtimeProfile,
 			PlacementMode:  servicePlacementModeSharedCluster,
+			Dependencies:   nil,
 			StartHint:      strings.TrimSpace(item.StartHint),
 			Replicas:       1,
 			Healthcheck:    healthcheck,
@@ -303,10 +305,16 @@ func inferServiceKind(item LazyopsYAMLService) string {
 		return "postgres"
 	case strings.Contains(name, "mysql"):
 		return "mysql"
+	case strings.Contains(name, "mongo"):
+		return "mongodb"
 	case strings.Contains(name, "redis"):
 		return "redis"
 	case strings.Contains(name, "rabbit"):
 		return "rabbitmq"
+	case strings.Contains(name, "kafka"):
+		return "kafka"
+	case strings.Contains(name, "eureka"), strings.Contains(name, "euruka"):
+		return "eureka-server"
 	default:
 		return "app"
 	}
@@ -449,7 +457,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	if err := unmarshalJSONWithFallback(item.DeployStrategyJSON, &deployStrategy, map[string]any{}); err != nil {
 		return ProjectServiceRecord{}, err
 	}
-	sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops := extractServiceContractMetadata(deployStrategy, item.Path)
+	sourceType, placementMode, placementNodeID, dependencies, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops := extractServiceContractMetadata(deployStrategy, item.Path)
 
 	runtimeProfile := ""
 	if item.RuntimeProfile != nil {
@@ -467,6 +475,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 		RuntimeProfile:          runtimeProfile,
 		PlacementMode:           placementMode,
 		PlacementNodeID:         placementNodeID,
+		Dependencies:            dependencies,
 		ConnectionTemplateKey:   connectionTemplateKey,
 		ConnectionTemplate:      connectionTemplate,
 		ConnectionTargetService: connectionTargetService,
@@ -487,7 +496,7 @@ func ToProjectServiceRecord(item models.Service) (ProjectServiceRecord, error) {
 	}, nil
 }
 
-func extractServiceContractMetadata(deployStrategy map[string]any, path string) (string, string, string, string, map[string]string, string, bool) {
+func extractServiceContractMetadata(deployStrategy map[string]any, path string) (string, string, string, []ProjectServiceDependencyBinding, string, map[string]string, string, bool) {
 	sourceType := stringFromAny(deployStrategy[lazyopsServiceMetaSourceType])
 	if sourceType == "" {
 		if strings.HasPrefix(path, reservedManagedInternalServicePathPrefix) {
@@ -502,29 +511,85 @@ func extractServiceContractMetadata(deployStrategy map[string]any, path string) 
 		placementMode = servicePlacementModeSharedCluster
 	}
 	placementNodeID := stringFromAny(deployStrategy[lazyopsServiceMetaPlacementNodeID])
+	dependencies := coerceProjectServiceDependencyBindings(deployStrategy[lazyopsServiceMetaDependencies])
 	connectionTemplateKey := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTemplateKey])
 	connectionTemplate := map[string]string{}
-	if sourceType == serviceSourceTypeInternal {
-		trimmedPath := strings.TrimSpace(path)
-		switch {
-		case strings.HasPrefix(trimmedPath, reservedManagedInternalServicePathPrefix+"postgres"):
-			connectionTemplate = coerceConnectionTemplateForKind("postgres", deployStrategy[lazyopsServiceMetaConnectionTemplate])
-		case strings.HasPrefix(trimmedPath, reservedManagedInternalServicePathPrefix+"mysql"):
-			connectionTemplate = coerceConnectionTemplateForKind("mysql", deployStrategy[lazyopsServiceMetaConnectionTemplate])
-		}
-	}
 	connectionTargetService := stringFromAny(deployStrategy[lazyopsServiceMetaConnectionTargetService])
+	internalKind := inferManagedInternalKindFromPath(path)
+	if sourceType == serviceSourceTypeInternal && isRelationalDatabaseKind(internalKind) {
+		connectionTemplate = coerceConnectionTemplateForKind(internalKind, deployStrategy[lazyopsServiceMetaConnectionTemplate])
+	}
+	if len(dependencies) == 0 && connectionTargetService != "" {
+		dependencies = []ProjectServiceDependencyBinding{{
+			TargetService:         connectionTargetService,
+			ConnectionTemplateKey: connectionTemplateKey,
+			ConnectionTemplate:    cloneStringMap(connectionTemplate),
+		}}
+	} else if len(dependencies) > 0 {
+		connectionTemplateKey, connectionTemplate, connectionTargetService = legacyDependencyFields(dependencies)
+	}
 	managedByLazyops := boolFromAny(deployStrategy[lazyopsServiceMetaManagedByLazyops]) || sourceType == serviceSourceTypeInternal
 
 	delete(deployStrategy, lazyopsServiceMetaSourceType)
 	delete(deployStrategy, lazyopsServiceMetaPlacementMode)
 	delete(deployStrategy, lazyopsServiceMetaPlacementNodeID)
+	delete(deployStrategy, lazyopsServiceMetaDependencies)
 	delete(deployStrategy, lazyopsServiceMetaConnectionTemplateKey)
 	delete(deployStrategy, lazyopsServiceMetaConnectionTemplate)
 	delete(deployStrategy, lazyopsServiceMetaConnectionTargetService)
 	delete(deployStrategy, lazyopsServiceMetaManagedByLazyops)
 
-	return sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops
+	return sourceType, placementMode, placementNodeID, dependencies, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops
+}
+
+func coerceProjectServiceDependencyBindings(raw any) []ProjectServiceDependencyBinding {
+	switch typed := raw.(type) {
+	case []ProjectServiceDependencyBinding:
+		return cloneProjectServiceDependencyBindings(typed)
+	case []any:
+		out := make([]ProjectServiceDependencyBinding, 0, len(typed))
+		for _, item := range typed {
+			rawMap, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			targetService := stringFromAny(rawMap["target_service"])
+			if targetService == "" {
+				continue
+			}
+			out = append(out, ProjectServiceDependencyBinding{
+				TargetService:         targetService,
+				ConnectionTemplateKey: stringFromAny(rawMap["connection_template_key"]),
+				ConnectionTemplate:    cloneStringMap(toStringMap(rawMap["connection_template"])),
+			})
+		}
+		return out
+	case map[string]any:
+		targetService := stringFromAny(typed["target_service"])
+		if targetService == "" {
+			return nil
+		}
+		return []ProjectServiceDependencyBinding{{
+			TargetService:         targetService,
+			ConnectionTemplateKey: stringFromAny(typed["connection_template_key"]),
+			ConnectionTemplate:    cloneStringMap(toStringMap(typed["connection_template"])),
+		}}
+	default:
+		return nil
+	}
+}
+
+func inferManagedInternalKindFromPath(path string) string {
+	trimmedPath := strings.TrimSpace(path)
+	trimmedPath = strings.TrimPrefix(trimmedPath, reservedManagedInternalServicePathPrefix)
+	if trimmedPath == "" {
+		return ""
+	}
+	parts := strings.Split(trimmedPath, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return normalizeManagedInternalBridgeKind(parts[0])
 }
 
 func stringFromAny(value any) string {

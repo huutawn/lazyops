@@ -438,10 +438,16 @@ func defaultPortForKind(kind string) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "mongodb":
+		return 27017
 	case "redis":
 		return 6379
 	case "rabbitmq":
 		return 5672
+	case "kafka":
+		return 9092
+	case "eureka-server":
+		return 8761
 	default:
 		return 0
 	}
@@ -453,7 +459,7 @@ func isManagedInternalServiceKind(kind string) bool {
 
 func requiresPersistentVolume(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka":
 		return true
 	default:
 		return false
@@ -466,10 +472,14 @@ func pvcMountPathForKind(kind string) string {
 		return "/var/lib/postgresql/data"
 	case "mysql":
 		return "/var/lib/mysql"
+	case "mongodb":
+		return "/data/db"
 	case "redis":
 		return "/data"
 	case "rabbitmq":
 		return "/var/lib/rabbitmq"
+	case "kafka":
+		return "/var/lib/kafka/data"
 	default:
 		return "/data"
 	}

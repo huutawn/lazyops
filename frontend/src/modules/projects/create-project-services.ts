@@ -13,6 +13,11 @@ export type CreateProjectServiceInput = {
   runtime_profile?: string;
   placement_mode?: string;
   placement_node_id?: string;
+  dependencies?: Array<{
+    target_service: string;
+    connection_template_key?: string;
+    connection_template?: Record<string, string>;
+  }>;
   connection_template_key?: string;
   connection_template?: Record<string, string>;
   connection_target_service?: string;
@@ -73,6 +78,15 @@ export function buildCreateProjectServices(scaffold: ServiceFirstScaffold): Crea
       source_type: 'repo',
       public: scaffold.backend_public,
       placement_mode: 'shared_cluster',
+      dependencies:
+        scaffold.postgres_enabled && scaffold.backend_connects_to_postgres
+          ? [
+              {
+                target_service: postgresServiceName,
+                connection_template_key: 'postgres.basic',
+              },
+            ]
+          : [],
       connection_template_key:
         scaffold.postgres_enabled && scaffold.backend_connects_to_postgres ? 'postgres.basic' : '',
       connection_target_service:

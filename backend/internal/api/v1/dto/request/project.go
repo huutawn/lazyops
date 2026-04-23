@@ -11,6 +11,12 @@ type CreateProjectRequest struct {
 	InternalServices []string                `json:"internal_services,omitempty"`
 }
 
+type ProjectServiceDependencyBindingRequest struct {
+	TargetService         string            `json:"target_service"`
+	ConnectionTemplateKey string            `json:"connection_template_key,omitempty"`
+	ConnectionTemplate    map[string]string `json:"connection_template,omitempty"`
+}
+
 type ProjectServiceRequest struct {
 	Name                    string            `json:"name"`
 	Path                    string            `json:"path"`
@@ -20,6 +26,7 @@ type ProjectServiceRequest struct {
 	RuntimeProfile          string            `json:"runtime_profile,omitempty"`
 	PlacementMode           string            `json:"placement_mode,omitempty"`
 	PlacementNodeID         string            `json:"placement_node_id,omitempty"`
+	Dependencies            []ProjectServiceDependencyBindingRequest `json:"dependencies,omitempty"`
 	ConnectionTemplateKey   string            `json:"connection_template_key,omitempty"`
 	ConnectionTemplate      map[string]string `json:"connection_template,omitempty"`
 	ConnectionTargetService string            `json:"connection_target_service,omitempty"`

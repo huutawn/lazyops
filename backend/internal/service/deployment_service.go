@@ -610,6 +610,8 @@ func buildInternalBindings(services []BlueprintServiceContractRecord, bindings [
 				connectionString = postgresConnectionString(targetName, port, targetSvc.EnvBundle)
 			case "mysql":
 				connectionString = mysqlConnectionString(targetName, port, targetSvc.EnvBundle)
+			case "mongodb":
+				connectionString = mongodbConnectionString(targetName, port, targetSvc.EnvBundle)
 			}
 		}
 		out = append(out, InternalBindingRecord{
@@ -693,6 +695,14 @@ func mysqlConnectionString(host string, port int, env map[string]string) string 
 	password := firstNonEmptyCompiledValue(env["MYSQL_PASSWORD"], env["DB_PASSWORD"], "root")
 	dbName := firstNonEmptyCompiledValue(env["MYSQL_DATABASE"], env["DB_NAME"], "app")
 	return fmt.Sprintf("mysql://%s:%s@tcp(%s:%d)/%s", user, password, host, port, dbName)
+}
+
+func mongodbConnectionString(host string, port int, env map[string]string) string {
+	if strings.TrimSpace(host) == "" || port <= 0 {
+		return ""
+	}
+	dbName := firstNonEmptyCompiledValue(env["MONGO_INITDB_DATABASE"], env["DB_NAME"], "app")
+	return fmt.Sprintf("mongodb://%s:%d/%s", host, port, dbName)
 }
 
 func ToDeploymentRecord(item models.Deployment) DeploymentRecord {

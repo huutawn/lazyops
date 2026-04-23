@@ -29,6 +29,7 @@ import type {
   PlacementNode,
   ProjectServiceAction,
   ProjectServiceActionResponse,
+  ProjectServiceDependencyBinding,
   ProjectService,
   ProjectServiceDraft,
 } from '@/modules/project-services/project-service-types';
@@ -57,7 +58,9 @@ type RepoFormState = {
   public: boolean;
   placement_mode: string;
   placement_node_id: string;
-  connection_target_service: string;
+  dependencies: string[];
+  target_port: string;
+  service_port: string;
 };
 
 type InternalFormState = {
@@ -67,6 +70,8 @@ type InternalFormState = {
   username: string;
   password: string;
   connection_template: Record<string, string>;
+  target_port: string;
+  service_port: string;
 };
 
 type RepoServiceKind = 'app' | 'api' | 'web' | 'worker';
@@ -111,9 +116,8 @@ export function ProjectServiceInventory({
     }
     return true;
   });
-  const internalRelationalTargets = items.filter(
-    (item) => item.source_type === 'internal' && ['postgres', 'mysql'].includes(item.kind) && !isLegacyInternalService(item),
-  );
+  const internalDependencyTargets = items.filter((item) => item.source_type === 'internal' && !isLegacyInternalService(item));
+  const internalTargetsByName = useMemo(() => new Map(internalDependencyTargets.map((item) => [item.name, item])), [internalDependencyTargets]);
   const placementNodeItems = placementNodes.data?.items ?? [];
   const readyPlacementNodes = placementNodeItems.filter((item) => item.is_ready);
   const placementNodesByID = useMemo(
@@ -190,6 +194,20 @@ export function ProjectServiceInventory({
       setRepoFormError('Chon mot ready node truoc khi luu service pinned_node.');
       return;
     }
+    const targetPort = parsePortValue(repoForm.target_port);
+    const servicePort = parsePortValue(repoForm.service_port);
+    const dependencies = buildDependencyBindings(repoForm.dependencies, internalTargetsByName);
+    const conflictMessage = validateDraftPortConflict(items, {
+      ...selectedService,
+      id: selectedService?.id || '',
+      name: repoForm.name.trim(),
+      target_port: targetPort,
+      service_port: servicePort,
+    } as ProjectService, drawerMode === 'edit-repo' ? selectedService?.id : undefined);
+    if (conflictMessage) {
+      setRepoFormError(conflictMessage);
+      return;
+    }
     setRepoFormError(null);
     const draft: ProjectServiceDraft = {
       name: repoForm.name.trim(),
@@ -200,16 +218,15 @@ export function ProjectServiceInventory({
       placement_mode: repoForm.placement_mode || 'shared_cluster',
       placement_node_id:
         repoForm.placement_mode === 'pinned_node' ? repoForm.placement_node_id.trim() : '',
-      connection_template_key: resolveConnectionTemplateKey(
-        internalRelationalTargets.find((service) => service.name === repoForm.connection_target_service)?.kind,
-      ),
-      connection_target_service: repoForm.connection_target_service.trim(),
+      dependencies,
+      connection_template_key: dependencies[0]?.connection_template_key || '',
+      connection_target_service: dependencies[0]?.target_service || '',
       managed_by_lazyops: false,
       start_hint: selectedService?.start_hint || '',
       image_ref: selectedService?.image_ref || '',
       image_digest: selectedService?.image_digest || '',
-      target_port: selectedService?.target_port || 0,
-      service_port: selectedService?.service_port || 0,
+      target_port: targetPort,
+      service_port: servicePort,
       replicas: selectedService?.replicas || 1,
       env_bundle: selectedService?.env_bundle || {},
       pvc_spec: selectedService?.pvc_spec || {},
@@ -230,25 +247,38 @@ export function ProjectServiceInventory({
       ...(selectedService?.env_bundle || {}),
       ...buildManagedInternalEnvBundle(internalForm),
     };
-    const existingPVC = selectedService?.pvc_spec || { size: '5Gi' };
-    const defaultPort = defaultInternalServicePort(kind);
-    const existingHealthcheck = selectedService?.healthcheck || { protocol: 'tcp', port: defaultPort };
+    const targetPort = parsePortValue(internalForm.target_port) || defaultInternalServicePort(kind);
+    const servicePort = parsePortValue(internalForm.service_port) || targetPort;
+    const conflictMessage = validateDraftPortConflict(items, {
+      ...selectedService,
+      id: selectedService?.id || '',
+      name: serviceName,
+      target_port: targetPort,
+      service_port: servicePort,
+    } as ProjectService, drawerMode === 'edit-internal' ? selectedService?.id : undefined);
+    if (conflictMessage) {
+      setRepoFormError(conflictMessage);
+      return;
+    }
+    const existingPVC = selectedService?.pvc_spec || defaultInternalPVCSpec(kind);
+    const existingHealthcheck = selectedService?.healthcheck || { protocol: 'tcp', port: targetPort };
     const draft: ProjectServiceDraft = {
       name: serviceName,
       path: `.lazyops/internal/${kind}/${serviceName}`,
       kind,
       source_type: 'internal',
       public: false,
-      runtime_profile: 'internal-db',
+      runtime_profile: defaultInternalRuntimeProfile(kind),
       placement_mode: 'shared_cluster',
+      dependencies: [],
       connection_template_key: '',
       connection_target_service: '',
       managed_by_lazyops: true,
       start_hint: 'managed-internal-service',
       image_ref: selectedService?.image_ref || defaultInternalServiceImage(kind),
       image_digest: selectedService?.image_digest || '',
-      target_port: selectedService?.target_port || defaultPort,
-      service_port: selectedService?.service_port || defaultPort,
+      target_port: targetPort,
+      service_port: servicePort,
       replicas: selectedService?.replicas || 1,
       env_bundle: existingEnv,
       pvc_spec: existingPVC,
@@ -470,7 +500,7 @@ export function ProjectServiceInventory({
             />
             <ServiceChoiceCard
               title="Managed internal service"
-              description="Chọn PostgreSQL, MySQL, Redis hoặc RabbitMQ từ catalog nội bộ do LazyOps quản lý."
+              description="Chọn PostgreSQL, MySQL, MongoDB, Redis, Kafka hoặc Eureka Server từ catalog nội bộ do LazyOps quản lý."
               onClick={() => {
                 setInternalForm(defaultInternalForm());
                 setShowRepoAdvanced(false);
@@ -533,20 +563,54 @@ export function ProjectServiceInventory({
                   {REPO_SERVICE_KIND_OPTIONS.find((option) => option.value === repoForm.kind)?.description}
                 </p>
               </FieldLabel>
-              <FieldLabel label="Database kết nối" help="Tùy chọn. Chỉ chọn khi service này cần được inject biến môi trường kết nối tới database nội bộ đã tạo trước đó.">
-                <select
-                  value={repoForm.connection_target_service}
-                  onChange={(event) => setRepoForm((current) => ({ ...current, connection_target_service: event.target.value }))}
-                  className={fieldClassName}
-                >
-                  <option value="">Chưa dùng database</option>
-                  {internalRelationalTargets.map((service) => (
-                    <option key={service.id} value={service.name}>
-                      {service.name} ({formatShortKind(service)})
-                    </option>
+              <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-4">
+                <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">Internal dependencies</div>
+                <div className="mt-3 grid gap-3">
+                  {repoForm.dependencies.length === 0 ? (
+                    <p className="text-sm text-[#94a3b8]">Chưa nối internal service nào cho service này.</p>
+                  ) : null}
+                  {repoForm.dependencies.map((dependencyName, index) => (
+                    <div key={`${dependencyName}-${index}`} className="flex gap-3">
+                      <select
+                        value={dependencyName}
+                        onChange={(event) =>
+                          setRepoForm((current) => ({
+                            ...current,
+                            dependencies: current.dependencies.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)),
+                          }))
+                        }
+                        className={fieldClassName}
+                      >
+                        <option value="">Chọn internal service</option>
+                        {internalDependencyTargets.map((service) => (
+                          <option key={service.id} value={service.name}>
+                            {service.name} ({formatShortKind(service)})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRepoForm((current) => ({
+                            ...current,
+                            dependencies: current.dependencies.filter((_, itemIndex) => itemIndex !== index),
+                          }))
+                        }
+                        className="rounded-xl border border-[#334155] px-3 py-2 text-sm font-semibold text-[#cbd5e1] transition-colors hover:bg-[#111827]"
+                      >
+                        Bỏ
+                      </button>
+                    </div>
                   ))}
-                </select>
-              </FieldLabel>
+                  <button
+                    type="button"
+                    onClick={() => setRepoForm((current) => ({ ...current, dependencies: [...current.dependencies, ''] }))}
+                    className="rounded-xl border border-dashed border-[#334155] px-4 py-2 text-sm font-semibold text-[#cbd5e1] transition-colors hover:border-[#0EA5E9] hover:text-white"
+                  >
+                    Thêm dependency
+                  </button>
+                </div>
+              </div>
             </div>
             <label className="flex items-center gap-3 rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 px-6 py-3 text-base text-[#cbd5e1]">
               <input
@@ -573,6 +637,26 @@ export function ProjectServiceInventory({
               </button>
               {showRepoAdvanced ? (
                 <div className="mt-4 grid gap-5">
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <FieldLabel label="Target port" help="Port app thực sự lắng nghe bên trong container.">
+                      <input
+                        value={repoForm.target_port}
+                        onChange={(event) => setRepoForm((current) => ({ ...current, target_port: event.target.value }))}
+                        className={fieldClassName}
+                        placeholder="8080"
+                        inputMode="numeric"
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Service port" help="Port Kubernetes service expose cho service này.">
+                      <input
+                        value={repoForm.service_port}
+                        onChange={(event) => setRepoForm((current) => ({ ...current, service_port: event.target.value }))}
+                        className={fieldClassName}
+                        placeholder="8080"
+                        inputMode="numeric"
+                      />
+                    </FieldLabel>
+                  </div>
                   <FieldLabel label="Vị trí chạy">
                     <select
                       value={repoForm.placement_mode}
@@ -653,7 +737,7 @@ export function ProjectServiceInventory({
             <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/60 p-6 text-base text-[#cbd5e1]">
               <div className="font-semibold text-white">Internal service là gì?</div>
               <p className="mt-2 text-[#94a3b8]">
-                Đây là service hạ tầng do LazyOps quản lý cho project của bạn, ví dụ PostgreSQL, MySQL, Redis hoặc RabbitMQ. Bạn không cần có thư mục code cho loại này trong repo.
+                Đây là service hạ tầng do LazyOps quản lý cho project của bạn, ví dụ PostgreSQL, MongoDB, Redis, Kafka hoặc Eureka Server. Bạn không cần có thư mục code cho loại này trong repo.
               </p>
             </div>
             <FieldLabel label="Loại internal service" help="Chọn loại hạ tầng mà app của bạn sẽ dùng nội bộ.">
@@ -708,6 +792,36 @@ export function ProjectServiceInventory({
               <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[#64748b]">Đường dẫn nội bộ</div>
               <div className="mt-2 font-semibold text-white">
                 .lazyops/internal/{internalForm.kind}/{internalForm.service_name.trim() || defaultInternalServiceName(internalForm.kind)}
+              </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <FieldLabel label="Target port">
+                  <input
+                    value={internalForm.target_port}
+                    onChange={(event) =>
+                      setInternalForm((current) => ({
+                        ...current,
+                        target_port: event.target.value,
+                      }))
+                    }
+                    className={fieldClassName}
+                    inputMode="numeric"
+                    placeholder={String(defaultInternalServicePort(internalForm.kind))}
+                  />
+                </FieldLabel>
+                <FieldLabel label="Service port">
+                  <input
+                    value={internalForm.service_port}
+                    onChange={(event) =>
+                      setInternalForm((current) => ({
+                        ...current,
+                        service_port: event.target.value,
+                      }))
+                    }
+                    className={fieldClassName}
+                    inputMode="numeric"
+                    placeholder={String(defaultInternalServicePort(internalForm.kind))}
+                  />
+                </FieldLabel>
               </div>
             </div>
             {['postgres', 'mysql'].includes(internalForm.kind) ? (
@@ -810,6 +924,12 @@ export function ProjectServiceInventory({
               </div>
             ) : null}
 
+            {repoFormError ? (
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-6 py-3 text-base text-red-200">
+                {repoFormError}
+              </div>
+            ) : null}
+
             <DrawerActions
               pending={configureServices.isPending}
               primaryLabel={drawerMode === 'edit-internal' ? `Lưu ${internalServiceLabel(internalForm.kind)}` : `Tạo ${internalServiceLabel(internalForm.kind)}`}
@@ -877,6 +997,7 @@ function toProjectServiceDraft(item: ProjectService): ProjectServiceDraft {
     runtime_profile: item.runtime_profile,
     placement_mode: item.placement_mode,
     placement_node_id: item.placement_node_id,
+    dependencies: item.dependencies,
     connection_template_key: item.connection_template_key,
     connection_template: item.connection_template,
     connection_target_service: item.connection_target_service,
@@ -902,7 +1023,9 @@ function defaultRepoForm(service?: ProjectService): RepoFormState {
     public: service?.public ?? false,
     placement_mode: service?.placement_mode || 'shared_cluster',
     placement_node_id: service?.placement_node_id || '',
-    connection_target_service: service?.connection_target_service || '',
+    dependencies: resolveServiceDependencyNames(service),
+    target_port: service?.target_port ? String(service.target_port) : '',
+    service_port: service?.service_port ? String(service.service_port) : '',
   };
 }
 
@@ -923,6 +1046,8 @@ function defaultInternalForm(service?: ProjectService): InternalFormState {
     username: resolveInternalDatabaseUsername(kind, service?.env_bundle),
     password: resolveInternalDatabasePassword(kind, service?.env_bundle),
     connection_template: normalizePostgresConnectionTemplate(service?.connection_template),
+    target_port: service?.target_port ? String(service.target_port) : String(defaultInternalServicePort(kind)),
+    service_port: service?.service_port ? String(service.service_port) : String(defaultInternalServicePort(kind)),
   };
 }
 
@@ -940,10 +1065,16 @@ function defaultInternalServiceName(kind: InternalServiceKind) {
       return 'db';
     case 'mysql':
       return 'mysql';
+    case 'mongodb':
+      return 'mongodb';
     case 'redis':
       return 'redis';
     case 'rabbitmq':
       return 'rabbitmq';
+    case 'kafka':
+      return 'kafka';
+    case 'eureka-server':
+      return 'eureka-server';
   }
 }
 
@@ -953,10 +1084,16 @@ function defaultInternalServicePort(kind: InternalServiceKind) {
       return 5432;
     case 'mysql':
       return 3306;
+    case 'mongodb':
+      return 27017;
     case 'redis':
       return 6379;
     case 'rabbitmq':
       return 5672;
+    case 'kafka':
+      return 9092;
+    case 'eureka-server':
+      return 8761;
   }
 }
 
@@ -964,6 +1101,7 @@ function defaultInternalDatabaseName(kind: InternalServiceKind) {
   switch (kind) {
     case 'postgres':
     case 'mysql':
+    case 'mongodb':
       return 'app';
     default:
       return '';
@@ -987,6 +1125,9 @@ function resolveInternalDatabaseName(kind: InternalServiceKind, env?: Record<str
   }
   if (kind === 'mysql') {
     return env?.MYSQL_DATABASE || defaultInternalDatabaseName(kind);
+  }
+  if (kind === 'mongodb') {
+    return env?.MONGO_INITDB_DATABASE || defaultInternalDatabaseName(kind);
   }
   return '';
 }
@@ -1017,11 +1158,31 @@ function defaultInternalServiceImage(kind: InternalServiceKind) {
       return 'postgres:16-alpine';
     case 'mysql':
       return 'mysql:8';
+    case 'mongodb':
+      return 'mongo:7';
     case 'redis':
       return 'redis:7-alpine';
     case 'rabbitmq':
       return 'rabbitmq:3-management-alpine';
+    case 'kafka':
+      return 'apache/kafka:3.7.0';
+    case 'eureka-server':
+      return 'springcloud/eureka';
   }
+}
+
+function defaultInternalRuntimeProfile(kind: InternalServiceKind) {
+  if (kind === 'eureka-server') {
+    return 'service';
+  }
+  return 'internal-db';
+}
+
+function defaultInternalPVCSpec(kind: InternalServiceKind) {
+  if (kind === 'eureka-server') {
+    return {};
+  }
+  return { size: '5Gi' };
 }
 
 function buildManagedInternalEnvBundle(form: InternalFormState) {
@@ -1036,6 +1197,10 @@ function buildManagedInternalEnvBundle(form: InternalFormState) {
     out.MYSQL_DATABASE = form.database_name.trim();
     out.MYSQL_USER = form.username.trim();
     out.MYSQL_PASSWORD = form.password.trim();
+    return out;
+  }
+  if (form.kind === 'mongodb' && form.database_name.trim()) {
+    out.MONGO_INITDB_DATABASE = form.database_name.trim();
     return out;
   }
   return out;
@@ -1105,10 +1270,16 @@ function formatShortKind(service: ProjectService) {
       return 'Database';
     case 'mysql':
       return 'MySQL';
+    case 'mongodb':
+      return 'MongoDB';
     case 'redis':
       return 'Redis';
     case 'rabbitmq':
       return 'RabbitMQ';
+    case 'kafka':
+      return 'Kafka';
+    case 'eureka-server':
+      return 'Eureka';
     case 'web':
       return 'Web';
     case 'api':
@@ -1124,7 +1295,7 @@ function formatDatabaseTarget(service: ProjectService) {
   if (service.source_type === 'internal') {
     return `Tự là ${internalServiceLabel(normalizeInternalKind(service.kind))}`;
   }
-  return service.connection_target_service || 'Chưa kết nối';
+  return formatDependencySummary(service);
 }
 
 export function resolveServiceDisplayStatus(service: ProjectService, runtimeRecord?: ProjectRuntimeService) {
@@ -1196,7 +1367,7 @@ function buildAdvancedSummary(
     },
     {
       label: 'Template kết nối',
-      value: service.connection_template_key || 'Chưa có',
+      value: service.dependencies?.length ? `${service.dependencies.length} dependency` : service.connection_template_key || 'Chưa có',
       icon: <Network className="size-4 text-[#38bdf8]" />,
     },
     {
@@ -1210,6 +1381,79 @@ function buildAdvancedSummary(
       icon: <Boxes className="size-4 text-[#38bdf8]" />,
     },
   ];
+}
+
+function resolveServiceDependencyNames(service?: ProjectService) {
+  if (!service) {
+    return [];
+  }
+  if (service.dependencies?.length) {
+    return service.dependencies.map((item) => item.target_service);
+  }
+  if (service.connection_target_service) {
+    return [service.connection_target_service];
+  }
+  return [];
+}
+
+function buildDependencyBindings(
+  dependencyNames: string[],
+  internalTargetsByName: Map<string, ProjectService>,
+): ProjectServiceDependencyBinding[] {
+  return dependencyNames
+    .map((target_service) => target_service.trim())
+    .filter((target_service, index, array) => target_service && array.indexOf(target_service) === index)
+    .map((target_service) => {
+      const target = internalTargetsByName.get(target_service);
+      const targetKind = (target?.kind || '').trim().toLowerCase();
+      return {
+        target_service,
+        connection_template_key: resolveConnectionTemplateKey(targetKind),
+      };
+    });
+}
+
+function parsePortValue(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function validateDraftPortConflict(items: ProjectService[], draft: Pick<ProjectService, 'name' | 'target_port' | 'service_port'>, editingId?: string) {
+  const nextPorts = [
+    { port: draft.target_port || 0, field: 'target_port' },
+    { port: draft.service_port || 0, field: 'service_port' },
+  ].filter((item) => item.port > 0);
+  if (nextPorts.length === 0) {
+    return null;
+  }
+  for (const service of items) {
+    if (service.id === editingId) {
+      continue;
+    }
+    const occupied = [
+      { port: service.target_port || 0, field: 'target_port' },
+      { port: service.service_port || 0, field: 'service_port' },
+    ];
+    for (const next of nextPorts) {
+      const conflict = occupied.find((item) => item.port > 0 && item.port === next.port);
+      if (conflict) {
+        return `Port ${next.port} đang được dùng bởi service ${service.name} (${conflict.field}).`;
+      }
+    }
+  }
+  return null;
+}
+
+function formatDependencySummary(service: ProjectService) {
+  const dependencyNames = resolveServiceDependencyNames(service);
+  if (dependencyNames.length === 0) {
+    return 'Chưa kết nối';
+  }
+  return dependencyNames.join(', ');
 }
 
 function ServiceChoiceCard({

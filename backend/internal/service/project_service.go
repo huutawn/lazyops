@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sort"
 	"strings"
 	"unicode"
@@ -28,6 +29,7 @@ const (
 	lazyopsServiceMetaSourceType              = "_lazyops_source_type"
 	lazyopsServiceMetaPlacementMode           = "_lazyops_placement_mode"
 	lazyopsServiceMetaPlacementNodeID         = "_lazyops_placement_node_id"
+	lazyopsServiceMetaDependencies            = "_lazyops_dependencies"
 	lazyopsServiceMetaConnectionTemplateKey   = "_lazyops_connection_template_key"
 	lazyopsServiceMetaConnectionTemplate      = "_lazyops_connection_template"
 	lazyopsServiceMetaConnectionTargetService = "_lazyops_connection_target_service"
@@ -310,6 +312,7 @@ func legacyInternalServiceToProjectServiceRecord(item models.ProjectInternalServ
 		ConnectionTemplateKey:   "",
 		ConnectionTemplate:      defaultConnectionTemplateForKind(kind),
 		ConnectionTargetService: "",
+		Dependencies:            nil,
 		ManagedByLazyops:        true,
 		StartHint:               "managed-internal-service",
 		ImageRef:                "",
@@ -352,7 +355,11 @@ func internalProjectServiceKey(kind, path, sourceType string) (string, bool) {
 func normalizeManagedInternalBridgeKind(kind string) string {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	switch kind {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "mongo":
+		return "mongodb"
+	case "eureka", "euruka", "euruka-server":
+		return "eureka-server"
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "eureka-server":
 		return kind
 	default:
 		return kind
@@ -373,10 +380,16 @@ func defaultManagedInternalBridgePort(kind string) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "mongodb":
+		return 27017
 	case "redis":
 		return 6379
 	case "rabbitmq":
 		return 5672
+	case "kafka":
+		return 9092
+	case "eureka-server":
+		return 8761
 	default:
 		return 0
 	}
@@ -384,7 +397,7 @@ func defaultManagedInternalBridgePort(kind string) int {
 
 func defaultManagedInternalBridgeRuntimeProfile(kind string) string {
 	switch normalizeManagedInternalBridgeKind(kind) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka":
 		return "internal-db"
 	default:
 		return "service"
@@ -393,7 +406,7 @@ func defaultManagedInternalBridgeRuntimeProfile(kind string) string {
 
 func defaultManagedInternalBridgePVCSpec(kind string) (map[string]any, bool) {
 	switch normalizeManagedInternalBridgeKind(kind) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka":
 		return map[string]any{"size": "5Gi"}, true
 	default:
 		return nil, false
@@ -465,6 +478,7 @@ func buildConfiguredProjectServiceModels(projectID, runtimeMode string, items []
 	names := make(map[string]struct{}, len(items))
 	paths := make(map[string]struct{}, len(items))
 	out := make([]models.Service, 0, len(items))
+	records := make([]ProjectServiceRecord, 0, len(items))
 	for index, item := range items {
 		model, err := normalizeConfiguredProjectService(projectID, runtimeMode, item)
 		if err != nil {
@@ -478,7 +492,15 @@ func buildConfiguredProjectServiceModels(projectID, runtimeMode string, items []
 		}
 		names[model.Name] = struct{}{}
 		paths[model.Path] = struct{}{}
+		record, err := ToProjectServiceRecord(model)
+		if err != nil {
+			return nil, fmt.Errorf("%w: services[%d]: %s", ErrInvalidInput, index, err.Error())
+		}
+		records = append(records, record)
 		out = append(out, model)
+	}
+	if err := validateConfiguredProjectServiceInventory(records); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -515,17 +537,21 @@ func normalizeConfiguredProjectService(projectID, runtimeMode string, item Confi
 	if err != nil {
 		return models.Service{}, err
 	}
-	connectionTemplateKey, err := normalizeConfiguredConnectionTemplateKey(item.ConnectionTemplateKey)
+	dependencies, err := normalizeConfiguredDependencies(item.Dependencies, item.ConnectionTargetService, item.ConnectionTemplateKey, item.ConnectionTemplate)
 	if err != nil {
 		return models.Service{}, err
 	}
-	connectionTemplate, err := normalizeConfiguredConnectionTemplate(item.ConnectionTemplate, sourceType, kind)
-	if err != nil {
-		return models.Service{}, err
-	}
-	connectionTargetService, err := normalizeConfiguredConnectionTargetService(item.ConnectionTargetService)
-	if err != nil {
-		return models.Service{}, err
+	rootConnectionTemplateKey := ""
+	rootConnectionTemplate := map[string]string{}
+	if sourceType == serviceSourceTypeInternal {
+		rootConnectionTemplateKey, err = normalizeConfiguredConnectionTemplateKey(item.ConnectionTemplateKey)
+		if err != nil {
+			return models.Service{}, err
+		}
+		rootConnectionTemplate, err = normalizeConfiguredConnectionTemplate(item.ConnectionTemplate, sourceType, kind)
+		if err != nil {
+			return models.Service{}, err
+		}
 	}
 	managedByLazyops := item.ManagedByLazyops || sourceType == serviceSourceTypeInternal || strings.HasPrefix(path, reservedManagedInternalServicePathPrefix)
 	targetPort, err := normalizeConfiguredPort(item.TargetPort)
@@ -582,7 +608,16 @@ func normalizeConfiguredProjectService(projectID, runtimeMode string, item Confi
 		return models.Service{}, err
 	}
 	deployStrategy := cloneConfiguredAnyMap(item.DeployStrategy)
-	applyServiceContractMetadata(deployStrategy, sourceType, placementMode, placementNodeID, connectionTemplateKey, connectionTemplate, connectionTargetService, managedByLazyops)
+	applyServiceContractMetadata(
+		deployStrategy,
+		sourceType,
+		placementMode,
+		placementNodeID,
+		dependencies,
+		rootConnectionTemplateKey,
+		rootConnectionTemplate,
+		managedByLazyops,
+	)
 	deployStrategyJSON, err := marshalBindingPolicyJSON(deployStrategy)
 	if err != nil {
 		return models.Service{}, err
@@ -715,7 +750,16 @@ func normalizeConfiguredConnectionTargetService(raw string) (string, error) {
 	return target, nil
 }
 
-func applyServiceContractMetadata(target map[string]any, sourceType, placementMode, placementNodeID, connectionTemplateKey string, connectionTemplate map[string]string, connectionTargetService string, managedByLazyops bool) {
+func applyServiceContractMetadata(
+	target map[string]any,
+	sourceType,
+	placementMode,
+	placementNodeID string,
+	dependencies []ProjectServiceDependencyBinding,
+	rootConnectionTemplateKey string,
+	rootConnectionTemplate map[string]string,
+	managedByLazyops bool,
+) {
 	if target == nil {
 		return
 	}
@@ -723,6 +767,15 @@ func applyServiceContractMetadata(target map[string]any, sourceType, placementMo
 	target[lazyopsServiceMetaPlacementMode] = placementMode
 	if placementNodeID != "" {
 		target[lazyopsServiceMetaPlacementNodeID] = placementNodeID
+	}
+	if len(dependencies) > 0 {
+		target[lazyopsServiceMetaDependencies] = cloneProjectServiceDependencyBindings(dependencies)
+	}
+	connectionTemplateKey := rootConnectionTemplateKey
+	connectionTemplate := cloneStringMap(rootConnectionTemplate)
+	connectionTargetService := ""
+	if sourceType != serviceSourceTypeInternal {
+		connectionTemplateKey, connectionTemplate, connectionTargetService = legacyDependencyFields(dependencies)
 	}
 	if connectionTemplateKey != "" {
 		target[lazyopsServiceMetaConnectionTemplateKey] = connectionTemplateKey
@@ -762,7 +815,7 @@ func normalizeConfiguredRuntimeProfile(raw, kind string, public bool, healthchec
 		return "web"
 	case "worker":
 		return "worker"
-	case "postgres", "mysql", "redis", "rabbitmq", "internal-db":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "internal-db":
 		return "internal-db"
 	}
 	if public {
@@ -802,7 +855,7 @@ func normalizeManagedInternalServiceDefaults(kind, name string, public bool, run
 			out.PVCSpec = spec
 		}
 	}
-	if normalizedEnv, err := normalizeManagedInternalRuntimeEnv(kind, out.EnvBundle); err != nil {
+	if normalizedEnv, err := normalizeManagedInternalRuntimeEnv(kind, name, out.EnvBundle); err != nil {
 		return managedInternalServiceDefaults{}, err
 	} else {
 		out.EnvBundle = normalizedEnv
@@ -816,7 +869,7 @@ func normalizeManagedInternalServiceDefaults(kind, name string, public bool, run
 	return out, nil
 }
 
-func normalizeManagedInternalRuntimeEnv(kind string, env map[string]string) (map[string]string, error) {
+func normalizeManagedInternalRuntimeEnv(kind, serviceName string, env map[string]string) (map[string]string, error) {
 	out := cloneStringMap(env)
 	if out == nil {
 		out = map[string]string{}
@@ -849,6 +902,29 @@ func normalizeManagedInternalRuntimeEnv(kind string, env map[string]string) (map
 			}
 			out["MYSQL_ROOT_PASSWORD"] = rootPassword
 		}
+	case "mongodb":
+		fillIfBlankString(out, "MONGO_INITDB_DATABASE", "app")
+	case "kafka":
+		host := firstNonEmptyCompiledValue(strings.TrimSpace(serviceName), "kafka")
+		port := strconv.Itoa(defaultManagedInternalBridgePort(kind))
+		fillIfBlankString(out, "KAFKA_NODE_ID", "1")
+		fillIfBlankString(out, "KAFKA_PROCESS_ROLES", "broker,controller")
+		fillIfBlankString(out, "KAFKA_LISTENERS", "PLAINTEXT://0.0.0.0:"+port+",CONTROLLER://0.0.0.0:9093")
+		fillIfBlankString(out, "KAFKA_ADVERTISED_LISTENERS", "PLAINTEXT://"+host+":"+port)
+		fillIfBlankString(out, "KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER")
+		fillIfBlankString(out, "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP", "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT")
+		fillIfBlankString(out, "KAFKA_INTER_BROKER_LISTENER_NAME", "PLAINTEXT")
+		fillIfBlankString(out, "KAFKA_CONTROLLER_QUORUM_VOTERS", "1@localhost:9093")
+		fillIfBlankString(out, "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR", "1")
+		fillIfBlankString(out, "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR", "1")
+		fillIfBlankString(out, "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR", "1")
+		fillIfBlankString(out, "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS", "0")
+		fillIfBlankString(out, "KAFKA_NUM_PARTITIONS", "3")
+		fillIfBlankString(out, "CLUSTER_ID", "lazyops-kafka-cluster")
+	case "eureka-server":
+		fillIfBlankString(out, "SERVER_PORT", strconv.Itoa(defaultManagedInternalBridgePort(kind)))
+		fillIfBlankString(out, "EUREKA_CLIENT_REGISTER_WITH_EUREKA", "false")
+		fillIfBlankString(out, "EUREKA_CLIENT_FETCH_REGISTRY", "false")
 	}
 	return out, nil
 }
@@ -887,25 +963,37 @@ func defaultManagedInternalImageRef(kind string) string {
 		return "postgres:16-alpine"
 	case "mysql":
 		return "mysql:8"
+	case "mongodb":
+		return "mongo:7"
 	case "redis":
 		return "redis:7-alpine"
 	case "rabbitmq":
 		return "rabbitmq:3-management-alpine"
+	case "kafka":
+		return "apache/kafka:3.7.0"
+	case "eureka-server":
+		return "springcloud/eureka"
 	default:
 		return ""
 	}
 }
 
 func defaultConfiguredTargetPort(kind string) int {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
+	switch normalizeManagedInternalBridgeKind(kind) {
 	case "postgres":
 		return 5432
 	case "mysql":
 		return 3306
+	case "mongodb":
+		return 27017
 	case "redis":
 		return 6379
 	case "rabbitmq":
 		return 5672
+	case "kafka":
+		return 9092
+	case "eureka-server":
+		return 8761
 	default:
 		return 0
 	}
@@ -1033,6 +1121,7 @@ func buildInitialProjectServiceItems(explicit []ConfigureProjectServiceItem, int
 	for _, item := range explicit {
 		cloned := item
 		cloned.EnvBundle = cloneStringMap(item.EnvBundle)
+		cloned.Dependencies = cloneProjectServiceDependencyBindings(item.Dependencies)
 		cloned.ConnectionTemplate = cloneStringMap(item.ConnectionTemplate)
 		cloned.PVCSpec = cloneConfiguredAnyMap(item.PVCSpec)
 		cloned.DeployStrategy = cloneConfiguredAnyMap(item.DeployStrategy)
@@ -1063,4 +1152,158 @@ func buildInitialProjectServiceItems(explicit []ConfigureProjectServiceItem, int
 	}
 
 	return out
+}
+
+func normalizeConfiguredDependencies(
+	raw []ProjectServiceDependencyBinding,
+	legacyTargetService, legacyTemplateKey string,
+	legacyTemplate map[string]string,
+) ([]ProjectServiceDependencyBinding, error) {
+	out := make([]ProjectServiceDependencyBinding, 0, len(raw)+1)
+	seenTargets := make(map[string]struct{}, len(raw)+1)
+	appendBinding := func(binding ProjectServiceDependencyBinding) error {
+		targetService, err := normalizeConfiguredConnectionTargetService(binding.TargetService)
+		if err != nil {
+			return err
+		}
+		if targetService == "" {
+			return nil
+		}
+		templateKey, err := normalizeConfiguredConnectionTemplateKey(binding.ConnectionTemplateKey)
+		if err != nil {
+			return err
+		}
+		clonedTemplate := cloneStringMap(binding.ConnectionTemplate)
+		if _, exists := seenTargets[targetService]; exists {
+			return fmt.Errorf("service.dependencies contains duplicate target_service %q", targetService)
+		}
+		seenTargets[targetService] = struct{}{}
+		out = append(out, ProjectServiceDependencyBinding{
+			TargetService:         targetService,
+			ConnectionTemplateKey: templateKey,
+			ConnectionTemplate:    clonedTemplate,
+		})
+		return nil
+	}
+	for _, item := range raw {
+		if err := appendBinding(item); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(legacyTargetService) != "" {
+		if err := appendBinding(ProjectServiceDependencyBinding{
+			TargetService:         legacyTargetService,
+			ConnectionTemplateKey: legacyTemplateKey,
+			ConnectionTemplate:    legacyTemplate,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func legacyDependencyFields(items []ProjectServiceDependencyBinding) (string, map[string]string, string) {
+	if len(items) == 0 {
+		return "", map[string]string{}, ""
+	}
+	first := items[0]
+	return first.ConnectionTemplateKey, cloneStringMap(first.ConnectionTemplate), first.TargetService
+}
+
+func cloneProjectServiceDependencyBindings(items []ProjectServiceDependencyBinding) []ProjectServiceDependencyBinding {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]ProjectServiceDependencyBinding, 0, len(items))
+	for _, item := range items {
+		out = append(out, ProjectServiceDependencyBinding{
+			TargetService:         strings.TrimSpace(item.TargetService),
+			ConnectionTemplateKey: strings.TrimSpace(item.ConnectionTemplateKey),
+			ConnectionTemplate:    cloneStringMap(item.ConnectionTemplate),
+		})
+	}
+	return out
+}
+
+func validateConfiguredProjectServiceInventory(records []ProjectServiceRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	serviceIndex := make(map[string]ProjectServiceRecord, len(records))
+	for _, record := range records {
+		serviceIndex[record.Name] = record
+	}
+	for _, record := range records {
+		for _, binding := range record.Dependencies {
+			targetName := strings.TrimSpace(binding.TargetService)
+			if targetName == "" {
+				continue
+			}
+			if targetName == record.Name {
+				return fmt.Errorf("%w: service %q must not depend on itself", ErrInvalidInput, record.Name)
+			}
+			target, ok := serviceIndex[targetName]
+			if !ok {
+				return fmt.Errorf("%w: service %q depends on unknown internal service %q", ErrInvalidInput, record.Name, targetName)
+			}
+			if target.SourceType != serviceSourceTypeInternal {
+				return fmt.Errorf("%w: service %q can only depend on internal services; %q is %s", ErrInvalidInput, record.Name, targetName, firstNonEmptyCompiledValue(target.SourceType, serviceSourceTypeRepo))
+			}
+			if len(binding.ConnectionTemplate) > 0 {
+				if !isRelationalDatabaseKind(target.Kind) {
+					return fmt.Errorf("%w: service %q uses connection_template with non-relational dependency %q", ErrInvalidInput, record.Name, targetName)
+				}
+				if _, err := normalizeConnectionTemplateForKind(target.Kind, binding.ConnectionTemplate); err != nil {
+					return fmt.Errorf("%w: service %q dependency %q: %s", ErrInvalidInput, record.Name, targetName, err.Error())
+				}
+			}
+			if key := strings.TrimSpace(binding.ConnectionTemplateKey); key != "" {
+				if !isRelationalDatabaseKind(target.Kind) {
+					return fmt.Errorf("%w: service %q uses connection_template_key with non-relational dependency %q", ErrInvalidInput, record.Name, targetName)
+				}
+				expected := relationalConnectionTemplateKeyForKind(target.Kind)
+				if expected != "" && key != expected {
+					return fmt.Errorf("%w: service %q dependency %q expects connection_template_key %q", ErrInvalidInput, record.Name, targetName, expected)
+				}
+			}
+		}
+	}
+	return validateProjectServicePortConflicts(records)
+}
+
+func validateProjectServicePortConflicts(records []ProjectServiceRecord) error {
+	type portOwner struct {
+		ServiceName string
+		Field       string
+	}
+	owners := make(map[int]portOwner)
+	for _, record := range records {
+		for field, port := range map[string]int{
+			"target_port":  record.TargetPort,
+			"service_port": record.ServicePort,
+		} {
+			if port <= 0 {
+				continue
+			}
+			if existing, ok := owners[port]; ok {
+				if existing.ServiceName == record.Name {
+					continue
+				}
+				return fmt.Errorf(
+					"%w: port %d is already used by service %q (%s) and conflicts with service %q (%s)",
+					ErrInvalidInput,
+					port,
+					existing.ServiceName,
+					existing.Field,
+					record.Name,
+					field,
+				)
+			}
+			owners[port] = portOwner{ServiceName: record.Name, Field: field}
+		}
+	}
+	return nil
 }

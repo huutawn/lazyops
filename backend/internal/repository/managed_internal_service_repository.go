@@ -178,7 +178,11 @@ func managedInternalServiceName(kind string) string {
 func normalizeManagedInternalServiceKind(kind string) string {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	switch kind {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "mongo":
+		return "mongodb"
+	case "eureka", "euruka", "euruka-server":
+		return "eureka-server"
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "eureka-server":
 		return kind
 	default:
 		return kind
@@ -191,10 +195,16 @@ func defaultManagedInternalServicePort(kind string) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "mongodb":
+		return 27017
 	case "redis":
 		return 6379
 	case "rabbitmq":
 		return 5672
+	case "kafka":
+		return 9092
+	case "eureka-server":
+		return 8761
 	default:
 		return 0
 	}
@@ -202,7 +212,7 @@ func defaultManagedInternalServicePort(kind string) int {
 
 func defaultManagedInternalRuntimeProfile(kind string) string {
 	switch normalizeManagedInternalServiceKind(kind) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka":
 		return "internal-db"
 	default:
 		return "service"
@@ -215,10 +225,16 @@ func defaultManagedInternalImage(kind string) string {
 		return "postgres:16-alpine"
 	case "mysql":
 		return "mysql:8.4"
+	case "mongodb":
+		return "mongo:7"
 	case "redis":
 		return "redis:7-alpine"
 	case "rabbitmq":
 		return "rabbitmq:3.13-alpine"
+	case "kafka":
+		return "apache/kafka:3.7.0"
+	case "eureka-server":
+		return "springcloud/eureka"
 	default:
 		return ""
 	}
@@ -226,7 +242,7 @@ func defaultManagedInternalImage(kind string) string {
 
 func defaultManagedInternalPVCSpec(kind string) (map[string]any, bool) {
 	switch normalizeManagedInternalServiceKind(kind) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka":
 		return map[string]any{"size": "5Gi"}, true
 	default:
 		return nil, false

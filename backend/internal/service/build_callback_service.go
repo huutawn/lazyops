@@ -1338,7 +1338,7 @@ func resolveSingleAppLikeServiceIndex(services []BlueprintServiceContractRecord)
 
 func isManagedInternalServiceKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "postgres", "mysql", "redis", "rabbitmq":
+	case "postgres", "mysql", "mongodb", "redis", "rabbitmq", "kafka", "eureka-server":
 		return true
 	default:
 		return false

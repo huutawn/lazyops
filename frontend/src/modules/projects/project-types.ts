@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-export const INTERNAL_SERVICE_KINDS = ['postgres', 'mysql', 'redis', 'rabbitmq'] as const;
+export const INTERNAL_SERVICE_KINDS = ['postgres', 'mysql', 'mongodb', 'redis', 'rabbitmq', 'kafka', 'eureka-server'] as const;
+
+export const projectServiceDependencySchema = z.object({
+  target_service: z.string().min(1, 'Dependency target is required'),
+  connection_template_key: z.string().optional(),
+  connection_template: z.record(z.string(), z.string()).optional(),
+});
 
 export const projectServiceSchema = z.object({
   name: z.string().min(1, 'Service name is required'),
@@ -11,6 +17,7 @@ export const projectServiceSchema = z.object({
   runtime_profile: z.string().optional(),
   placement_mode: z.string().optional(),
   placement_node_id: z.string().optional(),
+  dependencies: z.array(projectServiceDependencySchema).optional(),
   connection_template_key: z.string().optional(),
   connection_template: z.record(z.string(), z.string()).optional(),
   connection_target_service: z.string().optional(),

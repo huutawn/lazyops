@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sort"
 	"strings"
 	"time"
@@ -181,20 +182,23 @@ func filterServicesForDeployment(all []ProjectServiceRecord, selectedIDs []strin
 	for _, service := range filtered {
 		addedByName[service.Name] = struct{}{}
 	}
-	for _, service := range filtered {
-		targetName := strings.TrimSpace(service.ConnectionTargetService)
-		if targetName == "" {
-			continue
+	for index := 0; index < len(filtered); index++ {
+		service := filtered[index]
+		for _, dependency := range service.Dependencies {
+			targetName := strings.TrimSpace(dependency.TargetService)
+			if targetName == "" {
+				continue
+			}
+			target, ok := byName[targetName]
+			if !ok || target.SourceType != serviceSourceTypeInternal {
+				continue
+			}
+			if _, exists := addedByName[target.Name]; exists {
+				continue
+			}
+			filtered = append(filtered, target)
+			addedByName[target.Name] = struct{}{}
 		}
-		target, ok := byName[targetName]
-		if !ok || target.SourceType != serviceSourceTypeInternal {
-			continue
-		}
-		if _, exists := addedByName[target.Name]; exists {
-			continue
-		}
-		filtered = append(filtered, target)
-		addedByName[target.Name] = struct{}{}
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
 		if filtered[i].SourceType != filtered[j].SourceType {
@@ -289,31 +293,32 @@ func (c *ServiceInventoryBlueprintCompiler) loadProjectServices(projectID string
 
 func (c *ServiceInventoryBlueprintCompiler) buildDependencyBindings(services []ProjectServiceRecord, runtimeMode string) []LazyopsYAMLDependencyBinding {
 	out := make([]LazyopsYAMLDependencyBinding, 0)
+	serviceIndex := make(map[string]ProjectServiceRecord, len(services))
 	for _, service := range services {
-		templateKey := strings.TrimSpace(service.ConnectionTemplateKey)
-		if templateKey != postgresBasicConnectionTemplateKey && templateKey != mysqlBasicConnectionTemplateKey {
-			continue
+		serviceIndex[service.Name] = service
+	}
+	for _, service := range services {
+		for _, dependency := range service.Dependencies {
+			targetService := strings.TrimSpace(dependency.TargetService)
+			if targetService == "" {
+				continue
+			}
+			target, ok := serviceIndex[targetService]
+			if !ok || target.SourceType != serviceSourceTypeInternal {
+				continue
+			}
+			protocol, localEndpoint := dependencyBindingProtocolAndEndpoint(target, runtimeMode)
+			binding := LazyopsYAMLDependencyBinding{
+				Service:       service.Name,
+				Alias:         targetService,
+				TargetService: targetService,
+				Protocol:      protocol,
+			}
+			if localEndpoint != "" {
+				binding.LocalEndpoint = localEndpoint
+			}
+			out = append(out, binding)
 		}
-		targetService := strings.TrimSpace(service.ConnectionTargetService)
-		if targetService == "" {
-			continue
-		}
-		protocol := "postgres"
-		localEndpoint := "localhost:5432"
-		if templateKey == mysqlBasicConnectionTemplateKey {
-			protocol = "mysql"
-			localEndpoint = "localhost:3306"
-		}
-		binding := LazyopsYAMLDependencyBinding{
-			Service:       service.Name,
-			Alias:         targetService,
-			TargetService: targetService,
-			Protocol:      protocol,
-		}
-		if strings.TrimSpace(runtimeMode) != "distributed-k3s" {
-			binding.LocalEndpoint = localEndpoint
-		}
-		out = append(out, binding)
 	}
 	return out
 }
@@ -332,17 +337,43 @@ func (c *ServiceInventoryBlueprintCompiler) buildServiceContracts(services []Pro
 	for _, service := range services {
 		serviceIndex[service.Name] = service
 	}
+	relationalCountByService := make(map[string]int, len(services))
+	dependencyKindCountByService := make(map[string]map[string]int, len(services))
+	for _, service := range services {
+		for _, dependency := range service.Dependencies {
+			target, ok := serviceIndex[dependency.TargetService]
+			if !ok {
+				continue
+			}
+			kind := normalizeManagedInternalBridgeKind(target.Kind)
+			if _, exists := dependencyKindCountByService[service.Name]; !exists {
+				dependencyKindCountByService[service.Name] = make(map[string]int)
+			}
+			dependencyKindCountByService[service.Name][kind]++
+			if isRelationalDatabaseKind(kind) {
+				relationalCountByService[service.Name]++
+			}
+		}
+	}
 
 	out := make([]BlueprintServiceContractRecord, 0, len(services))
 	for _, service := range services {
 		envBundle := cloneStringMap(service.EnvBundle)
-		templateKey := strings.TrimSpace(service.ConnectionTemplateKey)
-		if (templateKey == postgresBasicConnectionTemplateKey || templateKey == mysqlBasicConnectionTemplateKey) && strings.TrimSpace(service.ConnectionTargetService) != "" {
-			target, ok := serviceIndex[strings.TrimSpace(service.ConnectionTargetService)]
-			if ok && target.SourceType == serviceSourceTypeInternal && templateKey == relationalConnectionTemplateKeyForKind(target.Kind) {
-				for envName, value := range buildRelationalConnectionTemplateEnv(target, projectEnv, runtimeMode) {
-					fillIfBlank(envBundle, envName, value)
-				}
+		for _, dependency := range service.Dependencies {
+			target, ok := serviceIndex[strings.TrimSpace(dependency.TargetService)]
+			if !ok || target.SourceType != serviceSourceTypeInternal {
+				continue
+			}
+			kind := normalizeManagedInternalBridgeKind(target.Kind)
+			for envName, value := range buildDependencyBindingEnv(
+				dependency,
+				target,
+				projectEnv,
+				runtimeMode,
+				dependencyKindCountByService[service.Name][kind],
+				relationalCountByService[service.Name],
+			) {
+				fillIfBlank(envBundle, envName, value)
 			}
 		}
 
@@ -355,6 +386,7 @@ func (c *ServiceInventoryBlueprintCompiler) buildServiceContracts(services []Pro
 			RuntimeProfile:          service.RuntimeProfile,
 			PlacementMode:           firstNonEmptyCompiledValue(service.PlacementMode, servicePlacementModeSharedCluster),
 			PlacementNodeID:         service.PlacementNodeID,
+			Dependencies:            cloneProjectServiceDependencyBindings(service.Dependencies),
 			ConnectionTemplateKey:   service.ConnectionTemplateKey,
 			ConnectionTemplate:      cloneStringMap(service.ConnectionTemplate),
 			ConnectionTargetService: service.ConnectionTargetService,
@@ -373,6 +405,34 @@ func (c *ServiceInventoryBlueprintCompiler) buildServiceContracts(services []Pro
 		})
 	}
 	return out, nil
+}
+
+func dependencyBindingProtocolAndEndpoint(target ProjectServiceRecord, runtimeMode string) (string, string) {
+	kind := normalizeManagedInternalBridgeKind(target.Kind)
+	protocol := "tcp"
+	localPort := firstPositive(target.ServicePort, target.TargetPort, defaultConfiguredTargetPort(target.Kind))
+	switch kind {
+	case "postgres":
+		protocol = "postgres"
+	case "mysql":
+		protocol = "mysql"
+	case "mongodb":
+		protocol = "mongodb"
+	case "redis":
+		protocol = "redis"
+	case "kafka":
+		protocol = "tcp"
+	case "eureka-server":
+		protocol = "http"
+	}
+	if strings.TrimSpace(runtimeMode) == "distributed-k3s" || localPort <= 0 {
+		return protocol, ""
+	}
+	host := "localhost"
+	if protocol == "http" {
+		return protocol, "http://localhost:" + strconv.Itoa(localPort) + "/eureka"
+	}
+	return protocol, host + ":" + strconv.Itoa(localPort)
 }
 
 func (c *ServiceInventoryBlueprintCompiler) resolveCompatibilityPolicy(binding DeploymentBindingRecord, dependencyBindings []LazyopsYAMLDependencyBinding) LazyopsYAMLCompatibilityPolicy {

@@ -183,6 +183,181 @@ func buildPostgresConnectionTemplateEnv(target ProjectServiceRecord, projectEnv 
 	return buildRelationalConnectionTemplateEnv(target, projectEnv, runtimeMode)
 }
 
+func buildKafkaRuntimeEnv(target ProjectServiceRecord, runtimeMode string) map[string]string {
+	host := strings.TrimSpace(target.Name)
+	if runtimeMode != "distributed-k3s" {
+		host = "localhost"
+	}
+	if host == "" {
+		host = "kafka"
+	}
+	port := firstPositive(target.ServicePort, target.TargetPort, defaultConfiguredTargetPort(target.Kind))
+	if port <= 0 {
+		port = 9092
+	}
+	address := fmt.Sprintf("%s:%d", host, port)
+	return map[string]string{
+		"KAFKA_BOOTSTRAP_SERVERS": address,
+		"KAFKA_BROKERS":           address,
+		"KAFKA_HOST":              host,
+		"KAFKA_PORT":              fmt.Sprintf("%d", port),
+	}
+}
+
+func buildMongoRuntimeEnv(target ProjectServiceRecord, runtimeMode string) map[string]string {
+	host := strings.TrimSpace(target.Name)
+	if runtimeMode != "distributed-k3s" {
+		host = "localhost"
+	}
+	if host == "" {
+		host = "mongodb"
+	}
+	port := firstPositive(target.ServicePort, target.TargetPort, defaultConfiguredTargetPort(target.Kind))
+	if port <= 0 {
+		port = 27017
+	}
+	dbName := firstNonEmptyCompiledValue(target.EnvBundle["MONGO_INITDB_DATABASE"], target.EnvBundle["DB_NAME"], "app")
+	return map[string]string{
+		"MONGODB_HOST": host,
+		"MONGODB_PORT": fmt.Sprintf("%d", port),
+		"MONGODB_URL":  fmt.Sprintf("mongodb://%s:%d/%s", host, port, dbName),
+	}
+}
+
+func buildRedisRuntimeEnv(target ProjectServiceRecord, runtimeMode string) map[string]string {
+	host := strings.TrimSpace(target.Name)
+	if runtimeMode != "distributed-k3s" {
+		host = "localhost"
+	}
+	if host == "" {
+		host = "redis"
+	}
+	port := firstPositive(target.ServicePort, target.TargetPort, defaultConfiguredTargetPort(target.Kind))
+	if port <= 0 {
+		port = 6379
+	}
+	return map[string]string{
+		"REDIS_HOST": host,
+		"REDIS_PORT": fmt.Sprintf("%d", port),
+		"REDIS_URL":  fmt.Sprintf("redis://%s:%d/0", host, port),
+	}
+}
+
+func buildEurekaRuntimeEnv(target ProjectServiceRecord, runtimeMode string) map[string]string {
+	host := strings.TrimSpace(target.Name)
+	if runtimeMode != "distributed-k3s" {
+		host = "localhost"
+	}
+	if host == "" {
+		host = "eureka-server"
+	}
+	port := firstPositive(target.ServicePort, target.TargetPort, defaultConfiguredTargetPort(target.Kind))
+	if port <= 0 {
+		port = 8761
+	}
+	baseURL := fmt.Sprintf("http://%s:%d/eureka", host, port)
+	return map[string]string{
+		"EUREKA_HOST": host,
+		"EUREKA_PORT": fmt.Sprintf("%d", port),
+		"EUREKA_URL":  baseURL,
+	}
+}
+
+func buildDependencyRuntimeEnv(target ProjectServiceRecord, projectEnv map[string]string, runtimeMode string) map[string]string {
+	switch normalizeManagedInternalBridgeKind(target.Kind) {
+	case "postgres", "mysql":
+		return buildRelationalConnectionRuntimeValues(target, projectEnv, runtimeMode)
+	case "mongodb":
+		return buildMongoRuntimeEnv(target, runtimeMode)
+	case "redis":
+		return buildRedisRuntimeEnv(target, runtimeMode)
+	case "kafka":
+		return buildKafkaRuntimeEnv(target, runtimeMode)
+	case "eureka-server":
+		return buildEurekaRuntimeEnv(target, runtimeMode)
+	default:
+		return map[string]string{}
+	}
+}
+
+func buildDependencyBindingEnv(
+	binding ProjectServiceDependencyBinding,
+	target ProjectServiceRecord,
+	projectEnv map[string]string,
+	runtimeMode string,
+	kindCount int,
+	relationalCount int,
+) map[string]string {
+	kind := normalizeManagedInternalBridgeKind(target.Kind)
+	if kind == "" {
+		return map[string]string{}
+	}
+	if isRelationalDatabaseKind(kind) {
+		template := cloneStringMap(binding.ConnectionTemplate)
+		if len(template) > 0 {
+			normalized, err := normalizeConnectionTemplateForKind(kind, template)
+			if err == nil {
+				template = normalized
+			}
+		}
+		if len(template) == 0 {
+			template = cloneStringMap(target.ConnectionTemplate)
+		}
+		if len(template) == 0 {
+			if relationalCount <= 1 && kindCount <= 1 {
+				template = defaultConnectionTemplateForKind(kind)
+			} else {
+				template = prefixedRelationalConnectionTemplate(binding.TargetService)
+			}
+		}
+		values := buildRelationalConnectionRuntimeValues(target, projectEnv, runtimeMode)
+		out := make(map[string]string, len(template))
+		for _, slot := range relationalConnectionTemplateSlots {
+			envName := strings.TrimSpace(template[slot])
+			if envName == "" {
+				continue
+			}
+			out[envName] = values[slot]
+		}
+		return out
+	}
+	runtimeEnv := buildDependencyRuntimeEnv(target, projectEnv, runtimeMode)
+	if len(runtimeEnv) == 0 {
+		return runtimeEnv
+	}
+	if kindCount <= 1 {
+		return runtimeEnv
+	}
+	return prefixDependencyEnv(binding.TargetService, runtimeEnv)
+}
+
+func prefixedRelationalConnectionTemplate(alias string) map[string]string {
+	prefix := sanitizeProjectEnvAlias(alias)
+	if prefix == "" {
+		prefix = "DEPENDENCY"
+	}
+	return map[string]string{
+		"DB_URL":      prefix + "_DB_URL",
+		"DB_NAME":     prefix + "_DB_NAME",
+		"DB_HOST":     prefix + "_DB_HOST",
+		"DB_PORT":     prefix + "_DB_PORT",
+		"DB_USERNAME": prefix + "_DB_USERNAME",
+		"DB_PASSWORD": prefix + "_DB_PASSWORD",
+	}
+}
+
+func prefixDependencyEnv(alias string, env map[string]string) map[string]string {
+	prefix := sanitizeProjectEnvAlias(alias)
+	if prefix == "" {
+		return env
+	}
+	out := make(map[string]string, len(env))
+	for key, value := range env {
+		out[prefix+"_"+key] = value
+	}
+	return out
+}
+
 func isRelationalDatabaseKind(kind string) bool {
 	switch normalizeManagedInternalBridgeKind(kind) {
 	case "postgres", "mysql":

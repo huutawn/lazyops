@@ -32,6 +32,13 @@ var internalServicePresets = map[string]internalServicePreset{
 		Port:          3306,
 		LocalEndpoint: "localhost:3306",
 	},
+	"mongodb": {
+		Kind:          "mongodb",
+		Alias:         "mongodb",
+		Protocol:      "tcp",
+		Port:          27017,
+		LocalEndpoint: "localhost:27017",
+	},
 	"redis": {
 		Kind:          "redis",
 		Alias:         "redis",
@@ -46,6 +53,20 @@ var internalServicePresets = map[string]internalServicePreset{
 		Port:          5672,
 		LocalEndpoint: "localhost:5672",
 	},
+	"kafka": {
+		Kind:          "kafka",
+		Alias:         "kafka",
+		Protocol:      "tcp",
+		Port:          9092,
+		LocalEndpoint: "localhost:9092",
+	},
+	"eureka-server": {
+		Kind:          "eureka-server",
+		Alias:         "eureka-server",
+		Protocol:      "tcp",
+		Port:          8761,
+		LocalEndpoint: "localhost:8761",
+	},
 }
 
 func normalizeInternalServiceKinds(input []string) ([]string, error) {
@@ -56,7 +77,7 @@ func normalizeInternalServiceKinds(input []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(input))
 	items := make([]string, 0, len(input))
 	for _, raw := range input {
-		kind := strings.ToLower(strings.TrimSpace(raw))
+		kind := normalizeManagedInternalBridgeKind(raw)
 		if kind == "" {
 			continue
 		}

@@ -523,10 +523,16 @@ function MetricTile({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
+    <div className="min-w-0 rounded-2xl border border-[#1e293b] bg-[#0B1120]/80 p-6">
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#64748b]">{label}</div>
-      <div className={`mt-2 text-base font-bold text-white ${mono ? 'font-mono text-base' : ''}`}>{value}</div>
-      <div className="mt-1 text-sm text-[#94a3b8]">{subvalue}</div>
+      <div
+        className={`mt-2 min-w-0 whitespace-normal text-base font-bold text-white ${
+          mono ? 'break-all font-mono text-sm leading-6 lg:text-base' : 'break-words'
+        }`}
+      >
+        {value}
+      </div>
+      <div className="mt-1 break-all text-sm text-[#94a3b8]">{subvalue}</div>
     </div>
   );
 }
