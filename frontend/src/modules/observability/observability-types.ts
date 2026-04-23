@@ -65,3 +65,29 @@ export type MetricRecord = {
   request_count: number;
   period: string;
 };
+
+export type MetricDashboardSummary = {
+  request_total: number;
+  latency_p95_ms: number;
+  cpu_p95: number;
+  ram_p95_mb: number;
+  open_incidents: number;
+  recent_errors: number;
+};
+
+export type MetricDashboardPoint = {
+  timestamp: string;
+  request_count: number;
+  latency_p95_ms: number;
+  cpu_p95: number;
+  ram_p95_mb: number;
+};
+
+export type MetricDashboardRecord = {
+  summary: MetricDashboardSummary;
+  series: MetricDashboardPoint[];
+  services: string[];
+  window: string;
+  step: string;
+  service?: string;
+};

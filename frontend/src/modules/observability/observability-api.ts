@@ -1,6 +1,12 @@
 import { apiGet } from '@/lib/api/api-client';
 import type { ApiResponse } from '@/lib/types';
-import type { Incident, LogEntry, MetricRecord, TraceDetail } from '@/modules/observability/observability-types';
+import type {
+  Incident,
+  LogEntry,
+  MetricDashboardRecord,
+  MetricRecord,
+  TraceDetail,
+} from '@/modules/observability/observability-types';
 
 export type ObservabilityLogListResponse = {
   items: LogEntry[];
@@ -13,6 +19,8 @@ export type ObservabilityIncidentListResponse = {
 export type ObservabilityMetricListResponse = {
   items: MetricRecord[];
 };
+
+export type ObservabilityMetricDashboardResponse = MetricDashboardRecord;
 
 export async function listProjectLogs(
   projectID: string,
@@ -41,6 +49,18 @@ export async function listProjectMetrics(
     params.limit = String(limit);
   }
   return apiGet<ObservabilityMetricListResponse>(`/projects/${projectID}/observability/metrics`, { params });
+}
+
+export async function getProjectMetricDashboard(
+  projectID: string,
+  filters: { service?: string; window?: string; step?: string } = {},
+): Promise<ApiResponse<ObservabilityMetricDashboardResponse>> {
+  const params: Record<string, string> = {};
+  if (filters.service) params.service = filters.service;
+  if (filters.window) params.window = filters.window;
+  if (filters.step) params.step = filters.step;
+
+  return apiGet<ObservabilityMetricDashboardResponse>(`/projects/${projectID}/observability/metrics/timeseries`, { params });
 }
 
 export async function getTraceByCorrelationID(correlationID: string): Promise<ApiResponse<TraceDetail>> {

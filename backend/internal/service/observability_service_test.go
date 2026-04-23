@@ -700,3 +700,264 @@ func TestObservabilityServiceBuildServiceMetricSummaryDoesNotProxyFromTraces(t *
 		t.Fatalf("expected no metric summary without rollups, got %d items", len(items))
 	}
 }
+
+func TestObservabilityServiceBuildMetricDashboardAggregatesSeries(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+	metricStore := newFakeMetricRollupStore(
+		models.MetricRollup{
+			ID:          "met_req_web",
+			ProjectID:   "prj_123",
+			ServiceName: "web",
+			MetricKind:  MetricKindRequestCount,
+			WindowStart: now.Add(-3 * time.Minute),
+			WindowEnd:   now.Add(-2 * time.Minute),
+			Count:       100,
+		},
+		models.MetricRollup{
+			ID:          "met_lat_web",
+			ProjectID:   "prj_123",
+			ServiceName: "web",
+			MetricKind:  MetricKindRequestLatency,
+			WindowStart: now.Add(-3 * time.Minute),
+			WindowEnd:   now.Add(-2 * time.Minute),
+			P95:         220,
+			Avg:         180,
+			Count:       100,
+		},
+		models.MetricRollup{
+			ID:          "met_cpu_web",
+			ProjectID:   "prj_123",
+			ServiceName: "web",
+			MetricKind:  MetricKindCPU,
+			WindowStart: now.Add(-3 * time.Minute),
+			WindowEnd:   now.Add(-2 * time.Minute),
+			P95:         65,
+			Avg:         54,
+			Count:       8,
+		},
+		models.MetricRollup{
+			ID:          "met_ram_web",
+			ProjectID:   "prj_123",
+			ServiceName: "web",
+			MetricKind:  MetricKindMemory,
+			WindowStart: now.Add(-3 * time.Minute),
+			WindowEnd:   now.Add(-2 * time.Minute),
+			P95:         512 * 1024 * 1024,
+			Avg:         480 * 1024 * 1024,
+			Count:       8,
+		},
+		models.MetricRollup{
+			ID:          "met_req_api",
+			ProjectID:   "prj_123",
+			ServiceName: "api",
+			MetricKind:  MetricKindRequestCount,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			Count:       40,
+		},
+		models.MetricRollup{
+			ID:          "met_lat_api",
+			ProjectID:   "prj_123",
+			ServiceName: "api",
+			MetricKind:  MetricKindRequestLatency,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			P95:         150,
+			Avg:         120,
+			Count:       40,
+		},
+		models.MetricRollup{
+			ID:          "met_cpu_api",
+			ProjectID:   "prj_123",
+			ServiceName: "api",
+			MetricKind:  MetricKindCPU,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			P95:         55,
+			Avg:         49,
+			Count:       6,
+		},
+		models.MetricRollup{
+			ID:          "met_ram_api",
+			ProjectID:   "prj_123",
+			ServiceName: "api",
+			MetricKind:  MetricKindMemory,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			P95:         256 * 1024 * 1024,
+			Avg:         220 * 1024 * 1024,
+			Count:       6,
+		},
+	)
+
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(
+			models.RuntimeIncident{
+				ID:          "inc_1",
+				ProjectID:   "prj_123",
+				Status:      IncidentStatusOpen,
+				Severity:    IncidentSeverityWarning,
+				Summary:     "api latency high",
+				DetailsJSON: `{"service":"api"}`,
+				CreatedAt:   now,
+			},
+		),
+		newFakeLogStreamStore(
+			models.LogStreamEntry{
+				ID:          "log_1",
+				ProjectID:   "prj_123",
+				ServiceName: "api",
+				Level:       "error",
+				Message:     "timeout",
+				OccurredAt:  now,
+			},
+		),
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	).WithMetricRollupStore(metricStore)
+
+	dashboard, err := svc.BuildMetricDashboard(context.Background(), "prj_123", "", "1h", "1m")
+	if err != nil {
+		t.Fatalf("build metric dashboard: %v", err)
+	}
+
+	if dashboard.Window != "1h" || dashboard.Step != "1m" {
+		t.Fatalf("unexpected metric range: window=%s step=%s", dashboard.Window, dashboard.Step)
+	}
+	if dashboard.Summary.RequestTotal != 140 {
+		t.Fatalf("expected request_total 140, got %d", dashboard.Summary.RequestTotal)
+	}
+	if dashboard.Summary.LatencyP95Ms != 150 {
+		t.Fatalf("expected latest latency p95 150, got %f", dashboard.Summary.LatencyP95Ms)
+	}
+	if dashboard.Summary.CpuP95 != 55 {
+		t.Fatalf("expected latest cpu p95 55, got %f", dashboard.Summary.CpuP95)
+	}
+	if dashboard.Summary.RamP95MB != 256 {
+		t.Fatalf("expected latest ram p95 256MB, got %f", dashboard.Summary.RamP95MB)
+	}
+	if dashboard.Summary.OpenIncidents != 1 {
+		t.Fatalf("expected 1 open incident, got %d", dashboard.Summary.OpenIncidents)
+	}
+	if dashboard.Summary.RecentErrors != 1 {
+		t.Fatalf("expected 1 recent error, got %d", dashboard.Summary.RecentErrors)
+	}
+	if len(dashboard.Services) != 2 || dashboard.Services[0] != "api" || dashboard.Services[1] != "web" {
+		t.Fatalf("unexpected services: %#v", dashboard.Services)
+	}
+
+	var matched MetricTimeSeriesPoint
+	target := alignMetricTimestamp(now.Add(-1*time.Minute), time.Minute)
+	for _, point := range dashboard.Series {
+		if point.Timestamp.Equal(target) {
+			matched = point
+			break
+		}
+	}
+	if matched.RequestCount != 40 {
+		t.Fatalf("expected api bucket request_count 40, got %d", matched.RequestCount)
+	}
+	if matched.LatencyP95Ms != 150 {
+		t.Fatalf("expected api bucket latency 150, got %f", matched.LatencyP95Ms)
+	}
+}
+
+func TestObservabilityServiceBuildMetricDashboardFiltersByService(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Minute)
+	metricStore := newFakeMetricRollupStore(
+		models.MetricRollup{
+			ID:          "met_api_req",
+			ProjectID:   "prj_123",
+			ServiceName: "api",
+			MetricKind:  MetricKindRequestCount,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			Count:       25,
+		},
+		models.MetricRollup{
+			ID:          "met_api_lat",
+			ProjectID:   "prj_123",
+			ServiceName: "api",
+			MetricKind:  MetricKindRequestLatency,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			P95:         80,
+			Avg:         60,
+			Count:       25,
+		},
+		models.MetricRollup{
+			ID:          "met_web_req",
+			ProjectID:   "prj_123",
+			ServiceName: "web",
+			MetricKind:  MetricKindRequestCount,
+			WindowStart: now.Add(-2 * time.Minute),
+			WindowEnd:   now.Add(-1 * time.Minute),
+			Count:       90,
+		},
+	)
+
+	svc := newTestObservabilityService(
+		newFakeTraceSummaryStore(),
+		newFakeRuntimeIncidentStore(
+			models.RuntimeIncident{
+				ID:          "inc_api",
+				ProjectID:   "prj_123",
+				Status:      IncidentStatusOpen,
+				DetailsJSON: `{"service":"api"}`,
+				CreatedAt:   now,
+			},
+			models.RuntimeIncident{
+				ID:          "inc_web",
+				ProjectID:   "prj_123",
+				Status:      IncidentStatusOpen,
+				DetailsJSON: `{"service":"web"}`,
+				CreatedAt:   now,
+			},
+		),
+		newFakeLogStreamStore(
+			models.LogStreamEntry{
+				ID:          "log_api",
+				ProjectID:   "prj_123",
+				ServiceName: "api",
+				Level:       "error",
+				Message:     "api timeout",
+				OccurredAt:  now,
+			},
+			models.LogStreamEntry{
+				ID:          "log_web",
+				ProjectID:   "prj_123",
+				ServiceName: "web",
+				Level:       "error",
+				Message:     "web timeout",
+				OccurredAt:  now,
+			},
+		),
+		newFakeTopologyNodeStore(),
+		newFakeTopologyEdgeStore(),
+		newFakeInstanceStore(),
+		newFakeMeshNetworkStore(),
+		newFakeClusterStore(),
+	).WithMetricRollupStore(metricStore)
+
+	dashboard, err := svc.BuildMetricDashboard(context.Background(), "prj_123", "api", "1h", "1m")
+	if err != nil {
+		t.Fatalf("build filtered metric dashboard: %v", err)
+	}
+
+	if dashboard.Summary.RequestTotal != 25 {
+		t.Fatalf("expected filtered request_total 25, got %d", dashboard.Summary.RequestTotal)
+	}
+	if dashboard.Summary.OpenIncidents != 1 {
+		t.Fatalf("expected filtered open incidents 1, got %d", dashboard.Summary.OpenIncidents)
+	}
+	if dashboard.Summary.RecentErrors != 1 {
+		t.Fatalf("expected filtered recent errors 1, got %d", dashboard.Summary.RecentErrors)
+	}
+	if len(dashboard.Services) != 1 || dashboard.Services[0] != "api" {
+		t.Fatalf("unexpected filtered services: %#v", dashboard.Services)
+	}
+}

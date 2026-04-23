@@ -312,12 +312,187 @@ type ServiceMetricSummary struct {
 	Period               string  `json:"period"`
 }
 
+type MetricDashboardSummary struct {
+	RequestTotal  int64   `json:"request_total"`
+	LatencyP95Ms  float64 `json:"latency_p95_ms"`
+	CpuP95        float64 `json:"cpu_p95"`
+	RamP95MB      float64 `json:"ram_p95_mb"`
+	OpenIncidents int     `json:"open_incidents"`
+	RecentErrors  int     `json:"recent_errors"`
+}
+
+type MetricTimeSeriesPoint struct {
+	Timestamp    time.Time `json:"timestamp"`
+	RequestCount int64     `json:"request_count"`
+	LatencyP95Ms float64   `json:"latency_p95_ms"`
+	CpuP95       float64   `json:"cpu_p95"`
+	RamP95MB     float64   `json:"ram_p95_mb"`
+}
+
+type MetricDashboard struct {
+	Summary  MetricDashboardSummary  `json:"summary"`
+	Series   []MetricTimeSeriesPoint `json:"series"`
+	Services []string                `json:"services"`
+	Window   string                  `json:"window"`
+	Step     string                  `json:"step"`
+	Service  string                  `json:"service,omitempty"`
+}
+
 func (s *ObservabilityService) BuildServiceMetricSummary(ctx context.Context, projectID string, limit int) ([]ServiceMetricSummary, error) {
 	_ = ctx
 	if s.metricRollups == nil {
 		return nil, nil
 	}
 	return s.buildServiceMetricSummaryFromRollups(projectID, limit)
+}
+
+func (s *ObservabilityService) BuildMetricDashboard(
+	ctx context.Context,
+	projectID,
+	serviceName,
+	window,
+	step string,
+) (*MetricDashboard, error) {
+	projectID = strings.TrimSpace(projectID)
+	serviceName = strings.TrimSpace(serviceName)
+	if projectID == "" {
+		return nil, ErrInvalidInput
+	}
+	if s.metricRollups == nil {
+		normalizedWindow, _, normalizedStep, _, err := normalizeMetricDashboardRange(window, step)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		return &MetricDashboard{
+			Summary:  MetricDashboardSummary{},
+			Series:   []MetricTimeSeriesPoint{},
+			Services: []string{},
+			Window:   normalizedWindow,
+			Step:     normalizedStep,
+			Service:  serviceName,
+		}, nil
+	}
+
+	normalizedWindow, windowDuration, normalizedStep, stepDuration, err := normalizeMetricDashboardRange(window, step)
+	if err != nil {
+		return nil, ErrInvalidInput
+	}
+
+	windowEnd := alignMetricTimestamp(time.Now().UTC(), stepDuration)
+	windowStart := windowEnd.Add(-windowDuration)
+
+	rollups, err := s.metricRollups.ListByProjectAndService(projectID, serviceName, windowStart, windowEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	series := buildEmptyMetricSeries(windowStart, windowEnd, stepDuration)
+	type bucketMetrics struct {
+		requestCount int64
+		latency      metricSeriesAccumulator
+		cpu          metricSeriesAccumulator
+		ram          metricSeriesAccumulator
+	}
+	buckets := make(map[int64]*bucketMetrics, len(series))
+	services := make(map[string]struct{})
+
+	for _, rollup := range rollups {
+		if rollup.WindowEnd.Before(windowStart) || rollup.WindowEnd.After(windowEnd.Add(stepDuration)) {
+			continue
+		}
+
+		name := strings.TrimSpace(rollup.ServiceName)
+		if name == "" {
+			name = "unknown"
+		}
+		services[name] = struct{}{}
+
+		bucketAt := alignMetricTimestamp(rollup.WindowEnd, stepDuration)
+		if bucketAt.Before(windowStart) {
+			bucketAt = windowStart
+		}
+		if bucketAt.After(windowEnd) {
+			bucketAt = windowEnd
+		}
+
+		bucket := buckets[bucketAt.Unix()]
+		if bucket == nil {
+			bucket = &bucketMetrics{}
+			buckets[bucketAt.Unix()] = bucket
+		}
+
+		switch strings.TrimSpace(rollup.MetricKind) {
+		case MetricKindRequestCount:
+			if rollup.Count > 0 {
+				bucket.requestCount += rollup.Count
+			} else if rollup.Avg > 0 {
+				bucket.requestCount += int64(math.Round(rollup.Avg))
+			}
+		case MetricKindRequestLatency:
+			bucket.latency.Add(rollup)
+		case MetricKindCPU:
+			bucket.cpu.Add(rollup)
+		case MetricKindMemory:
+			bucket.ram.Add(rollup)
+		}
+	}
+
+	dashboard := &MetricDashboard{
+		Summary:  MetricDashboardSummary{},
+		Series:   series,
+		Services: sortedMetricServices(services),
+		Window:   normalizedWindow,
+		Step:     normalizedStep,
+		Service:  serviceName,
+	}
+
+	for i := range dashboard.Series {
+		bucket := buckets[dashboard.Series[i].Timestamp.Unix()]
+		if bucket == nil {
+			continue
+		}
+		dashboard.Series[i].RequestCount = bucket.requestCount
+		dashboard.Series[i].LatencyP95Ms = bucket.latency.Summary().p95
+		dashboard.Series[i].CpuP95 = bucket.cpu.Summary().p95
+		dashboard.Series[i].RamP95MB = bytesToMB(bucket.ram.Summary().p95)
+		dashboard.Summary.RequestTotal += bucket.requestCount
+	}
+
+	dashboard.Summary.LatencyP95Ms = latestSeriesFloat(dashboard.Series, func(point MetricTimeSeriesPoint) float64 {
+		return point.LatencyP95Ms
+	})
+	dashboard.Summary.CpuP95 = latestSeriesFloat(dashboard.Series, func(point MetricTimeSeriesPoint) float64 {
+		return point.CpuP95
+	})
+	dashboard.Summary.RamP95MB = latestSeriesFloat(dashboard.Series, func(point MetricTimeSeriesPoint) float64 {
+		return point.RamP95MB
+	})
+
+	if s.incidents != nil {
+		incidents, listErr := s.ListIncidentsByProject(ctx, projectID)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, incident := range incidents {
+			if incident.Status != IncidentStatusOpen && !strings.EqualFold(incident.Status, "investigating") {
+				continue
+			}
+			if serviceName != "" && !incidentMatchesService(incident, serviceName) {
+				continue
+			}
+			dashboard.Summary.OpenIncidents++
+		}
+	}
+
+	if s.logs != nil {
+		errorLogs, listErr := s.ListRecentLogs(ctx, projectID, serviceName, "", "error", "", 200)
+		if listErr != nil {
+			return nil, listErr
+		}
+		dashboard.Summary.RecentErrors = len(errorLogs)
+	}
+
+	return dashboard, nil
 }
 
 type IngestAgentMetricRollupCommand struct {
@@ -1536,6 +1711,95 @@ func metricWindowFromMetadata(raw string) string {
 		return strings.TrimSpace(value)
 	}
 	return ""
+}
+
+func normalizeMetricDashboardRange(window, step string) (string, time.Duration, string, time.Duration, error) {
+	normalizedWindow := strings.TrimSpace(strings.ToLower(window))
+	if normalizedWindow == "" {
+		normalizedWindow = FinOpsWindow1h
+	}
+
+	windowDuration, ok := allowedFinOpsWindows[normalizedWindow]
+	if !ok {
+		return "", 0, "", 0, ErrInvalidInput
+	}
+
+	normalizedStep := strings.TrimSpace(strings.ToLower(step))
+	if normalizedStep == "" {
+		switch normalizedWindow {
+		case FinOpsWindow24h:
+			normalizedStep = "15m"
+		case FinOpsWindow6h:
+			normalizedStep = "5m"
+		default:
+			normalizedStep = "1m"
+		}
+	}
+
+	stepDuration := metricWindowDuration(normalizedStep)
+	if stepDuration <= 0 || stepDuration > windowDuration {
+		return "", 0, "", 0, ErrInvalidInput
+	}
+
+	switch normalizedStep {
+	case "1m", "5m", "15m":
+	default:
+		return "", 0, "", 0, ErrInvalidInput
+	}
+
+	return normalizedWindow, windowDuration, normalizedStep, stepDuration, nil
+}
+
+func alignMetricTimestamp(at time.Time, step time.Duration) time.Time {
+	return at.UTC().Truncate(step)
+}
+
+func buildEmptyMetricSeries(windowStart, windowEnd time.Time, step time.Duration) []MetricTimeSeriesPoint {
+	series := make([]MetricTimeSeriesPoint, 0)
+	for cursor := windowStart; !cursor.After(windowEnd); cursor = cursor.Add(step) {
+		series = append(series, MetricTimeSeriesPoint{Timestamp: cursor})
+	}
+	return series
+}
+
+func sortedMetricServices(items map[string]struct{}) []string {
+	out := make([]string, 0, len(items))
+	for serviceName := range items {
+		out = append(out, serviceName)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func latestSeriesFloat(series []MetricTimeSeriesPoint, selectValue func(MetricTimeSeriesPoint) float64) float64 {
+	for i := len(series) - 1; i >= 0; i-- {
+		value := selectValue(series[i])
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func incidentMatchesService(incident IncidentRecord, serviceName string) bool {
+	if strings.TrimSpace(serviceName) == "" {
+		return true
+	}
+
+	target := strings.TrimSpace(strings.ToLower(serviceName))
+	for _, key := range []string{"service", "service_name", "serviceName"} {
+		raw, ok := incident.Details[key]
+		if !ok {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		return strings.TrimSpace(strings.ToLower(value)) == target
+	}
+
+	return false
 }
 
 func bytesToMB(value float64) float64 {

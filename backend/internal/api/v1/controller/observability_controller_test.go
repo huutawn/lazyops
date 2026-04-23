@@ -166,6 +166,119 @@ func TestObservabilityControllerStreamLogsRejectsMissingService(t *testing.T) {
 	}
 }
 
+func TestObservabilityControllerGetMetricDashboardSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	projects := &controllerProjectStore{
+		projects: []*models.Project{{
+			ID:     "prj_123",
+			UserID: "usr_123",
+			Name:   "Acme",
+			Slug:   "acme",
+		}},
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	observability := service.NewObservabilityService(
+		nil,
+		&controllerIncidentStore{
+			items: []models.RuntimeIncident{{
+				ID:          "inc_1",
+				ProjectID:   "prj_123",
+				Status:      "open",
+				DetailsJSON: `{"service":"api"}`,
+				CreatedAt:   now,
+			}},
+		},
+		&controllerLogStore{items: []models.LogStreamEntry{
+			{
+				ID:          "log_1",
+				ProjectID:   "prj_123",
+				BindingID:   "bind_123",
+				ServiceName: "api",
+				Level:       "error",
+				Message:     "timeout",
+				OccurredAt:  now,
+				CollectedAt: now,
+			},
+		}},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	).WithMetricRollupStore(&controllerMetricRollupStore{
+		items: []models.MetricRollup{
+			{
+				ID:          "met_1",
+				ProjectID:   "prj_123",
+				ServiceName: "api",
+				MetricKind:  service.MetricKindRequestCount,
+				WindowStart: now.Add(-2 * time.Minute),
+				WindowEnd:   now.Add(-1 * time.Minute),
+				Count:       22,
+			},
+			{
+				ID:          "met_2",
+				ProjectID:   "prj_123",
+				ServiceName: "api",
+				MetricKind:  service.MetricKindRequestLatency,
+				WindowStart: now.Add(-2 * time.Minute),
+				WindowEnd:   now.Add(-1 * time.Minute),
+				P95:         95,
+				Avg:         70,
+				Count:       22,
+			},
+		},
+	})
+
+	controller := NewObservabilityController(projects, observability)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodGet, "/projects/prj_123/observability/metrics/timeseries?window=1h&step=1m&service=api", nil)
+	ctx.Request = req
+	ctx.Params = gin.Params{{Key: "id", Value: "prj_123"}}
+	ctx.Set("auth.claims", &service.Claims{UserID: "usr_123", Role: service.RoleOperator, AuthKind: service.AuthKindCLIPAT})
+
+	controller.GetMetricDashboard(ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Window  string `json:"window"`
+			Step    string `json:"step"`
+			Service string `json:"service"`
+			Summary struct {
+				RequestTotal int `json:"request_total"`
+				RecentErrors int `json:"recent_errors"`
+			} `json:"summary"`
+			Services []string `json:"services"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Success {
+		t.Fatalf("expected success payload, got %s", rec.Body.String())
+	}
+	if payload.Data.Window != "1h" || payload.Data.Step != "1m" || payload.Data.Service != "api" {
+		t.Fatalf("unexpected range payload: %#v", payload.Data)
+	}
+	if payload.Data.Summary.RequestTotal != 22 {
+		t.Fatalf("expected request_total 22, got %d", payload.Data.Summary.RequestTotal)
+	}
+	if payload.Data.Summary.RecentErrors != 1 {
+		t.Fatalf("expected recent_errors 1, got %d", payload.Data.Summary.RecentErrors)
+	}
+	if len(payload.Data.Services) != 1 || payload.Data.Services[0] != "api" {
+		t.Fatalf("unexpected services payload: %#v", payload.Data.Services)
+	}
+}
+
 type controllerLogStore struct {
 	items []models.LogStreamEntry
 }
@@ -191,6 +304,44 @@ func (s *controllerLogStore) ListByQuery(query models.LogStreamQuery) ([]models.
 
 type controllerTraceStore struct {
 	items []models.TraceSummary
+}
+
+type controllerMetricRollupStore struct {
+	items []models.MetricRollup
+}
+
+func (s *controllerMetricRollupStore) Create(rollup *models.MetricRollup) error {
+	s.items = append(s.items, *rollup)
+	return nil
+}
+
+func (s *controllerMetricRollupStore) ListByProjectAndService(projectID, serviceName string, windowStart, windowEnd time.Time) ([]models.MetricRollup, error) {
+	out := make([]models.MetricRollup, 0)
+	for _, item := range s.items {
+		if item.ProjectID != projectID {
+			continue
+		}
+		if strings.TrimSpace(serviceName) != "" && item.ServiceName != serviceName {
+			continue
+		}
+		if !item.WindowEnd.Before(windowStart) && !item.WindowStart.After(windowEnd) {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *controllerMetricRollupStore) ListByProject(projectID string, limit int) ([]models.MetricRollup, error) {
+	out := make([]models.MetricRollup, 0)
+	for _, item := range s.items {
+		if item.ProjectID == projectID {
+			out = append(out, item)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (s *controllerTraceStore) Create(trace *models.TraceSummary) error {
@@ -222,6 +373,46 @@ func (s *controllerTraceStore) ListByProject(projectID string, limit int) ([]mod
 
 type controllerTopologyNodeStore struct {
 	items []models.TopologyNode
+}
+
+type controllerIncidentStore struct {
+	items []models.RuntimeIncident
+}
+
+func (s *controllerIncidentStore) Create(incident *models.RuntimeIncident) error {
+	s.items = append(s.items, *incident)
+	return nil
+}
+
+func (s *controllerIncidentStore) ListByProject(projectID string) ([]models.RuntimeIncident, error) {
+	out := make([]models.RuntimeIncident, 0)
+	for _, item := range s.items {
+		if item.ProjectID == projectID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *controllerIncidentStore) ListByDeployment(projectID, deploymentID string) ([]models.RuntimeIncident, error) {
+	out := make([]models.RuntimeIncident, 0)
+	for _, item := range s.items {
+		if item.ProjectID == projectID && item.DeploymentID == deploymentID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (s *controllerIncidentStore) UpdateStatus(incidentID, status string, at time.Time) error {
+	for i := range s.items {
+		if s.items[i].ID == incidentID {
+			s.items[i].Status = status
+			s.items[i].UpdatedAt = at
+			return nil
+		}
+	}
+	return nil
 }
 
 func (s *controllerTopologyNodeStore) Upsert(node *models.TopologyNode) error {

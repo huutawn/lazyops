@@ -2,12 +2,19 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getTraceByCorrelationID,
+  getProjectMetricDashboard,
   listProjectIncidents,
   listProjectLogs,
   listProjectMetrics,
 } from '@/modules/observability/observability-api';
 import { normalizeLiveLogEnvelope } from '@/modules/observability/observability-live';
-import type { Incident, LogEntry, MetricRecord, TraceDetail } from '@/modules/observability/observability-types';
+import type {
+  Incident,
+  LogEntry,
+  MetricDashboardRecord,
+  MetricRecord,
+  TraceDetail,
+} from '@/modules/observability/observability-types';
 
 export function useLogs(projectId?: string, level?: string) {
   return useQuery({
@@ -78,6 +85,25 @@ export function useMetrics(projectId?: string) {
     },
     enabled: !!projectId,
     staleTime: 60 * 1000,
+  });
+}
+
+export function useMetricDashboard(projectId?: string, filters: { service?: string; window?: string; step?: string } = {}) {
+  return useQuery({
+    queryKey: ['observability', 'metric-dashboard', projectId, filters.service ?? '', filters.window ?? '', filters.step ?? ''],
+    queryFn: async (): Promise<MetricDashboardRecord | null> => {
+      if (!projectId) {
+        return null;
+      }
+      const result = await getProjectMetricDashboard(projectId, filters);
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      return result.data ?? null;
+    },
+    enabled: !!projectId,
+    staleTime: 5 * 1000,
+    refetchInterval: 10 * 1000,
   });
 }
 

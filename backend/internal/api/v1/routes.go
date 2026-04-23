@@ -169,6 +169,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 			userProtected.GET("/projects/:id/observability/logs", observabilityController.ListLogs)
 			userProtected.GET("/projects/:id/observability/incidents", observabilityController.ListIncidents)
 			userProtected.GET("/projects/:id/observability/metrics", observabilityController.ListMetrics)
+			userProtected.GET("/projects/:id/observability/metrics/timeseries", observabilityController.GetMetricDashboard)
 			userProtected.GET("/traces/:correlation_id", observabilityController.GetTrace)
 			userProtected.GET("/ws/logs/stream", observabilityController.StreamLogs)
 			userProtected.GET("/observability/correlate", observabilityController.GetCorrelatedObservability)

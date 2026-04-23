@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { buildMetricLinePath, formatMetricTimestampLabel, hasMetricDashboardData, OBSERVABILITY_WINDOWS, resolveMetricDashboardStep, type ObservabilityWindow } from '@/modules/observability/metric-dashboard-helpers';
 import { listObservedServices, mergeObservedLogs } from '@/modules/observability/observability-live';
-import { useLogs, useIncidents, useLiveLogs, useMetrics, useTrace } from '@/modules/observability/observability-hooks';
-import type { LogLevel, MetricRecord } from '@/modules/observability/observability-types';
+import { useIncidents, useLiveLogs, useLogs, useMetricDashboard, useMetrics, useTrace } from '@/modules/observability/observability-hooks';
+import type { LogLevel, MetricDashboardPoint, MetricDashboardRecord, MetricRecord } from '@/modules/observability/observability-types';
 import { useProjects } from '@/modules/projects/project-hooks';
 import { PageHeader } from '@/components/primitives/page-header';
 import { SectionCard } from '@/components/primitives/section-card';
@@ -45,7 +46,9 @@ export function ObservabilityConsole({
 }: ObservabilityConsoleProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'logs' | 'traces' | 'incidents'>('overview');
   const [logFilter, setLogFilter] = useState<LogLevel | 'all'>('all');
-  const [serviceFilter, setServiceFilter] = useState('all');
+  const [logServiceFilter, setLogServiceFilter] = useState('all');
+  const [metricServiceFilter, setMetricServiceFilter] = useState('all');
+  const [metricWindow, setMetricWindow] = useState<ObservabilityWindow>('1h');
   const [followMode, setFollowMode] = useState(false);
   const [traceQuery, setTraceQuery] = useState('');
   const [projectId, setProjectId] = useState(fixedProjectId ?? '');
@@ -73,34 +76,53 @@ export function ObservabilityConsole({
   const liveLogs = useLiveLogs(activeProjectId, followMode);
   const { data: incidents, isLoading: incidentsLoading, isError: incidentsError } = useIncidents(activeProjectId);
   const { data: metrics, isLoading: metricsLoading, isError: metricsError } = useMetrics(activeProjectId);
+  const metricStep = useMemo(() => resolveMetricDashboardStep(metricWindow), [metricWindow]);
+  const selectedMetricService = metricServiceFilter === 'all' ? undefined : metricServiceFilter;
+  const {
+    data: metricDashboard,
+    isLoading: metricDashboardLoading,
+    isError: metricDashboardError,
+  } = useMetricDashboard(activeProjectId, { service: selectedMetricService, window: metricWindow, step: metricStep });
   const { data: trace, isLoading: traceLoading } = useTrace(traceQuery);
 
   const mergedLogs = useMemo(() => mergeObservedLogs(logs ?? [], liveLogs), [liveLogs, logs]);
   const observedServices = useMemo(() => listObservedServices(mergedLogs), [mergedLogs]);
+  const metricServiceOptions = useMemo(() => {
+    const options = new Set<string>();
+    (metricDashboard?.services ?? []).forEach((service) => options.add(service));
+    (metrics ?? []).forEach((metric) => options.add(metric.service));
+    return Array.from(options).sort((a, b) => a.localeCompare(b));
+  }, [metricDashboard?.services, metrics]);
   const filteredLogs = useMemo(
     () => mergedLogs.filter((item) => {
       if (logFilter !== 'all' && item.level !== logFilter) {
         return false;
       }
-      if (serviceFilter !== 'all' && item.service !== serviceFilter) {
+      if (logServiceFilter !== 'all' && item.service !== logServiceFilter) {
         return false;
       }
       return true;
     }),
-    [logFilter, mergedLogs, serviceFilter],
+    [logFilter, logServiceFilter, mergedLogs],
   );
 
   useEffect(() => {
-    if (serviceFilter !== 'all' && !observedServices.includes(serviceFilter)) {
-      setServiceFilter('all');
+    if (logServiceFilter !== 'all' && !observedServices.includes(logServiceFilter)) {
+      setLogServiceFilter('all');
     }
-  }, [observedServices, serviceFilter]);
+  }, [logServiceFilter, observedServices]);
 
-  if ((!fixedProjectId && projectsLoading) || logsLoading || incidentsLoading || metricsLoading) {
+  useEffect(() => {
+    if (metricServiceFilter !== 'all' && !metricServiceOptions.includes(metricServiceFilter)) {
+      setMetricServiceFilter('all');
+    }
+  }, [metricServiceFilter, metricServiceOptions]);
+
+  if ((!fixedProjectId && projectsLoading) || logsLoading || incidentsLoading || metricsLoading || metricDashboardLoading) {
     return <SkeletonPage title cards={3} />;
   }
 
-  if ((!fixedProjectId && projectsError) || logsError || incidentsError || metricsError) {
+  if ((!fixedProjectId && projectsError) || logsError || incidentsError || metricsError || metricDashboardError) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title={title} subtitle={subtitle} />
@@ -172,6 +194,12 @@ export function ObservabilityConsole({
 
       {activeTab === 'overview' && (
         <OverviewTab
+          dashboard={metricDashboard}
+          metricWindow={metricWindow}
+          onMetricWindowChange={setMetricWindow}
+          metricServiceFilter={metricServiceFilter}
+          onMetricServiceFilterChange={setMetricServiceFilter}
+          metricServiceOptions={metricServiceOptions}
           openIncidents={openIncidents}
           errorLogs={errorLogs}
           metrics={metrics}
@@ -183,9 +211,9 @@ export function ObservabilityConsole({
           logs={filteredLogs}
           logFilter={logFilter}
           onFilterChange={setLogFilter}
-          serviceFilter={serviceFilter}
+          serviceFilter={logServiceFilter}
           serviceOptions={observedServices}
-          onServiceFilterChange={setServiceFilter}
+          onServiceFilterChange={setLogServiceFilter}
           followMode={followMode}
           onFollowToggle={() => setFollowMode(!followMode)}
         />
@@ -207,14 +235,154 @@ export function ObservabilityConsole({
   );
 }
 
-function OverviewTab({ openIncidents, errorLogs, metrics }: {
+function OverviewTab({
+  dashboard,
+  metricWindow,
+  onMetricWindowChange,
+  metricServiceFilter,
+  onMetricServiceFilterChange,
+  metricServiceOptions,
+  openIncidents,
+  errorLogs,
+  metrics,
+}: {
+  dashboard?: MetricDashboardRecord | null;
+  metricWindow: ObservabilityWindow;
+  onMetricWindowChange: (window: ObservabilityWindow) => void;
+  metricServiceFilter: string;
+  onMetricServiceFilterChange: (service: string) => void;
+  metricServiceOptions: string[];
   openIncidents: { id: string; severity: string; status: string; summary: string }[];
   errorLogs: { id: string; message: string; timestamp: string }[];
   metrics?: MetricRecord[];
 }) {
+  const hasDashboardData = hasMetricDashboardData(dashboard);
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <SectionCard
+        title="Realtime monitoring"
+        description="Prometheus-like overview powered by agent rollups and gateway access metrics."
+        actions={(
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={metricServiceFilter}
+              onChange={(event) => onMetricServiceFilterChange(event.target.value)}
+              className="rounded-md border border-lazyops-border bg-lazyops-bg-accent/50 px-3 py-2 text-sm text-lazyops-text outline-none focus:border-primary/60"
+            >
+              <option value="all">all services</option>
+              {metricServiceOptions.map((service) => (
+                <option key={service} value={service}>
+                  {service}
+                </option>
+              ))}
+            </select>
+            <div className="flex overflow-hidden rounded-xl border border-lazyops-border bg-lazyops-bg-accent/40 p-1">
+              {OBSERVABILITY_WINDOWS.map((window) => (
+                <button
+                  key={window}
+                  type="button"
+                  onClick={() => onMetricWindowChange(window)}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                    metricWindow === window
+                      ? 'bg-primary/15 text-primary'
+                      : 'text-lazyops-muted hover:text-lazyops-text'
+                  }`}
+                >
+                  {window}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      >
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <KpiCard
+            label="Requests"
+            value={formatCompactNumber(dashboard?.summary.request_total ?? 0)}
+            tone="sky"
+            detail={`${dashboard?.summary.recent_errors ?? 0} recent errors`}
+          />
+          <KpiCard
+            label="Latency p95"
+            value={formatLatency(dashboard?.summary.latency_p95_ms ?? 0)}
+            tone="amber"
+            detail="Latest non-empty bucket"
+          />
+          <KpiCard
+            label="CPU p95"
+            value={formatPercent(dashboard?.summary.cpu_p95 ?? 0)}
+            tone="emerald"
+            detail={`${metrics?.length ?? 0} services reporting`}
+          />
+          <KpiCard
+            label="RAM p95"
+            value={formatMegabytes(dashboard?.summary.ram_p95_mb ?? 0)}
+            tone="violet"
+            detail="Latest memory pressure"
+          />
+          <KpiCard
+            label="Open incidents"
+            value={String(dashboard?.summary.open_incidents ?? openIncidents.length)}
+            tone="rose"
+            detail={openIncidents.length > 0 ? 'Needs attention' : 'All clear'}
+          />
+        </div>
+
+        {hasDashboardData ? (
+          <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            <MetricTrendChart
+              title="Traffic"
+              subtitle="Request count per bucket"
+              series={dashboard?.series ?? []}
+              window={metricWindow}
+              color="#38BDF8"
+              fill="rgba(56, 189, 248, 0.18)"
+              formatValue={(value) => formatCompactNumber(value)}
+              selectValue={(point) => point.request_count}
+            />
+            <MetricTrendChart
+              title="Latency"
+              subtitle="p95 request latency"
+              series={dashboard?.series ?? []}
+              window={metricWindow}
+              color="#F59E0B"
+              fill="rgba(245, 158, 11, 0.18)"
+              formatValue={(value) => formatLatency(value)}
+              selectValue={(point) => point.latency_p95_ms}
+            />
+            <MetricTrendChart
+              title="CPU pressure"
+              subtitle="p95 CPU utilization"
+              series={dashboard?.series ?? []}
+              window={metricWindow}
+              color="#34D399"
+              fill="rgba(52, 211, 153, 0.18)"
+              formatValue={(value) => formatPercent(value)}
+              selectValue={(point) => point.cpu_p95}
+            />
+            <MetricTrendChart
+              title="Memory pressure"
+              subtitle="p95 RAM usage"
+              series={dashboard?.series ?? []}
+              window={metricWindow}
+              color="#A78BFA"
+              fill="rgba(167, 139, 250, 0.18)"
+              formatValue={(value) => formatMegabytes(value)}
+              selectValue={(point) => point.ram_p95_mb}
+            />
+          </div>
+        ) : (
+          <div className="mt-5">
+            <EmptyState
+              title="Chua co du lieu realtime"
+              description="Dashboard se hien bieu do sau khi agent gui metric rollup va gateway bat dau ghi request count."
+            />
+          </div>
+        )}
+      </SectionCard>
+
+      <div className="grid gap-4 sm:grid-cols-2">
         <SectionCard title="Open incidents">
           <div className="text-4xl font-bold text-health-unhealthy">{openIncidents.length}</div>
           <p className="text-sm text-lazyops-muted">
@@ -225,11 +393,6 @@ function OverviewTab({ openIncidents, errorLogs, metrics }: {
         <SectionCard title="Recent errors">
           <div className="text-4xl font-bold text-health-unhealthy">{errorLogs.length}</div>
           <p className="text-sm text-lazyops-muted">Error log entries</p>
-        </SectionCard>
-
-        <SectionCard title="Services monitored">
-          <div className="text-4xl font-bold text-health-healthy">{metrics?.length ?? 0}</div>
-          <p className="text-sm text-lazyops-muted">With metric data</p>
         </SectionCard>
       </div>
 
@@ -311,6 +474,96 @@ function OverviewTab({ openIncidents, errorLogs, metrics }: {
   );
 }
 
+function KpiCard({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: 'sky' | 'amber' | 'emerald' | 'violet' | 'rose' }) {
+  const toneStyles = {
+    sky: 'from-[#0ea5e9]/15 to-[#0f172a] text-[#38bdf8]',
+    amber: 'from-[#f59e0b]/15 to-[#0f172a] text-[#fbbf24]',
+    emerald: 'from-[#10b981]/15 to-[#0f172a] text-[#34d399]',
+    violet: 'from-[#8b5cf6]/15 to-[#0f172a] text-[#c4b5fd]',
+    rose: 'from-[#f43f5e]/15 to-[#0f172a] text-[#fb7185]',
+  } as const;
+
+  return (
+    <div className={`rounded-2xl border border-white/5 bg-gradient-to-br p-5 ${toneStyles[tone]}`}>
+      <div className="text-sm font-medium text-lazyops-muted">{label}</div>
+      <div className="mt-3 text-3xl font-semibold">{value}</div>
+      <div className="mt-2 text-sm text-lazyops-muted">{detail}</div>
+    </div>
+  );
+}
+
+function MetricTrendChart({
+  title,
+  subtitle,
+  series,
+  window,
+  color,
+  fill,
+  selectValue,
+  formatValue,
+}: {
+  title: string;
+  subtitle: string;
+  series: MetricDashboardPoint[];
+  window: string;
+  color: string;
+  fill: string;
+  selectValue: (point: MetricDashboardPoint) => number;
+  formatValue: (value: number) => string;
+}) {
+  const chartWidth = 480;
+  const chartHeight = 180;
+  const { linePath, areaPath } = buildMetricLinePath(series, selectValue, chartWidth, chartHeight);
+  const latestValue = series.length > 0 ? selectValue(series[series.length - 1] as MetricDashboardPoint) : 0;
+  const peakValue = series.reduce((max, point) => Math.max(max, selectValue(point)), 0);
+  const gradientId = `chart-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const labels = series.length > 0
+    ? [series[0], series[Math.floor((series.length - 1) / 2)], series[series.length - 1]].filter(Boolean)
+    : [];
+
+  return (
+    <SectionCard title={title} description={subtitle}>
+      <div className="mb-4 flex items-end justify-between gap-4">
+        <div>
+          <div className="text-3xl font-semibold text-lazyops-text">{formatValue(latestValue)}</div>
+          <div className="text-sm text-lazyops-muted">Latest bucket</div>
+        </div>
+        <div className="text-right">
+          <div className="text-sm text-lazyops-muted">Peak</div>
+          <div className="text-base font-medium text-lazyops-text">{formatValue(peakValue)}</div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-lazyops-border/60 bg-[#020817]/70 p-3">
+        {linePath ? (
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-48 w-full">
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={fill} />
+                <stop offset="100%" stopColor="rgba(15, 23, 42, 0)" />
+              </linearGradient>
+            </defs>
+            <path d={areaPath} fill={`url(#${gradientId})`} />
+            <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <div className="flex h-48 items-center justify-center text-sm text-lazyops-muted">
+            Waiting for metrics...
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center justify-between text-xs text-lazyops-muted">
+          {labels.map((point) => (
+            <span key={`${title}-${point.timestamp}`}>
+              {formatMetricTimestampLabel(point.timestamp, window)}
+            </span>
+          ))}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 function MetricBar({ value, max, unit }: { value: number; max: number; unit: string }) {
   const pct = Math.min((value / max) * 100, 100);
   const color = pct > 80 ? 'bg-health-unhealthy' : pct > 60 ? 'bg-health-degraded' : 'bg-health-healthy';
@@ -340,6 +593,28 @@ function formatBytes(value?: number) {
 
   const precision = size >= 100 || unitIndex === 0 ? 0 : 1;
   return `${size.toFixed(precision)}${units[unitIndex]}`;
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function formatLatency(value: number) {
+  if (value <= 0) {
+    return '0ms';
+  }
+  return `${Math.round(value)}ms`;
+}
+
+function formatPercent(value: number) {
+  return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
+}
+
+function formatMegabytes(value: number) {
+  if (value <= 0) {
+    return '0MB';
+  }
+  return `${value.toFixed(value >= 100 ? 0 : 1)}MB`;
 }
 
 function LogsTab({ logs, logFilter, onFilterChange, serviceFilter, serviceOptions, onServiceFilterChange, followMode, onFollowToggle }: {

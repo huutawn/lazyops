@@ -255,6 +255,43 @@ func (ctl *ObservabilityController) ListMetrics(c *gin.Context) {
 	response.JSON(c, http.StatusOK, "metrics loaded", gin.H{"items": items})
 }
 
+func (ctl *ObservabilityController) GetMetricDashboard(c *gin.Context) {
+	claims := middleware.MustClaims(c)
+	project, err := resolveProjectForClaims(ctl.projects, claims, c.Param("id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load metric dashboard", "invalid_input", err.Error())
+		case errors.Is(err, service.ErrProjectNotFound):
+			response.Error(c, http.StatusNotFound, "failed to load metric dashboard", "project_not_found", err.Error())
+		case errors.Is(err, service.ErrProjectAccessDenied):
+			response.Error(c, http.StatusForbidden, "failed to load metric dashboard", "project_access_denied", err.Error())
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load metric dashboard", "internal_error", err.Error())
+		}
+		return
+	}
+
+	result, err := ctl.observability.BuildMetricDashboard(
+		c.Request.Context(),
+		project.ID,
+		c.Query("service"),
+		c.Query("window"),
+		c.Query("step"),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			response.Error(c, http.StatusBadRequest, "failed to load metric dashboard", "invalid_metric_range", "window/step query parameters are invalid")
+		default:
+			response.Error(c, http.StatusInternalServerError, "failed to load metric dashboard", "internal_error", err.Error())
+		}
+		return
+	}
+
+	response.JSON(c, http.StatusOK, "metric dashboard loaded", result)
+}
+
 func (ctl *ObservabilityController) GetCorrelatedObservability(c *gin.Context) {
 	claims := middleware.MustClaims(c)
 	correlationID := strings.TrimSpace(c.Query("correlation_id"))

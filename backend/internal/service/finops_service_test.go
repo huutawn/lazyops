@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,13 @@ func (f *fakeMetricRollupStore) Create(rollup *models.MetricRollup) error {
 func (f *fakeMetricRollupStore) ListByProjectAndService(projectID, serviceName string, windowStart, windowEnd time.Time) ([]models.MetricRollup, error) {
 	out := make([]models.MetricRollup, 0)
 	for _, item := range f.items {
-		if item.ProjectID == projectID && item.ServiceName == serviceName && !item.WindowStart.Before(windowStart) && !item.WindowEnd.After(windowEnd) {
+		if item.ProjectID != projectID {
+			continue
+		}
+		if strings.TrimSpace(serviceName) != "" && item.ServiceName != serviceName {
+			continue
+		}
+		if !item.WindowEnd.Before(windowStart) && !item.WindowStart.After(windowEnd) {
 			out = append(out, item)
 		}
 	}
