@@ -219,11 +219,13 @@ func (d *FilesystemDriver) PrepareReleaseWorkspace(ctx context.Context, runtimeC
 		hydratedConfigPath := filepath.Join(serviceDir, "runtime.json")
 		if err := writeJSON(hydratedConfigPath, map[string]any{
 			"service":        service,
+			"services":       runtimeCtx.Services,
 			"project_env":    runtimeCtx.ProjectEnv,
 			"artifact_ref":   artifact.ArtifactRef,
 			"image_ref":      artifact.ImageRef,
 			"workspace_root": layout.Root,
 			"network_name":   bindingNetworkName(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.BindingID),
+			"runtime_mode":   runtimeCtx.Binding.RuntimeMode,
 		}); err != nil {
 			return PreparedWorkspace{}, err
 		}

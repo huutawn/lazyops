@@ -15,7 +15,15 @@ func TestBuildContainerEnvVarsMergesHelperUserAndReservedKeys(t *testing.T) {
 		Alias:         "postgres",
 		Protocol:      "tcp",
 		LocalEndpoint: "localhost:5432",
-	}}, map[string]string{
+	}}, []ServiceRuntimeContext{
+		{
+			Name: "config-server",
+			HealthCheck: contracts.HealthCheckPayload{
+				Protocol: "http",
+				Port:     8888,
+			},
+		},
+	}, contracts.RuntimeModeStandalone, "prj_123", map[string]string{
 		"APP_ENV":      "prod",
 		"DB_HOST":      "db.example.internal",
 		"PORT":         "9999",
@@ -36,6 +44,15 @@ func TestBuildContainerEnvVarsMergesHelperUserAndReservedKeys(t *testing.T) {
 	}
 	if got["DB_PORT"] != "5432" {
 		t.Fatalf("expected DB_PORT helper injection, got %#v", got)
+	}
+	if got["CONFIG_SERVER_HOST"] != "config-server" {
+		t.Fatalf("expected CONFIG_SERVER_HOST from automatic service discovery, got %#v", got)
+	}
+	if got["CONFIG_SERVER_PORT"] != "8888" {
+		t.Fatalf("expected CONFIG_SERVER_PORT from automatic service discovery, got %#v", got)
+	}
+	if got["LAZYOPS_SERVICE_CONFIG_SERVER_HOST"] != "config-server" {
+		t.Fatalf("expected LAZYOPS_SERVICE_CONFIG_SERVER_HOST from automatic service discovery, got %#v", got)
 	}
 	if got["PORT"] != "40620" {
 		t.Fatalf("expected reserved PORT to win, got %#v", got)

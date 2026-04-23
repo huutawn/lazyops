@@ -124,6 +124,9 @@ func TestSidecarManagerRenderSidecarWithDependencies(t *testing.T) {
 	if err := writeTestService(layout, "api"); err != nil {
 		t.Fatalf("write api: %v", err)
 	}
+	if err := writeTestService(layout, "config-server"); err != nil {
+		t.Fatalf("write config-server: %v", err)
+	}
 
 	runtimeCtx := RuntimeContext{
 		Project: ProjectMetadata{ProjectID: "prj_1"},
@@ -148,6 +151,14 @@ func TestSidecarManagerRenderSidecarWithDependencies(t *testing.T) {
 				},
 			},
 			{Name: "api", Path: "apps/api"},
+			{
+				Name: "config-server",
+				Path: "apps/config-server",
+				HealthCheck: contracts.HealthCheckPayload{
+					Protocol: "http",
+					Port:     8888,
+				},
+			},
 		},
 	}
 
@@ -164,6 +175,15 @@ func TestSidecarManagerRenderSidecarWithDependencies(t *testing.T) {
 	}
 	if len(result.Plan.Bindings) != 1 {
 		t.Fatalf("expected 1 binding in plan, got %d", len(result.Plan.Bindings))
+	}
+	if got := result.Plan.Services[0].Env["CONFIG_SERVER_HOST"]; got != "config-server" {
+		t.Fatalf("expected CONFIG_SERVER_HOST for unbound service discovery, got %#v", result.Plan.Services[0].Env)
+	}
+	if got := result.Plan.Services[0].Env["CONFIG_SERVER_PORT"]; got != "8888" {
+		t.Fatalf("expected CONFIG_SERVER_PORT for unbound service discovery, got %#v", result.Plan.Services[0].Env)
+	}
+	if got := result.Plan.Services[0].Env["LAZYOPS_SERVICE_CONFIG_SERVER_HOST"]; got != "config-server" {
+		t.Fatalf("expected LAZYOPS_SERVICE_CONFIG_SERVER_HOST for unbound service discovery, got %#v", result.Plan.Services[0].Env)
 	}
 }
 

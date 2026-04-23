@@ -48,26 +48,28 @@ type ProcessManager struct {
 	healthCheckInterval time.Duration
 	now                 func() time.Time
 
-	mu                sync.Mutex
-	logWatcherMu      sync.Mutex
-	processes         map[string]*ProcessInfo
-	cmds              map[string]*exec.Cmd
-	sidecarProxy      *SidecarProxy
-	iptablesManager   *IPTablesManager
-	logCollector      *LogCollector
-	logWatcherCancels map[string]logWatcherHandle
-	logWatcherSeq     uint64
-	agentImageRef     string
+	mu                 sync.Mutex
+	logWatcherMu       sync.Mutex
+	processes          map[string]*ProcessInfo
+	cmds               map[string]*exec.Cmd
+	sidecarProxy       *SidecarProxy
+	iptablesManager    *IPTablesManager
+	logCollector       *LogCollector
+	logWatcherCancels  map[string]logWatcherHandle
+	logWatcherSeq      uint64
+	agentImageRef      string
 	stateEncryptionKey string
 }
 
 type runtimeWorkloadConfig struct {
-	Service       ServiceRuntimeContext `json:"service"`
-	ProjectEnv    map[string]string     `json:"project_env,omitempty"`
-	ArtifactRef   string                `json:"artifact_ref"`
-	ImageRef      string                `json:"image_ref"`
-	WorkspaceRoot string                `json:"workspace_root"`
-	NetworkName   string                `json:"network_name,omitempty"`
+	Service       ServiceRuntimeContext   `json:"service"`
+	Services      []ServiceRuntimeContext `json:"services,omitempty"`
+	ProjectEnv    map[string]string       `json:"project_env,omitempty"`
+	ArtifactRef   string                  `json:"artifact_ref"`
+	ImageRef      string                  `json:"image_ref"`
+	WorkspaceRoot string                  `json:"workspace_root"`
+	NetworkName   string                  `json:"network_name,omitempty"`
+	RuntimeMode   contracts.RuntimeMode   `json:"runtime_mode,omitempty"`
 }
 
 type sidecarRuntimeConfig struct {
@@ -650,7 +652,7 @@ func (m *ProcessManager) startContainerWorkload(ctx context.Context, cfg runtime
 		args = append(args, "--label", "lazyops.revision_id="+revisionID)
 	}
 
-	for _, envVar := range buildContainerEnvVars(port, cfg.Service.Dependencies, cfg.ProjectEnv) {
+	for _, envVar := range buildContainerEnvVars(port, cfg.Service.Dependencies, cfg.Services, cfg.RuntimeMode, cfg.ProjectID(), cfg.ProjectEnv) {
 		args = append(args, "-e", envVar)
 	}
 
@@ -720,8 +722,11 @@ func (m *ProcessManager) startSidecarCompanion(ctx context.Context, configPath s
 	return containerName, nil
 }
 
-func buildContainerEnvVars(port int, deps []contracts.DependencyBindingPayload, projectEnv map[string]string) []string {
-	env := dependencyEnvMap(deps)
+func buildContainerEnvVars(port int, deps []contracts.DependencyBindingPayload, services []ServiceRuntimeContext, runtimeMode contracts.RuntimeMode, projectID string, projectEnv map[string]string) []string {
+	env := automaticServiceDiscoveryEnvMap(projectID, runtimeMode, services)
+	for key, value := range dependencyEnvMap(deps) {
+		env[key] = value
+	}
 	for key, value := range projectEnv {
 		trimmedKey := strings.TrimSpace(key)
 		if trimmedKey == "" || isReservedRuntimeEnvKey(trimmedKey) {

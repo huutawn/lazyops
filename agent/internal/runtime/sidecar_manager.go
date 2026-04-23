@@ -252,6 +252,18 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 		Services:             make(map[string]SidecarServiceMetadata),
 	}
 
+	if runtimeCtx.Binding.RuntimeMode != contracts.RuntimeModeStandalone && m.dnsServer != nil {
+		for _, service := range runtimeCtx.Services {
+			m.dnsServer.RegisterService(ServiceRecord{
+				ServiceName: service.Name,
+				ProjectID:   runtimeCtx.Project.ProjectID,
+				Host:        "127.0.0.1",
+				Port:        effectiveRuntimePort(service),
+				Protocol:    automaticServiceDiscoveryScheme(service),
+			})
+		}
+	}
+
 	for _, service := range runtimeCtx.Services {
 		if len(service.Dependencies) == 0 {
 			continue
@@ -278,6 +290,9 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 			ManagedCredentials:     make(map[string]string),
 			CorrelationPropagation: true,
 			LatencyMeasurement:     true,
+		}
+		for key, value := range automaticServiceDiscoveryEnvMap(runtimeCtx.Project.ProjectID, runtimeCtx.Binding.RuntimeMode, runtimeCtx.Services) {
+			config.Env[key] = value
 		}
 		protocols := make([]string, 0, len(service.Dependencies))
 		for _, dependency := range service.Dependencies {
@@ -432,17 +447,6 @@ func (m *SidecarManager) buildPlan(runtimeCtx RuntimeContext, version string, pa
 					targetHost = serviceNetworkAlias(dep.TargetService)
 					targetURLHost = targetHost
 				}
-				// Register with DNS if available
-				if runtimeCtx.Binding.RuntimeMode != contracts.RuntimeModeStandalone && m.dnsServer != nil {
-					m.dnsServer.RegisterService(ServiceRecord{
-						ServiceName: dep.TargetService,
-						ProjectID:   runtimeCtx.Project.ProjectID,
-						Host:        "127.0.0.1",
-						Port:        targetPort,
-						Protocol:    dep.Protocol,
-					})
-				}
-
 				// Use DNS hostname for service discovery
 				config.Env[envKeyPrefix+"_HOST"] = targetHost
 				config.Env[envKeyPrefix+"_PORT"] = fmt.Sprintf("%d", targetPort)
