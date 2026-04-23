@@ -89,15 +89,20 @@ func (s *RoutingService) GetRouting(userID, role, projectID string) (*ProjectRou
 	}
 
 	routeRecords := make([]RoutingRouteRecord, 0, len(routes))
+	serviceIndex := make(map[string]routingDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		serviceIndex[descriptor.Name] = descriptor
+	}
 	for _, r := range routes {
-		routeRecords = append(routeRecords, RoutingRouteRecord{
+		route := RoutingRouteRecord{
 			Path:        r.Path,
 			Service:     r.Service,
 			Port:        r.Port,
 			WebSocket:   r.WebSocket,
 			StripPrefix: r.StripPrefix,
 			CreatedAt:   policy.CreatedAt,
-		})
+		}
+		routeRecords = append(routeRecords, normalizeRoutingRoute(route, serviceIndex[route.Service]))
 	}
 
 	resolvedSharedDomain := firstRuntimeNonEmpty(policy.SharedDomain, sharedDomain)
@@ -179,14 +184,20 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 
 	// Build model routes
 	now := time.Now().UTC()
+	descriptors := routingDescriptorsFromModels(services)
+	serviceIndex := make(map[string]routingDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		serviceIndex[descriptor.Name] = descriptor
+	}
 	modelRoutes := make([]models.RoutingRoute, 0, len(cmd.Routes))
 	for _, r := range cmd.Routes {
+		normalizedRoute := normalizeRoutingRoute(r, serviceIndex[strings.TrimSpace(r.Service)])
 		modelRoutes = append(modelRoutes, models.RoutingRoute{
-			Path:        r.Path,
-			Service:     r.Service,
-			Port:        r.Port,
-			WebSocket:   r.WebSocket,
-			StripPrefix: r.StripPrefix,
+			Path:        normalizedRoute.Path,
+			Service:     normalizedRoute.Service,
+			Port:        normalizedRoute.Port,
+			WebSocket:   normalizedRoute.WebSocket,
+			StripPrefix: normalizedRoute.StripPrefix,
 		})
 	}
 
@@ -206,7 +217,10 @@ func (s *RoutingService) UpdateRouting(cmd UpdateRoutingCommand) (*ProjectRoutin
 	}
 
 	availableServices := make([]string, 0, len(services))
-	descriptors := routingDescriptorsFromModels(services)
+	serviceIndex = make(map[string]routingDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		serviceIndex[descriptor.Name] = descriptor
+	}
 	for _, svc := range services {
 		availableServices = append(availableServices, svc.Name)
 	}
@@ -263,14 +277,19 @@ func (s *RoutingService) ResolveEffectiveRouting(projectID string, services []Bl
 	}
 
 	records := make([]RoutingRouteRecord, 0, len(routes))
+	serviceIndex := make(map[string]routingDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		serviceIndex[descriptor.Name] = descriptor
+	}
 	for _, route := range routes {
-		records = append(records, RoutingRouteRecord{
+		record := RoutingRouteRecord{
 			Path:        route.Path,
 			Service:     route.Service,
 			Port:        route.Port,
 			WebSocket:   route.WebSocket,
 			StripPrefix: route.StripPrefix,
-		})
+		}
+		records = append(records, normalizeRoutingRoute(record, serviceIndex[record.Service]))
 	}
 	return RoutingPolicyRecord{
 		SharedDomain: firstRuntimeNonEmpty(policy.SharedDomain, sharedDomain),
@@ -340,10 +359,11 @@ func buildDefaultRoutingPolicy(sharedDomain string, services []routingDescriptor
 		}
 	}
 	if len(publicServices) == 1 {
+		rootRoute := normalizeRoutingRoute(RoutingRouteRecord{Path: "/", Service: publicServices[0].Name}, publicServices[0])
 		return RoutingPolicyRecord{
 			SharedDomain: strings.TrimSpace(sharedDomain),
 			Routes: []RoutingRouteRecord{
-				{Path: "/", Service: publicServices[0].Name},
+				rootRoute,
 			},
 		}
 	}
@@ -368,28 +388,28 @@ func buildDefaultRoutingPolicy(sharedDomain string, services []routingDescriptor
 	seenServices := make(map[string]struct{}, len(publicServices))
 
 	if websocketSvc.Name != "" {
-		route := RoutingRouteRecord{
+		route := normalizeRoutingRoute(RoutingRouteRecord{
 			Path:      "/ws",
 			Service:   websocketSvc.Name,
 			WebSocket: true,
-		}
+		}, websocketSvc)
 		routes = append(routes, route)
 		seenPaths[route.Path] = struct{}{}
 		seenServices[route.Service] = struct{}{}
 	}
 	if apiSvc.Name != "" && apiSvc.Name != rootSvc.Name {
-		route := RoutingRouteRecord{
+		route := normalizeRoutingRoute(RoutingRouteRecord{
 			Path:    "/api",
 			Service: apiSvc.Name,
-		}
+		}, apiSvc)
 		routes = append(routes, route)
 		seenPaths[route.Path] = struct{}{}
 		seenServices[route.Service] = struct{}{}
 	}
-	rootRoute := RoutingRouteRecord{
+	rootRoute := normalizeRoutingRoute(RoutingRouteRecord{
 		Path:    "/",
 		Service: rootSvc.Name,
-	}
+	}, rootSvc)
 	routes = append(routes, rootRoute)
 	seenPaths[rootRoute.Path] = struct{}{}
 	seenServices[rootRoute.Service] = struct{}{}
@@ -408,10 +428,10 @@ func buildDefaultRoutingPolicy(sharedDomain string, services []routingDescriptor
 		for pathExists(path, seenPaths) {
 			path = path + "-alt"
 		}
-		route := RoutingRouteRecord{
+		route := normalizeRoutingRoute(RoutingRouteRecord{
 			Path:    path,
 			Service: svc.Name,
-		}
+		}, svc)
 		if isWebSocketDescriptor(svc) {
 			route.WebSocket = true
 		}
@@ -502,6 +522,27 @@ func buildRoutingWarnings(suggested, effective RoutingPolicyRecord, services []r
 		warnings = append(warnings, fmt.Sprintf("Root path / currently points to %q, not the detected frontend service %q. This is valid custom mode, but browser entrypoints and docs should use the effective route.", rootRoute, frontendRoot))
 	}
 	return warnings
+}
+
+func normalizeRoutingRoute(route RoutingRouteRecord, descriptor routingDescriptor) RoutingRouteRecord {
+	route.Path = normalizedPublicPath(route.Path)
+	if shouldAutoStripPrefix(route, descriptor) {
+		route.StripPrefix = true
+	}
+	return route
+}
+
+func shouldAutoStripPrefix(route RoutingRouteRecord, descriptor routingDescriptor) bool {
+	if route.StripPrefix {
+		return true
+	}
+	if route.WebSocket {
+		return false
+	}
+	if normalizedPublicPath(route.Path) != "/api" {
+		return false
+	}
+	return isAPIDescriptor(descriptor) || isBackendDescriptor(descriptor)
 }
 
 func pathExists(path string, seen map[string]struct{}) bool {

@@ -252,3 +252,92 @@ func TestRoutingServiceUpdateRoutingRejectsEmptyCmd(t *testing.T) {
 		t.Fatalf("expected error for empty command")
 	}
 }
+
+func TestBuildDefaultRoutingPolicyStripsDefaultAPIPrefix(t *testing.T) {
+	policy := buildDefaultRoutingPolicy("", []routingDescriptor{
+		{Name: "fe", Kind: "web", Public: true},
+		{Name: "be", Kind: "api", Public: true},
+	})
+	if len(policy.Routes) != 2 {
+		t.Fatalf("expected two routes, got %#v", policy.Routes)
+	}
+	for _, route := range policy.Routes {
+		if route.Service == "be" && route.Path == "/api" && !route.StripPrefix {
+			t.Fatalf("expected default /api route to strip prefix, got %#v", route)
+		}
+	}
+}
+
+func TestRoutingServiceGetRoutingNormalizesDefaultAPIStripPrefix(t *testing.T) {
+	repo := newFakeRoutingPolicyRepo()
+	svcRepo := newFakeServiceRepo([]models.Service{
+		{ProjectID: "prj_123", Name: "frontend", Public: true, Kind: "web"},
+		{ProjectID: "prj_123", Name: "backend", Public: true, Kind: "api"},
+	})
+	svc := NewRoutingService(repo, svcRepo)
+
+	routesJSON, _ := repository.SerializeRoutes([]models.RoutingRoute{
+		{Path: "/", Service: "frontend", Port: 3000},
+		{Path: "/api", Service: "backend", Port: 8000, StripPrefix: false},
+	})
+	repo.policies["prj_123"] = &models.RoutingPolicy{
+		ID:           "rp_test",
+		ProjectID:    "prj_123",
+		SharedDomain: "app.test.sslip.io",
+		RoutesJSON:   routesJSON,
+	}
+
+	result, err := svc.GetRouting("usr_123", RoleOperator, "prj_123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.RoutingPolicy.Routes) != 2 {
+		t.Fatalf("expected 2 routes, got %#v", result.RoutingPolicy.Routes)
+	}
+	for _, route := range result.RoutingPolicy.Routes {
+		if route.Service == "backend" && route.Path == "/api" && !route.StripPrefix {
+			t.Fatalf("expected effective /api backend route to strip prefix, got %#v", route)
+		}
+	}
+}
+
+func TestRoutingServiceUpdateRoutingPersistsDefaultAPIStripPrefix(t *testing.T) {
+	repo := newFakeRoutingPolicyRepo()
+	svcRepo := newFakeServiceRepo([]models.Service{
+		{ProjectID: "prj_123", Name: "frontend", Public: true, Kind: "web"},
+		{ProjectID: "prj_123", Name: "backend", Public: true, Kind: "api"},
+	})
+	svc := NewRoutingService(repo, svcRepo)
+
+	result, err := svc.UpdateRouting(UpdateRoutingCommand{
+		UserID:       "usr_123",
+		Role:         RoleOperator,
+		ProjectID:    "prj_123",
+		SharedDomain: "app.test.sslip.io",
+		Routes: []RoutingRouteRecord{
+			{Path: "/", Service: "frontend"},
+			{Path: "/api", Service: "backend"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, route := range result.RoutingPolicy.Routes {
+		if route.Service == "backend" && route.Path == "/api" && !route.StripPrefix {
+			t.Fatalf("expected saved /api backend route to strip prefix, got %#v", route)
+		}
+	}
+	policy := repo.policies["prj_123"]
+	if policy == nil {
+		t.Fatalf("expected policy persistence")
+	}
+	routes, err := repository.ParseRoutes(policy.RoutesJSON)
+	if err != nil {
+		t.Fatalf("parse persisted routes: %v", err)
+	}
+	for _, route := range routes {
+		if route.Service == "backend" && route.Path == "/api" && !route.StripPrefix {
+			t.Fatalf("expected persisted /api backend route to strip prefix, got %#v", route)
+		}
+	}
+}

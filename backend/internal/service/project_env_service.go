@@ -626,14 +626,20 @@ func (s *ProjectEnvService) resolveEffectiveRouting(projectID string, services [
 		if _, ok := serviceIndex[route.Service]; !ok {
 			continue
 		}
-		out.Routes = append(out.Routes, RoutingRouteRecord{
+		record := RoutingRouteRecord{
 			Path:        route.Path,
 			Service:     route.Service,
 			Port:        route.Port,
 			WebSocket:   route.WebSocket,
 			StripPrefix: route.StripPrefix,
 			CreatedAt:   policy.CreatedAt,
-		})
+		}
+		out.Routes = append(out.Routes, normalizeRoutingRoute(record, routingDescriptor{
+			Name:           serviceIndex[route.Service].Name,
+			Kind:           serviceIndex[route.Service].Kind,
+			RuntimeProfile: serviceIndex[route.Service].RuntimeProfile,
+			Public:         serviceIndex[route.Service].Public,
+		}))
 	}
 	if len(out.Routes) == 0 {
 		return suggested, nil
