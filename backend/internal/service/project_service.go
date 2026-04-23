@@ -1161,7 +1161,7 @@ func normalizeConfiguredDependencies(
 ) ([]ProjectServiceDependencyBinding, error) {
 	out := make([]ProjectServiceDependencyBinding, 0, len(raw)+1)
 	seenTargets := make(map[string]struct{}, len(raw)+1)
-	appendBinding := func(binding ProjectServiceDependencyBinding) error {
+	appendBinding := func(binding ProjectServiceDependencyBinding, allowDuplicate bool) error {
 		targetService, err := normalizeConfiguredConnectionTargetService(binding.TargetService)
 		if err != nil {
 			return err
@@ -1175,6 +1175,9 @@ func normalizeConfiguredDependencies(
 		}
 		clonedTemplate := cloneStringMap(binding.ConnectionTemplate)
 		if _, exists := seenTargets[targetService]; exists {
+			if allowDuplicate {
+				return nil
+			}
 			return fmt.Errorf("service.dependencies contains duplicate target_service %q", targetService)
 		}
 		seenTargets[targetService] = struct{}{}
@@ -1186,7 +1189,7 @@ func normalizeConfiguredDependencies(
 		return nil
 	}
 	for _, item := range raw {
-		if err := appendBinding(item); err != nil {
+		if err := appendBinding(item, false); err != nil {
 			return nil, err
 		}
 	}
@@ -1195,7 +1198,7 @@ func normalizeConfiguredDependencies(
 			TargetService:         legacyTargetService,
 			ConnectionTemplateKey: legacyTemplateKey,
 			ConnectionTemplate:    legacyTemplate,
-		}); err != nil {
+		}, true); err != nil {
 			return nil, err
 		}
 	}

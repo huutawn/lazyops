@@ -665,6 +665,66 @@ func TestProjectServiceConfigureServicesSupportsInternalPostgresCatalogItem(t *t
 	}
 }
 
+func TestProjectServiceConfigureServicesAllowsDependencyPayloadWithLegacyMirrorFields(t *testing.T) {
+	projectStore := newFakeProjectStore(&models.Project{
+		ID:            "prj_1",
+		UserID:        "usr_123",
+		Name:          "API",
+		Slug:          "api",
+		NamespaceSlug: "api",
+		RuntimeMode:   "distributed-k3s",
+		DefaultBranch: "main",
+	})
+	service := NewProjectService(projectStore).WithServiceStore(newFakeProjectServiceStoreForProjectSvc(nil))
+
+	result, err := service.ConfigureServices(ConfigureProjectServicesCommand{
+		RequesterUserID: "usr_123",
+		RequesterRole:   RoleAdmin,
+		ProjectID:       "prj_1",
+		Items: []ConfigureProjectServiceItem{
+			{
+				Name:       "db",
+				Kind:       "postgres",
+				SourceType: serviceSourceTypeInternal,
+			},
+			{
+				Name:       "api",
+				Path:       "apps/api",
+				Kind:       "backend",
+				TargetPort: 8080,
+				Dependencies: []ProjectServiceDependencyBinding{
+					{
+						TargetService:         "db",
+						ConnectionTemplateKey: "postgres.basic",
+					},
+				},
+				ConnectionTargetService: "db",
+				ConnectionTemplateKey:   "postgres.basic",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure services with mirrored legacy dependency fields: %v", err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected 2 services, got %#v", result.Items)
+	}
+
+	var apiSvc *ProjectServiceRecord
+	for index := range result.Items {
+		if result.Items[index].Name == "api" {
+			apiSvc = &result.Items[index]
+			break
+		}
+	}
+	if apiSvc == nil {
+		t.Fatalf("expected api service in result, got %#v", result.Items)
+	}
+	if len(apiSvc.Dependencies) != 1 || apiSvc.Dependencies[0].TargetService != "db" {
+		t.Fatalf("expected single db dependency, got %#v", apiSvc.Dependencies)
+	}
+}
+
 func TestProjectServiceConfigureServicesRejectsK3sIncompatibleServiceName(t *testing.T) {
 	projectStore := newFakeProjectStore(&models.Project{
 		ID:            "prj_1",
