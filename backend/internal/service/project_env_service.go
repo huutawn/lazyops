@@ -750,7 +750,7 @@ func dependencyHelperNotes(kind string) []string {
 }
 
 func pickPrimaryDependencyEnvKey(runtimeEnv map[string]string) string {
-	for _, key := range []string{"DATABASE_URL", "DB_URL", "MONGODB_URL", "REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS", "EUREKA_URL"} {
+	for _, key := range []string{"DATABASE_URL", "DB_URL", "MONGODB_URI", "MONGODB_URL", "REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS", "EUREKA_URL"} {
 		if strings.TrimSpace(runtimeEnv[key]) != "" {
 			return key
 		}

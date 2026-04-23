@@ -274,6 +274,73 @@ func TestProjectEnvServiceBuildsMySQLHelpersFromUnifiedServiceInventory(t *testi
 	}
 }
 
+func TestProjectEnvServiceBuildsMongoHelpersIncludingMongoURI(t *testing.T) {
+	projects := newFakeProjectStore(&models.Project{
+		ID:          "prj_mongo",
+		UserID:      "usr_123",
+		Slug:        "demo",
+		RuntimeMode: "distributed-k3s",
+	})
+	bundles := newFakeProjectEnvBundleStore()
+	serviceModels, err := buildConfiguredProjectServiceModels("prj_mongo", "distributed-k3s", []ConfigureProjectServiceItem{
+		{
+			Name:                    "api",
+			Path:                    "apps/api",
+			Kind:                    "api",
+			Public:                  true,
+			ConnectionTargetService: "mongodb",
+		},
+		{
+			Name:       "mongodb",
+			Kind:       "mongodb",
+			SourceType: serviceSourceTypeInternal,
+			EnvBundle: map[string]string{
+				"MONGO_INITDB_DATABASE": "tamsang",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build configured service models: %v", err)
+	}
+	serviceStore := newFakeProjectServiceStore()
+	if err := serviceStore.ReplaceForProject("prj_mongo", serviceModels); err != nil {
+		t.Fatalf("seed service store: %v", err)
+	}
+
+	service := NewProjectEnvService(projects, bundles, newFakeProjectInternalServiceStore(map[string][]models.ProjectInternalService{}), "backend-secret-key").
+		WithServiceStore(serviceStore)
+	record, err := service.Get("usr_123", RoleOperator, "prj_mongo")
+	if err != nil {
+		t.Fatalf("get project env helpers: %v", err)
+	}
+	if len(record.HelperPacks) == 0 {
+		t.Fatalf("expected helper packs for mongo inventory, got %#v", record)
+	}
+
+	var mongoPack *ProjectEnvHelperPack
+	for index := range record.HelperPacks {
+		if record.HelperPacks[index].SourceService == "mongodb" && record.HelperPacks[index].Category == "database" {
+			mongoPack = &record.HelperPacks[index]
+			break
+		}
+	}
+	if mongoPack == nil {
+		t.Fatalf("expected mongo helper pack, got %#v", record.HelperPacks)
+	}
+	if mongoPack.PrimaryKey != "MONGODB_URI" {
+		t.Fatalf("expected primary key MONGODB_URI, got %#v", mongoPack)
+	}
+	if mongoPack.LocalExampleEnv["MONGODB_URI"] != "mongodb://localhost:27017/tamsang" {
+		t.Fatalf("expected mongodb uri local example, got %#v", mongoPack.LocalExampleEnv)
+	}
+	if mongoPack.LocalExampleEnv["MONGODB_URL"] != "mongodb://localhost:27017/tamsang" {
+		t.Fatalf("expected mongodb url local example, got %#v", mongoPack.LocalExampleEnv)
+	}
+	if !containsManagedKey(record.ManagedKeys, "MONGODB_URI") || !containsManagedKey(record.ManagedKeys, "MONGODB_URL") {
+		t.Fatalf("expected managed keys to include mongodb uri aliases, got %#v", record.ManagedKeys)
+	}
+}
+
 func containsManagedKey(items []string, target string) bool {
 	for _, item := range items {
 		if item == target {

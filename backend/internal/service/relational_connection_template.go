@@ -221,6 +221,7 @@ func buildMongoRuntimeEnv(target ProjectServiceRecord, runtimeMode string) map[s
 		"MONGODB_HOST": host,
 		"MONGODB_PORT": fmt.Sprintf("%d", port),
 		"MONGODB_URL":  fmt.Sprintf("mongodb://%s:%d/%s", host, port, dbName),
+		"MONGODB_URI":  fmt.Sprintf("mongodb://%s:%d/%s", host, port, dbName),
 	}
 }
 
