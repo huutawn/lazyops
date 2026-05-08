@@ -392,6 +392,7 @@ type CreateDeploymentBindingCommand struct {
 	ProjectID           string
 	Name                string
 	TargetRef           string
+	TargetEnvironment   string
 	RuntimeMode         string
 	TargetKind          string
 	TargetID            string
@@ -406,6 +407,7 @@ type DeploymentBindingRecord struct {
 	ProjectID           string
 	Name                string
 	TargetRef           string
+	TargetEnvironment   string
 	RuntimeMode         string
 	TargetKind          string
 	TargetID            string

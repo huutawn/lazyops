@@ -87,6 +87,16 @@ type Application struct {
 	PreviewRepo             *repository.PreviewEnvironmentRepository
 	PreviewService          *service.PreviewEnvironmentService
 	RoutingSvc              *service.RoutingService
+	AssistantSessionRepo    *repository.AssistantSessionRepository
+	AssistantMessageRepo    *repository.AssistantMessageRepository
+	AssistantActionPlanRepo *repository.AssistantActionPlanRepository
+	AssistantAuditEventRepo *repository.AssistantAuditEventRepository
+	ErrorKnowledgeRepo      *repository.ErrorKnowledgeRepository
+	ProactiveAlertStateRepo *repository.ProactiveAlertStateRepository
+	AssistantSvc            *service.AssistantService
+	ErrorKnowledgeSvc       *service.ErrorKnowledgeService
+	IncidentExplanationSvc  *service.IncidentExplanationService
+	ProactiveAlertSvc       *service.ProactiveAlertService
 }
 
 func NewApplication(cfg config.Config) (*Application, error) {
@@ -134,6 +144,12 @@ func NewApplication(cfg config.Config) (*Application, error) {
 	incidentRepo := repository.NewRuntimeIncidentRepository(db)
 	previewRepo := repository.NewPreviewEnvironmentRepository(db)
 	routingPolicyRepo := repository.NewRoutingPolicyRepository(db)
+	assistantSessionRepo := repository.NewAssistantSessionRepository(db)
+	assistantMessageRepo := repository.NewAssistantMessageRepository(db)
+	assistantActionPlanRepo := repository.NewAssistantActionPlanRepository(db)
+	assistantAuditEventRepo := repository.NewAssistantAuditEventRepository(db)
+	errorKnowledgeRepo := repository.NewErrorKnowledgeRepository(db)
+	proactiveAlertStateRepo := repository.NewProactiveAlertStateRepository(db)
 	authService := service.NewAuthService(userRepo, patRepo, cfg.JWT, cfg.PAT).WithAgentTokens(agentTokenRepo)
 	googleProvider := oauth.NewGoogleProvider(cfg.GoogleOAuth, nil)
 	googleOAuthService := service.NewGoogleOAuthService(
@@ -216,6 +232,10 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		NewObservabilityService(traceSummaryRepo, incidentRepo, logStreamRepo, topologyNodeRepo, topologyEdgeRepo, instanceRepo, meshNetworkRepo, clusterRepo).
 		WithBindingStore(deploymentBindingRepo).
 		WithMetricRollupStore(metricRollupRepo)
+	embeddingClient := ai.NewDeterministicEmbeddingClient()
+	errorKnowledgeSvc := service.NewErrorKnowledgeService(errorKnowledgeRepo, embeddingClient)
+	observabilitySvc.WithErrorKnowledgeService(errorKnowledgeSvc)
+	incidentExplanationSvc := service.NewIncidentExplanationService(observabilitySvc, errorKnowledgeSvc, deploymentSvc)
 	agentEnrollmentSvc := service.NewAgentEnrollmentService(agentRepo, instanceRepo, bootstrapTokenRepo, agentTokenRepo, cfg.Enrollment)
 	userService := service.NewUserService(userRepo)
 	agentService := service.NewAgentService(agentRepo)
@@ -301,6 +321,37 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		nil,
 		operatorStreamHub,
 	)
+	assistantSvc := service.NewAssistantService(
+		assistantSessionRepo,
+		assistantMessageRepo,
+		assistantActionPlanRepo,
+		assistantAuditEventRepo,
+		projectRepo,
+		projectRepoLinkRepo,
+		projectEnvRepo,
+		projectInternalSvcRepo,
+		deploymentSvc,
+		projectRuntimeSvc,
+		observabilitySvc,
+		errorKnowledgeSvc,
+		bootstrapOrchestrator,
+		deploymentBindingRepo,
+	)
+	assistantPlanner := service.AssistantIntentPlanner(service.NewHeuristicAssistantIntentPlanner())
+	if cfg.AI.AssistantLLMBaseURL != "" {
+		assistantPlanner = service.NewHTTPAssistantIntentPlanner(
+			cfg.AI.AssistantLLMBaseURL,
+			cfg.AI.AssistantLLMAPIKey,
+			cfg.AI.AssistantLLMModel,
+			cfg.AI.AssistantLLMTimeout,
+			cfg.AI.AssistantLLMMaxRetries,
+			service.NewHeuristicAssistantIntentPlanner(),
+		)
+	}
+	assistantSvc.WithPlanner(assistantPlanner)
+	assistantSvc.WithIncidentExplanationService(incidentExplanationSvc)
+	proactiveAlertSvc := service.NewProactiveAlertService(proactiveAlertStateRepo, incidentRepo, projectRepo, incidentExplanationSvc, operatorStreamHub)
+	observabilitySvc.WithProactiveAlertService(proactiveAlertSvc)
 
 	return &Application{
 		Config:                  cfg,
@@ -376,5 +427,15 @@ func NewApplication(cfg config.Config) (*Application, error) {
 		PreviewRepo:             previewRepo,
 		PreviewService:          previewService,
 		RoutingSvc:              routingSvc,
+		AssistantSessionRepo:    assistantSessionRepo,
+		AssistantMessageRepo:    assistantMessageRepo,
+		AssistantActionPlanRepo: assistantActionPlanRepo,
+		AssistantAuditEventRepo: assistantAuditEventRepo,
+		ErrorKnowledgeRepo:      errorKnowledgeRepo,
+		ProactiveAlertStateRepo: proactiveAlertStateRepo,
+		AssistantSvc:            assistantSvc,
+		ErrorKnowledgeSvc:       errorKnowledgeSvc,
+		IncidentExplanationSvc:  incidentExplanationSvc,
+		ProactiveAlertSvc:       proactiveAlertSvc,
 	}, nil
 }

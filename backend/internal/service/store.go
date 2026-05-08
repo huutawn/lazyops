@@ -167,6 +167,11 @@ type RuntimeIncidentStore interface {
 	UpdateStatus(incidentID, status string, at time.Time) error
 }
 
+type ProactiveAlertStateStore interface {
+	GetByFingerprint(projectID, serviceName, fingerprint string) (*models.ProactiveAlertState, error)
+	Upsert(state *models.ProactiveAlertState) error
+}
+
 type LogStreamStore interface {
 	CreateBatch(entries []models.LogStreamEntry) error
 	ListByQuery(query models.LogStreamQuery) ([]models.LogStreamEntry, error)

@@ -25,6 +25,7 @@ type Config struct {
 	Seed         SeedConfig
 	WebSocket    WebSocketConfig
 	BuildWorker  BuildWorkerConfig
+	AI           AIConfig
 }
 
 type AppConfig struct {
@@ -145,6 +146,18 @@ type BuildWorkerConfig struct {
 	CallbackBaseURL string
 }
 
+type AIConfig struct {
+	EmbeddingProvider      string
+	EmbeddingAPIKey        string
+	EmbeddingBaseURL       string
+	EmbeddingModel         string
+	AssistantLLMBaseURL    string
+	AssistantLLMAPIKey     string
+	AssistantLLMModel      string
+	AssistantLLMTimeout    time.Duration
+	AssistantLLMMaxRetries int
+}
+
 func Load() Config {
 	jwtSecret := getEnv("JWT_SECRET", "change-me-in-production")
 
@@ -251,6 +264,17 @@ func Load() Config {
 			DockerBin:       getEnv("BUILD_DOCKER_BIN", "docker"),
 			WorkspaceDir:    getEnv("BUILD_WORKSPACE_DIR", "/tmp/lazyops-builds"),
 			CallbackBaseURL: getEnv("BUILD_WORKER_CALLBACK_BASE_URL", ""),
+		},
+		AI: AIConfig{
+			EmbeddingProvider:      strings.ToLower(getEnv("AI_EMBEDDING_PROVIDER", "deterministic")),
+			EmbeddingAPIKey:        getEnv("AI_EMBEDDING_API_KEY", ""),
+			EmbeddingBaseURL:       getEnv("AI_EMBEDDING_BASE_URL", ""),
+			EmbeddingModel:         getEnv("AI_EMBEDDING_MODEL", ""),
+			AssistantLLMBaseURL:    getEnv("ASSISTANT_LLM_BASE_URL", ""),
+			AssistantLLMAPIKey:     getEnv("ASSISTANT_LLM_API_KEY", ""),
+			AssistantLLMModel:      getEnv("ASSISTANT_LLM_MODEL", ""),
+			AssistantLLMTimeout:    getEnvAsDuration("ASSISTANT_LLM_TIMEOUT", 15*time.Second),
+			AssistantLLMMaxRetries: getEnvAsInt("ASSISTANT_LLM_MAX_RETRIES", 1),
 		},
 	}
 }

@@ -36,16 +36,18 @@ var (
 )
 
 type ObservabilityService struct {
-	traces        TraceSummaryStore
-	incidents     RuntimeIncidentStore
-	logs          LogStreamStore
-	metricRollups MetricRollupStore
-	topoNodes     TopologyNodeStore
-	topoEdges     TopologyEdgeStore
-	instances     InstanceStore
-	meshes        MeshNetworkStore
-	clusters      ClusterStore
-	bindings      DeploymentBindingStore
+	traces          TraceSummaryStore
+	incidents       RuntimeIncidentStore
+	logs            LogStreamStore
+	errorKnowledge  *ErrorKnowledgeService
+	proactiveAlerts *ProactiveAlertService
+	metricRollups   MetricRollupStore
+	topoNodes       TopologyNodeStore
+	topoEdges       TopologyEdgeStore
+	instances       InstanceStore
+	meshes          MeshNetworkStore
+	clusters        ClusterStore
+	bindings        DeploymentBindingStore
 }
 
 type TraceSummaryStore interface {
@@ -95,6 +97,16 @@ func (s *ObservabilityService) WithBindingStore(bindings DeploymentBindingStore)
 
 func (s *ObservabilityService) WithMetricRollupStore(metricRollups MetricRollupStore) *ObservabilityService {
 	s.metricRollups = metricRollups
+	return s
+}
+
+func (s *ObservabilityService) WithErrorKnowledgeService(errorKnowledge *ErrorKnowledgeService) *ObservabilityService {
+	s.errorKnowledge = errorKnowledge
+	return s
+}
+
+func (s *ObservabilityService) WithProactiveAlertService(alerts *ProactiveAlertService) *ObservabilityService {
+	s.proactiveAlerts = alerts
 	return s
 }
 
@@ -775,6 +787,16 @@ func (s *ObservabilityService) IngestLogBatch(ctx context.Context, cmd IngestLog
 	}
 	if err := s.logs.CreateBatch(records); err != nil {
 		return nil, err
+	}
+	if s.errorKnowledge != nil {
+		if err := s.errorKnowledge.IndexLogEntries(records); err != nil {
+			return nil, err
+		}
+	}
+	if s.proactiveAlerts != nil {
+		if _, err := s.proactiveAlerts.ProcessLogBatch(ctx, records); err != nil {
+			return nil, err
+		}
 	}
 
 	sort.Slice(records, func(i, j int) bool {

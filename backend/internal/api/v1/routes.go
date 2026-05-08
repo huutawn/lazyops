@@ -41,6 +41,7 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 	wsController := controller.NewWebSocketController(app.Hub, app.AgentService, app.Config)
 	agentControlController := controller.NewAgentControlController(app.ControlHub, app.CommandTracker, app.ObservabilitySvc, app.OperatorStreamHub, app.RolloutExecutionSvc, app.Config)
 	operatorStreamController := controller.NewOperatorStreamController(app.OperatorStreamHub, app.Config)
+	assistantController := controller.NewAssistantController(app.AssistantSvc)
 
 	rootAgentControl := router.Group("/ws")
 	rootAgentControl.Use(middleware.Authenticate(app.AuthService))
@@ -202,6 +203,12 @@ func RegisterRoutes(router *gin.Engine, app *bootstrap.Application) {
 				tunnelController.CloseSession,
 			)
 			userProtected.GET("/users/me", userController.Me)
+			userProtected.POST("/assistant/sessions", assistantController.CreateSession)
+			userProtected.GET("/assistant/sessions", assistantController.ListSessions)
+			userProtected.GET("/assistant/sessions/:id", assistantController.GetSession)
+			userProtected.POST("/assistant/sessions/:id/messages", assistantController.PostMessage)
+			userProtected.POST("/assistant/action-plans/:id/confirm", assistantController.ConfirmPlan)
+			userProtected.POST("/assistant/action-plans/:id/cancel", assistantController.CancelPlan)
 			userProtected.GET("/agents", agentController.List)
 			userProtected.POST("/agents",
 				middleware.RequireRoles(service.RoleAdmin, service.RoleOperator),

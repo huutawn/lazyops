@@ -7,6 +7,7 @@ type DeploymentBinding struct {
 	ProjectID               string    `json:"project_id" gorm:"size:64;not null;index;uniqueIndex:idx_deployment_bindings_project_target_ref"`
 	Name                    string    `json:"name" gorm:"size:255;not null"`
 	TargetRef               string    `json:"target_ref" gorm:"size:255;not null;uniqueIndex:idx_deployment_bindings_project_target_ref"`
+	TargetEnvironment       string    `json:"target_environment" gorm:"size:64;not null;default:'';index"`
 	RuntimeMode             string    `json:"runtime_mode" gorm:"size:64;not null"`
 	TargetKind              string    `json:"target_kind" gorm:"size:64;not null;index:idx_deployment_bindings_project_target"`
 	TargetID                string    `json:"target_id" gorm:"size:64;not null;index:idx_deployment_bindings_project_target"`

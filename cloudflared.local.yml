@@ -1,0 +1,7 @@
+tunnel: lazyops-local
+credentials-file: /etc/cloudflared/lazyops-local.json
+
+ingress:
+  - hostname: lazyops.cloud
+    service: http://localhost:80
+  - service: http_status:404

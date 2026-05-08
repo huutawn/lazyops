@@ -5,6 +5,8 @@ import { Sidebar } from './sidebar';
 import { TopBar } from './top-bar';
 import { useMobileSidebar } from './use-mobile-sidebar';
 import { cn } from '@/lib/utils';
+import { AssistantLauncher } from '@/modules/assistant/assistant-launcher';
+import { AssistantDrawer } from '@/modules/assistant/assistant-drawer';
 
 type ShellLayoutProps = {
   children: ReactNode;
@@ -23,6 +25,8 @@ export function ShellLayout({ children, breadcrumb, className }: ShellLayoutProp
         <TopBar onMenuClick={toggle} breadcrumb={breadcrumb} />
         <main className={cn('flex-1 p-6 lg:p-6', className)}>{children}</main>
       </div>
+      <AssistantLauncher />
+      <AssistantDrawer />
     </div>
   );
 }

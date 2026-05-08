@@ -58,6 +58,7 @@ func (s *DeploymentBindingService) Create(cmd CreateDeploymentBindingCommand) (*
 	if targetRef == "" {
 		return nil, ErrInvalidInput
 	}
+	targetEnvironment := normalizeBindingTargetEnvironment(cmd.TargetEnvironment, targetRef, name)
 
 	runtimeMode, err := normalizeBindingRuntimeMode(cmd.RuntimeMode)
 	if err != nil {
@@ -115,6 +116,7 @@ func (s *DeploymentBindingService) Create(cmd CreateDeploymentBindingCommand) (*
 		ProjectID:               project.ID,
 		Name:                    name,
 		TargetRef:               targetRef,
+		TargetEnvironment:       targetEnvironment,
 		RuntimeMode:             runtimeMode,
 		TargetKind:              targetKind,
 		TargetID:                targetID,
@@ -371,6 +373,7 @@ func ToDeploymentBindingRecord(binding models.DeploymentBinding) (DeploymentBind
 		ProjectID:           binding.ProjectID,
 		Name:                binding.Name,
 		TargetRef:           binding.TargetRef,
+		TargetEnvironment:   binding.TargetEnvironment,
 		RuntimeMode:         binding.RuntimeMode,
 		TargetKind:          binding.TargetKind,
 		TargetID:            binding.TargetID,
@@ -381,4 +384,22 @@ func ToDeploymentBindingRecord(binding models.DeploymentBinding) (DeploymentBind
 		CreatedAt:           binding.CreatedAt,
 		UpdatedAt:           binding.UpdatedAt,
 	}, nil
+}
+
+func normalizeBindingTargetEnvironment(raw, targetRef, name string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value != "" {
+		return value
+	}
+	joined := strings.ToLower(strings.TrimSpace(targetRef + " " + name))
+	switch {
+	case strings.Contains(joined, "production") || strings.Contains(joined, "prod"):
+		return "production"
+	case strings.Contains(joined, "staging") || strings.Contains(joined, "stage"):
+		return "staging"
+	case strings.Contains(joined, "preview"):
+		return "preview"
+	default:
+		return ""
+	}
 }

@@ -141,39 +141,51 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Optional local agent on control-plane VPS.
-  # Most production setups should bootstrap agents on user VPS via SSH from the dashboard.
-  agent:
-    image: ${AGENT_IMAGE:-tawn/lazyops-agent}:${AGENT_IMAGE_TAG:-latest}
+  cloudflared:
+    image: cloudflare/cloudflared:2026.3.0
     restart: unless-stopped
-    profiles: ["local-agent"]
-    env_file:
-      - ./.env
-    environment:
-      AGENT_APP_ENV: ${AGENT_APP_ENV:-production}
-      AGENT_LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
-      AGENT_RUNTIME_MODE: ${AGENT_RUNTIME_MODE:-standalone}
-      AGENT_KIND: ${AGENT_KIND:-instance_agent}
-      AGENT_TARGET_REF: ${AGENT_TARGET_REF:-control-plane}
-      AGENT_CONTROL_PLANE_URL: ${AGENT_CONTROL_PLANE_URL:-ws://backend:8080}
-      AGENT_USE_MOCK_CONTROL: ${AGENT_USE_MOCK_CONTROL:-false}
-      AGENT_STATE_DIR: /var/lib/lazyops-agent/state
-      AGENT_RUNTIME_ROOT_DIR: /var/lib/lazyops-agent/runtime
-      AGENT_DEFAULT_IMAGE: ${AGENT_IMAGE:-tawn/lazyops-agent}:${AGENT_IMAGE_TAG:-latest}
-      AGENT_STATE_ENCRYPTION_KEY: ${AGENT_STATE_ENCRYPTION_KEY:-}
-      AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-}
     depends_on:
-      backend:
-        condition: service_healthy
-    volumes:
-      - agent_state:/var/lib/lazyops-agent
-      - /var/run/docker.sock:/var/run/docker.sock
-    network_mode: host
-    privileged: true
-    logging:
-      options:
-        max-size: "10m"
-        max-file: "3"
+      nginx:
+        condition: service_started
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - lazyops_net
+
+  # # Optional local agent on control-plane VPS.
+  # # Most production setups should bootstrap agents on user VPS via SSH from the dashboard.
+  # agent:
+  #   image: ${AGENT_IMAGE:-tawn/lazyops-agent}:${AGENT_IMAGE_TAG:-latest}
+  #   restart: unless-stopped
+  #   profiles: ["local-agent"]
+  #   env_file:
+  #     - ./.env
+  #   environment:
+  #     AGENT_APP_ENV: ${AGENT_APP_ENV:-production}
+  #     AGENT_LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
+  #     AGENT_RUNTIME_MODE: ${AGENT_RUNTIME_MODE:-standalone}
+  #     AGENT_KIND: ${AGENT_KIND:-instance_agent}
+  #     AGENT_TARGET_REF: ${AGENT_TARGET_REF:-control-plane}
+  #     AGENT_CONTROL_PLANE_URL: ${AGENT_CONTROL_PLANE_URL:-ws://backend:8080}
+  #     AGENT_USE_MOCK_CONTROL: ${AGENT_USE_MOCK_CONTROL:-false}
+  #     AGENT_STATE_DIR: /var/lib/lazyops-agent/state
+  #     AGENT_RUNTIME_ROOT_DIR: /var/lib/lazyops-agent/runtime
+  #     AGENT_DEFAULT_IMAGE: ${AGENT_IMAGE:-tawn/lazyops-agent}:${AGENT_IMAGE_TAG:-latest}
+  #     AGENT_STATE_ENCRYPTION_KEY: ${AGENT_STATE_ENCRYPTION_KEY:-}
+  #     AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-}
+  #   depends_on:
+  #     backend:
+  #       condition: service_healthy
+  #   volumes:
+  #     - agent_state:/var/lib/lazyops-agent
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   network_mode: host
+  #   privileged: true
+  #   logging:
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
 
 volumes:
   postgres_data:

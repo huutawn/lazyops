@@ -3,6 +3,7 @@ package request
 type CreateDeploymentBindingRequest struct {
 	Name                string         `json:"name"`
 	TargetRef           string         `json:"target_ref"`
+	TargetEnvironment   string         `json:"target_environment"`
 	RuntimeMode         string         `json:"runtime_mode"`
 	TargetKind          string         `json:"target_kind"`
 	TargetID            string         `json:"target_id"`

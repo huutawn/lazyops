@@ -53,7 +53,7 @@ type AuthService struct {
 
 type Claims struct {
 	AuthKind     string         `json:"auth_kind"`
-	SubjectType  string         `json:"subject_type,omitempty"`
+	SubjectType  string          `json:"subject_type,omitempty"`
 	UserID       string         `json:"user_id"`
 	Email        string         `json:"email"`
 	Role         string         `json:"role"`

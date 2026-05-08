@@ -43,6 +43,12 @@ func Migrate(db *gorm.DB) error {
 	if err := migrateBuildJobGitHubDeliveryColumn(db); err != nil {
 		return err
 	}
+	if err := migrateDeploymentBindingTargetEnvironmentColumn(db); err != nil {
+		return err
+	}
+	if err := enableVectorExtension(db); err != nil {
+		return err
+	}
 
 	if err := db.AutoMigrate(
 		&models.User{},
@@ -79,6 +85,12 @@ func Migrate(db *gorm.DB) error {
 		&models.MetricRollup{},
 		&models.LogStreamEntry{},
 		&models.RoutingPolicy{},
+		&models.AssistantSession{},
+		&models.AssistantMessage{},
+		&models.AssistantActionPlan{},
+		&models.AssistantAuditEvent{},
+		&models.ErrorKnowledgeDocument{},
+		&models.ProactiveAlertState{},
 	); err != nil {
 		return err
 	}
@@ -86,6 +98,25 @@ func Migrate(db *gorm.DB) error {
 		return err
 	}
 	return migrateLegacyInternalServicesToManagedServices(db)
+}
+
+func enableVectorExtension(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	return db.Exec(`CREATE EXTENSION IF NOT EXISTS vector`).Error
+}
+
+func migrateDeploymentBindingTargetEnvironmentColumn(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable(&models.DeploymentBinding{}) {
+		return nil
+	}
+	if !db.Migrator().HasColumn("deployment_bindings", "target_environment") {
+		if err := db.Exec(`ALTER TABLE deployment_bindings ADD COLUMN target_environment VARCHAR(64) NOT NULL DEFAULT ''`).Error; err != nil {
+			return err
+		}
+	}
+	return db.Exec(`CREATE INDEX IF NOT EXISTS idx_deployment_bindings_target_environment ON deployment_bindings(target_environment)`).Error
 }
 
 func migrateProjectRepoLinkLegacyColumns(db *gorm.DB) error {
