@@ -144,6 +144,9 @@ func (p *HTTPAssistantIntentPlanner) planOnce(ctx context.Context, input Assista
 	if err != nil {
 		return nil, err
 	}
+	if strings.HasSuffix(strings.TrimRight(p.BaseURL, "/"), "/v1") {
+		req.URL.Path = strings.TrimRight(req.URL.Path, "/") + "/chat/completions"
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
